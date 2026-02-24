@@ -3,20 +3,29 @@
 
 main_agents:
   # Model for all main agents (Manager, Ideation, Experimentation, Writeup)
-  model: claude-sonnet-4-5 # Latest Claude model (released sept 29, 2025)
+  model: gpt-5.2
 
-  # Claude Extended Thinking settings (optional, only for Claude 4.x models)
-  budget_tokens: 16384  # Reasoning token budget (min: 1024, recommended: 16k+)
-
-  # # # Gemini-specific settings
-  # model: gemini-2.5-pro
-  # thinking_budget: 32768
+  # GPT-5 specific settings
+  reasoning_effort: high
+  verbosity: medium
 
 run_experiment_tool:
   # Models for RunExperimentTool (AI-Scientist-v2 subprocess)
-  code_model: gpt-5
-  feedback_model: gpt-5
-  vlm_model: gpt-5
-  report_model: gpt-5
+  code_model: gpt-5.2
+  feedback_model: gpt-5.2
+  vlm_model: gpt-5.2
+  report_model: gpt-5.2
   # GPT-5 specific settings
   reasoning_effort: high  # minimal, low, medium, high
+
+# HARD COST CAP (requires pricing to be filled in)
+# If usd_limit is set, the system will stop once the running total reaches the limit.
+# IMPORTANT: You must provide accurate per-model prices to enforce the cap.
+budget:
+  usd_limit: 150
+  hard_stop: true
+  fail_closed: true
+  pricing:
+    gpt-5.2:
+      input_per_1k: 0.00175
+      output_per_1k: 0.01400

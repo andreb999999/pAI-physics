@@ -103,14 +103,6 @@ def main():
     print("🚀 Starting autonomous research task...")
     print(f"✅ Configuration: {model_name} model")
 
-    # Create a model
-    model = create_model(model_name, reasoning_effort, verbosity, budget_tokens)
-    print(f"✅ Created model: {model.model_id}")
-    if model_name.startswith("gpt-5"):
-        print(f"✅ GPT-5 configuration: reasoning_effort={reasoning_effort}, verbosity={verbosity}")
-    elif "claude" in model_name and budget_tokens:
-        print(f"✅ Claude Extended Thinking configuration: budget_tokens={budget_tokens}")
-    
     # Pass experiment config to environment for RunExperimentTool
     if llm_config and 'run_experiment_tool' in llm_config:
         exp_config = llm_config['run_experiment_tool']
@@ -164,6 +156,22 @@ def main():
 
     print(f"📁 Active workspace: {results_base_dir}")
     print(f"📝 Task: {task[:100]}{'...' if len(task) > 100 else ''}")
+
+    # Create a model (after workspace is known so budget files live in workspace)
+    budget_config = llm_config.get("budget", {}) if llm_config else {}
+    model = create_model(
+        model_name,
+        reasoning_effort,
+        verbosity,
+        budget_tokens,
+        budget_config=budget_config,
+        budget_dir=results_base_dir
+    )
+    print(f"✅ Created model: {getattr(model, 'model_id', model_name)}")
+    if model_name.startswith("gpt-5"):
+        print(f"✅ GPT-5 configuration: reasoning_effort={reasoning_effort}, verbosity={verbosity}")
+    elif "claude" in model_name and budget_tokens:
+        print(f"✅ Claude Extended Thinking configuration: budget_tokens={budget_tokens}")
 
     # Create the ManagerAgent
     try:

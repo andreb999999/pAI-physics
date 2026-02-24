@@ -64,7 +64,7 @@ def extract_content_between_markers(response: str, start_marker: str, end_marker
     except Exception as e:
         return None
 
-def create_model(model_name, reasoning_effort="medium", verbosity="medium", budget_tokens=None):
+def create_model(model_name, reasoning_effort="medium", verbosity="medium", budget_tokens=None, budget_config=None, budget_dir=None):
     """Create a smolagents model based on the model name using API keys from environment variables.
 
     Args:
@@ -138,7 +138,7 @@ def create_model(model_name, reasoning_effort="medium", verbosity="medium", budg
                 "budget_tokens": budget_tokens
             }
 
-        return LiteLLMModel(
+        base_model = LiteLLMModel(
             model_id=f"anthropic/{model_name}",  # Explicit provider prefix for LiteLLM routing
             api_key=os.environ["ANTHROPIC_API_KEY"],
             **extra_kwargs
@@ -151,21 +151,21 @@ def create_model(model_name, reasoning_effort="medium", verbosity="medium", budg
             "verbosity": verbosity,  # Required for GPT-5
         }
         
-        return LiteLLMModel(
+        base_model = LiteLLMModel(
             model=model_name,
             model_id=model_name,
             api_key=os.environ["OPENAI_API_KEY"],
             **extra_kwargs
         )
     elif "gpt" in model_name or model_name.startswith(("o1-", "o3-", "o4-")):
-        return LiteLLMModel(
+        base_model = LiteLLMModel(
             model=model_name,
             model_id=model_name,
             api_key=os.environ["OPENAI_API_KEY"],
             context_limit=context_limit,
         )
     elif "deepseek" in model_name:
-        return LiteLLMModel(
+        base_model = LiteLLMModel(
             model=model_name,
             model_id=model_name,
             api_key=os.environ["DEEPSEEK_API_KEY"],
@@ -173,7 +173,7 @@ def create_model(model_name, reasoning_effort="medium", verbosity="medium", budg
             context_limit=context_limit,
         )
     elif "llama" in model_name:
-        return LiteLLMModel(
+        base_model = LiteLLMModel(
             model=f"openrouter/{model_name}",
             model_id=model_name,
             api_key=os.environ["OPENROUTER_API_KEY"],
@@ -185,7 +185,7 @@ def create_model(model_name, reasoning_effort="medium", verbosity="medium", budg
         if "gemini-2.5-pro" in model_name:
             extra_kwargs["thinking_budget"] = 32768
         
-        return LiteLLMModel(
+        base_model = LiteLLMModel(
             model=f"gemini/{model_name}", 
             model_id=f"gemini/{model_name}", 
             api_key=os.environ["GOOGLE_API_KEY"],
@@ -193,12 +193,33 @@ def create_model(model_name, reasoning_effort="medium", verbosity="medium", budg
         )
     else:
         # Default to OpenAI-compatible
-        return LiteLLMModel(
+        base_model = LiteLLMModel(
             model=model_name,
             model_id=model_name,
             api_key=os.environ.get("OPENAI_API_KEY", ""),
             context_limit=context_limit,
         )
+
+    # Optional hard budget enforcement wrapper
+    if budget_config and budget_config.get("usd_limit"):
+        from .budget import BudgetManager, BudgetedLiteLLMModel
+        budget_dir = budget_dir or os.getcwd()
+        state_path = os.path.join(budget_dir, "budget_state.json")
+        ledger_path = os.path.join(budget_dir, "budget_ledger.jsonl")
+        lock_path = os.path.join(budget_dir, "budget.lock")
+
+        manager = BudgetManager(
+            usd_limit=float(budget_config["usd_limit"]),
+            pricing=budget_config.get("pricing", {}),
+            state_path=state_path,
+            ledger_path=ledger_path,
+            lock_path=lock_path,
+            hard_stop=bool(budget_config.get("hard_stop", True)),
+            fail_closed=bool(budget_config.get("fail_closed", True)),
+        )
+        return BudgetedLiteLLMModel(base_model, manager)
+
+    return base_model
 
 from freephdlabor.agents.manager_agent import ManagerAgent
 from freephdlabor.agents.ideation_agent import IdeationAgent
