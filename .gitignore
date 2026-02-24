@@ -40,3 +40,7 @@ tmp/
 *.pt
 *.ckpt
 *.pkl
+
+# Local installers
+Miniconda3-latest-MacOSX-arm64.sh
+Miniconda3-latest-MacOSX-x86_64.sh
