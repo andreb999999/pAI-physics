@@ -7,23 +7,41 @@ import importlib.util
 from datetime import datetime
 import yaml
 
-from phoenix.otel import register
-from openinference.instrumentation.smolagents import SmolagentsInstrumentor
 from freephdlabor.interaction.callback_tools import setup_user_input_socket, make_user_input_step_callback
 
 from freephdlabor.args import parse_arguments
 
-# Debug: Check Phoenix collector endpoint before registration
-import os
-phoenix_endpoint = os.environ.get('PHOENIX_COLLECTOR_ENDPOINT', 'NOT SET')
-print(f"🔍 DEBUG: PHOENIX_COLLECTOR_ENDPOINT = {phoenix_endpoint}")
-print(f"🔍 DEBUG: About to register Phoenix tracer...")
+def _setup_optional_tracing():
+    """
+    Configure Phoenix/OpenInference tracing only when explicitly enabled.
+    Disabled by default to avoid startup noise and wrapper-related crashes.
+    """
+    enabled = os.getenv("FREEPHDLABOR_ENABLE_TRACING", "0").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    if not enabled:
+        print("ℹ️ Tracing disabled (set FREEPHDLABOR_ENABLE_TRACING=1 to enable).")
+        return
 
-register(set_global_tracer_provider=False, verbose=True)
-print(f"✅ Phoenix tracer registered successfully")
+    try:
+        from phoenix.otel import register
+        from openinference.instrumentation.smolagents import SmolagentsInstrumentor
 
-SmolagentsInstrumentor().instrument()
-print(f"✅ Smolagents instrumentation complete")
+        phoenix_endpoint = os.environ.get("PHOENIX_COLLECTOR_ENDPOINT", "NOT SET")
+        print(f"🔍 DEBUG: PHOENIX_COLLECTOR_ENDPOINT = {phoenix_endpoint}")
+        print("🔍 DEBUG: About to register Phoenix tracer...")
+
+        register(set_global_tracer_provider=False, verbose=True)
+        print("✅ Phoenix tracer registered successfully")
+
+        SmolagentsInstrumentor().instrument()
+        print("✅ Smolagents instrumentation complete")
+    except Exception as e:
+        # Keep research runs functional even if telemetry setup fails.
+        print(f"⚠️ Tracing setup skipped due to error: {e}")
 
 
 from smolagents import LiteLLMModel
@@ -71,6 +89,8 @@ def _filter_installed_imports(import_names):
 
 def main():
     """Main entry point for the smolagents launcher."""
+    _setup_optional_tracing()
+
     # Create single timestamp for logs and workspace
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -200,7 +220,7 @@ def main():
         # Essential imports for tool-centric agents (no direct ML library access)
         essential_imports = [
             # Standard library essentials
-            "json", "os", "posixpath", "ntpath", "sys", "datetime", "uuid", "typing", "pathlib", "shutil", 
+            "json", "os", "posixpath", "ntpath", "sys", "datetime", "uuid", "typing", "pathlib", "shutil", "textwrap",
             "functools", "copy", "pickle", "logging", "warnings", "gc",
             # Development & configuration
             "argparse", "configparser", "yaml", "toml", "requests", "urllib",

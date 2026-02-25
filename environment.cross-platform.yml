@@ -1,0 +1,10 @@
+name: freephdlabor
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      - -r requirements-core.txt
+      - -r external_tools/run_experiment_tool/requirements.txt

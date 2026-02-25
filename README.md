@@ -67,19 +67,12 @@ git clone https://github.com/ltjed/freephdlabor.git
 cd freephdlabor
 ```
 
-2. **Create and activate conda environment:**
+2. **Recommended: one-command bootstrap (installs all required dependencies, including PDF/Web tooling):**
 ```bash
-conda env create -f environment.yml
-conda activate freephdlabor
+./scripts/bootstrap.sh
 ```
 
-3. **Install web-search runtime dependencies (required for OpenDeepSearch):**
-```bash
-pip install crawl4ai
-python -m playwright install chromium
-```
-
-4. **Set up API keys:**
+3. **Set up API keys:**
 Modify the `.env` file with your actual API keys:
 ```bash
 OPENAI_API_KEY=your_openai_key
@@ -90,6 +83,24 @@ GOOGLE_API_KEY=your_google_key
 ...
 ```
 Then optionally edit in `.llm_config.yaml` to customize model selection for different components.
+
+4. **Run a preflight check anytime:**
+```bash
+python scripts/preflight_check.py
+```
+
+#### Alternative setup paths
+
+- **Cross-platform conda file (Mac/Linux):**
+```bash
+conda env create -f environment.cross-platform.yml
+conda activate freephdlabor
+python -m playwright install chromium
+python scripts/preflight_check.py
+```
+
+- **Legacy Linux/HPC lockfile:**
+`environment.yml` is a Linux-oriented environment lockfile and may fail on macOS due to platform-specific packages (e.g., `_libgcc_mutex`).
 
 ## 🚀 Quick Start
 

@@ -20,6 +20,8 @@ from ..toolkits.general_tools.file_editing.file_editing_tools import (
     SearchKeyword,
     DeleteFileOrFolder,
 )
+from ..toolkits.general_tools.text_inspector.text_inspector_tool import TextInspectorTool
+from ..toolkits.writeup.vlm_document_analysis_tool import VLMDocumentAnalysisTool
 from ..prompts.manager_instructions import get_manager_system_prompt
 
 
@@ -147,7 +149,26 @@ Approach: Comprehensive documentation of all experimental artifacts without sele
         available_agents = [agent.name for agent in self.managed_agents]
 
         # Initialize file editing tools for ManagerAgent
+        from ..toolkits.model_utils import get_raw_model
+        raw_model = get_raw_model(model)
         file_editing_tools = []
+        enable_manager_text_inspector = os.getenv(
+            "FREEPHDLABOR_ENABLE_MANAGER_TEXT_INSPECTOR", "1"
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        # Keep at least one robust PDF/doc analysis tool available in manager.
+        document_tools = [VLMDocumentAnalysisTool(model=raw_model, working_dir=workspace_dir)]
+        if enable_manager_text_inspector:
+            # Always available in manager for PDF/long-doc ingestion when deps exist.
+            try:
+                document_tools.append(
+                    TextInspectorTool(model=raw_model, working_dir=workspace_dir)
+                )
+            except Exception as e:
+                print(
+                    "⚠️ TextInspectorTool disabled: optional document dependencies "
+                    f"are missing or misconfigured ({e})."
+                )
+
         if workspace_dir:
             file_editing_tools = [
                 SeeFile(working_dir=workspace_dir),
@@ -158,7 +179,7 @@ Approach: Comprehensive documentation of all experimental artifacts without sele
                 DeleteFileOrFolder(working_dir=workspace_dir),
             ]
 
-        tools: List = file_editing_tools
+        tools: List = [*document_tools, *file_editing_tools]
 
         # Generate complete system prompt using template
         system_prompt = get_manager_system_prompt(

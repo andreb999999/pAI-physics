@@ -168,6 +168,7 @@ KEY FILE MAINTENANCE:
 
 DELEGATION PRINCIPLES:
 - Explore workspace thoroughly before delegating tasks
+- For PDF/long document ingestion, use `vlm_document_analysis_tool` and/or `inspect_file_as_text` before delegating
 - Provide comprehensive context about all available experimental data
 - Use workspace files for persistent agent communication
 - Read agent outputs to understand their success/failure status

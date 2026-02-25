@@ -46,7 +46,7 @@ Examples:
     parser.add_argument(
         "--reasoning-effort",
         type=str,
-        choices=["minimal", "low", "medium", "high"],
+        choices=["none", "minimal", "low", "medium", "high", "xhigh"],
         default="high",
         help="GPT-5 reasoning effort level (controls thinking depth)"
     )
