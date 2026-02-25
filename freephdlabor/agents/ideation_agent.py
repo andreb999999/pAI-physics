@@ -11,7 +11,11 @@ from .base_research_agent import BaseResearchAgent
 
 from ..toolkits.paper_search_tool import PaperSearchTool
 from ..toolkits.general_tools.fetch_arxiv_papers.fetch_arxiv_papers_tools import FetchArxivPapersTool
-from ..toolkits.general_tools.open_deep_search.ods_tool import OpenDeepSearchTool
+# OpenDeepSearch depends on crawl4ai; make this optional so local/PDF-only runs still work.
+try:
+    from ..toolkits.general_tools.open_deep_search.ods_tool import OpenDeepSearchTool
+except Exception:  # pragma: no cover - optional dependency fallback
+    OpenDeepSearchTool = None
 from ..toolkits.writeup.vlm_document_analysis_tool import VLMDocumentAnalysisTool
 from ..toolkits.generate_idea_tool import GenerateIdeaTool
 from ..toolkits.check_idea_novelty_tool import CheckIdeaNoveltyTool
@@ -66,12 +70,16 @@ class IdeationAgent(BaseResearchAgent):
             # comment out for now, could be modified to work later
             # PaperSearchTool(),
             # CheckIdeaNoveltyTool(model=raw_model),  # Pass raw model for efficiency
-            OpenDeepSearchTool(model_name=model.model_id),
             FetchArxivPapersTool(working_dir=workspace_dir),  # Pass workspace_dir for proper file organization
             GenerateIdeaTool(model=raw_model),  # Tools use raw model for efficiency
             RefineIdeaTool(model=raw_model),  # Tools use raw model for efficiency
             VLMDocumentAnalysisTool(model=raw_model, working_dir=workspace_dir),  # Superior PDF analysis with visual understanding
         ]
+
+        if OpenDeepSearchTool is not None:
+            tools.insert(0, OpenDeepSearchTool(model_name=model.model_id))
+        else:
+            print("⚠️ OpenDeepSearchTool disabled: optional dependency 'crawl4ai' is not installed.")
         
         # Add file editing tools if workspace_dir is provided
         if workspace_dir:
