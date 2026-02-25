@@ -141,6 +141,7 @@ Here are the rules you should always follow to solve your task:
 7. You can use imports in your code, but only from the following list of modules: {{{{authorized_imports}}}}
 8. The state persists between code executions: so if in one step you've created variables or imported modules, these will all persist.
 9. STRING SYNTAX: Always properly close triple-quoted strings with three double quotes. For multiline content, prefer string concatenation (e.g., "Line 1" + " Line 2") over triple-quoted strings to avoid syntax errors.
+10. NEVER import tool names (for example, `import see_file` or `from x import final_answer`). Tools are already available as callables; call them directly.
 
 ALWAYS use the correct markdown format shown in all examples above: ```python your_code_here ```
 

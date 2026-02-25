@@ -41,6 +41,16 @@ def main() -> int:
     errors: list[str] = []
     warnings: list[str] = []
 
+    # Load repo-local .env so API key checks reflect real runtime behavior.
+    env_path = REPO_ROOT / ".env"
+    if env_path.exists():
+        try:
+            from dotenv import load_dotenv
+
+            load_dotenv(dotenv_path=env_path, override=False)
+        except Exception as exc:
+            warnings.append(f"Could not load .env: {exc}")
+
     required_modules = [
         "smolagents",
         "litellm",
