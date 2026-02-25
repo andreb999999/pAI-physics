@@ -3,6 +3,7 @@ import os
 import sys
 import json
 import functools
+import importlib.util
 from datetime import datetime
 import yaml
 
@@ -46,6 +47,27 @@ litellm.completion = filter_model_params(litellm.completion)
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from freephdlabor.utils import create_model, initialize_agent_system
+
+
+def _filter_installed_imports(import_names):
+    """
+    Keep only modules that are actually importable in the current environment.
+    This prevents LocalPythonExecutor from failing on optional dependencies.
+    """
+    available = []
+    missing = []
+    for name in import_names:
+        root = name.split(".")[0]
+        if importlib.util.find_spec(root) is not None:
+            available.append(name)
+        else:
+            missing.append(name)
+    if missing:
+        print(
+            "⚠️ Skipping unavailable authorized imports: "
+            + ", ".join(sorted(set(missing)))
+        )
+    return available
 
 def main():
     """Main entry point for the smolagents launcher."""
@@ -173,7 +195,7 @@ def main():
     elif "claude" in model_name and budget_tokens:
         print(f"✅ Claude Extended Thinking configuration: budget_tokens={budget_tokens}")
 
-    # Create the ManagerAgent
+        # Create the ManagerAgent
     try:
         # Essential imports for tool-centric agents (no direct ML library access)
         essential_imports = [
@@ -189,6 +211,7 @@ def main():
             # Development & testing
             "argparse", "configparser", "yaml", "toml",
         ]
+        essential_imports = _filter_installed_imports(essential_imports)
         
         # Create workspace-aware Python executor for agent code
         # This ensures agent-generated code runs in the workspace directory
