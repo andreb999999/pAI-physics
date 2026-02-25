@@ -212,12 +212,58 @@ class LoggingLiteLLMModel:
         Returns:
             Dictionary with token usage info or None
         """
-        if hasattr(response, 'token_usage') and response.token_usage:
+        def _safe_int(v) -> int:
+            try:
+                if v is None:
+                    return 0
+                return int(v)
+            except Exception:
+                return 0
+
+        def _extract(usage_obj) -> Optional[Dict[str, int]]:
+            if not usage_obj:
+                return None
+
+            def _get(*keys):
+                for key in keys:
+                    if isinstance(usage_obj, dict) and key in usage_obj:
+                        value = _safe_int(usage_obj.get(key))
+                        if value:
+                            return value
+                    if hasattr(usage_obj, key):
+                        value = _safe_int(getattr(usage_obj, key))
+                        if value:
+                            return value
+                return 0
+
+            prompt_tokens = _get("prompt_tokens", "input_tokens")
+            completion_tokens = _get("completion_tokens", "output_tokens")
+            total_tokens = _get("total_tokens")
+            if total_tokens == 0:
+                total_tokens = prompt_tokens + completion_tokens
+
+            if prompt_tokens == 0 and completion_tokens == 0 and total_tokens == 0:
+                return None
+
             return {
-                "prompt_tokens": getattr(response.token_usage, 'prompt_tokens', 0),
-                "completion_tokens": getattr(response.token_usage, 'completion_tokens', 0),
-                "total_tokens": getattr(response.token_usage, 'total_tokens', 0)
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": total_tokens,
             }
+
+        usage = _extract(getattr(response, "token_usage", None))
+        if usage:
+            return usage
+
+        usage = _extract(getattr(response, "usage", None))
+        if usage:
+            return usage
+
+        raw = getattr(response, "raw", None)
+        usage = _extract(getattr(raw, "usage", None))
+        if usage:
+            return usage
+
         return None
     
     def _get_workspace_run_id(self) -> str:

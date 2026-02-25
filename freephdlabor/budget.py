@@ -163,17 +163,70 @@ class BudgetedLiteLLMModel:
             return self.model.model
         return "unknown_model"
 
+    @staticmethod
+    def _safe_int(value: Any) -> int:
+        try:
+            if value is None:
+                return 0
+            return int(value)
+        except Exception:
+            return 0
+
+    @classmethod
+    def _extract_usage_from_obj(cls, usage_obj: Any) -> Optional[Dict[str, int]]:
+        if not usage_obj:
+            return None
+
+        def _get(*keys: str) -> int:
+            for key in keys:
+                # dict-style usage
+                if isinstance(usage_obj, dict) and key in usage_obj:
+                    value = cls._safe_int(usage_obj.get(key))
+                    if value:
+                        return value
+                # object-style usage
+                if hasattr(usage_obj, key):
+                    value = cls._safe_int(getattr(usage_obj, key))
+                    if value:
+                        return value
+            return 0
+
+        # Support both conventions:
+        # - prompt/completion (OpenAI-style usage)
+        # - input/output (smolagents TokenUsage wrapper)
+        prompt_tokens = _get("prompt_tokens", "input_tokens")
+        completion_tokens = _get("completion_tokens", "output_tokens")
+        total_tokens = _get("total_tokens")
+        if total_tokens == 0:
+            total_tokens = prompt_tokens + completion_tokens
+
+        # Cost accounting requires an input/output split. If unavailable, fail closed upstream.
+        if prompt_tokens == 0 and completion_tokens == 0:
+            return None
+
+        return {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+        }
+
     def _extract_token_usage(self, response) -> Optional[Dict[str, int]]:
-        if hasattr(response, "token_usage") and response.token_usage:
-            return {
-                "prompt_tokens": getattr(response.token_usage, "prompt_tokens", 0),
-                "completion_tokens": getattr(response.token_usage, "completion_tokens", 0),
-            }
-        if hasattr(response, "usage") and response.usage:
-            return {
-                "prompt_tokens": getattr(response.usage, "prompt_tokens", 0),
-                "completion_tokens": getattr(response.usage, "completion_tokens", 0),
-            }
+        # 1) smolagents ChatMessage.token_usage
+        usage = self._extract_usage_from_obj(getattr(response, "token_usage", None))
+        if usage:
+            return usage
+
+        # 2) direct response.usage
+        usage = self._extract_usage_from_obj(getattr(response, "usage", None))
+        if usage:
+            return usage
+
+        # 3) nested raw provider response (e.g., ChatMessage.raw.usage)
+        raw = getattr(response, "raw", None)
+        usage = self._extract_usage_from_obj(getattr(raw, "usage", None))
+        if usage:
+            return usage
+
         return None
 
     def generate(self, messages, **kwargs):
