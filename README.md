@@ -73,7 +73,13 @@ conda env create -f environment.yml
 conda activate freephdlabor
 ```
 
-3. **Set up API keys:**
+3. **Install web-search runtime dependencies (required for OpenDeepSearch):**
+```bash
+pip install crawl4ai
+python -m playwright install chromium
+```
+
+4. **Set up API keys:**
 Modify the `.env` file with your actual API keys:
 ```bash
 OPENAI_API_KEY=your_openai_key
