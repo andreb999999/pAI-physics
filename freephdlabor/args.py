@@ -44,8 +44,17 @@ Examples:
 
     parser.add_argument(
         "--log-to-files",
+        dest="log_to_files",
         action="store_true",
-        help="Redirect stdout/stderr to logs/freephdlabor_<timestamp>.{out,err}"
+        default=None,
+        help="Redirect stdout/stderr to logs/freephdlabor_<timestamp>.{out,err} (default: on)"
+    )
+
+    parser.add_argument(
+        "--no-log-to-files",
+        dest="log_to_files",
+        action="store_false",
+        help="Do not redirect stdout/stderr to log files"
     )
     
     # GPT-5 specific parameters

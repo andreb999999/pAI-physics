@@ -93,10 +93,14 @@ def main():
     # Create single timestamp for logs and workspace
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    # Opt-in file logging (stdout/stderr redirection).
-    enable_file_logs = args.log_to_files or (
-        os.getenv("FREEPHDLABOR_LOG_TO_FILES", "0").strip().lower() in {"1", "true", "yes", "on"}
-    )
+    # File logging defaults to enabled; can be overridden by CLI or env.
+    env_log_default = os.getenv("FREEPHDLABOR_LOG_TO_FILES", "1").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    enable_file_logs = env_log_default if args.log_to_files is None else args.log_to_files
     if enable_file_logs:
         os.makedirs("logs", exist_ok=True)
         out_path = f"logs/freephdlabor_{timestamp}.out"

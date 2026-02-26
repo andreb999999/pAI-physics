@@ -62,10 +62,12 @@ python launch_multiagent.py \
   --task "Summarize inputs and propose next research steps."
 ```
 
-Optional: log stdout/stderr to files:
+By default, stdout/stderr are written to `logs/freephdlabor_<timestamp>.out/.err`.
+
+Disable file logging if you want output only in terminal:
 
 ```bash
-python launch_multiagent.py --log-to-files --task "..."
+python launch_multiagent.py --no-log-to-files --task "..."
 ```
 
 ## 6) Resume a Workspace
