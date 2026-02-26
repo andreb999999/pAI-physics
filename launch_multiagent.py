@@ -53,10 +53,8 @@ from freephdlabor.interpreters import WorkspacePythonExecutor
 # Load environment variables from .env file
 load_dotenv(override=True)
 
-# Configure LiteLLM for GPT-5 compatibility and debugging
+# Configure LiteLLM for GPT-5 compatibility
 litellm.drop_params = True
-# Enable LiteLLM debugging (using new method to avoid deprecation warning)
-os.environ['LITELLM_LOG'] = 'DEBUG'
 
 # Apply the parameter filtering to LiteLLM completion function
 litellm.completion = filter_model_params(litellm.completion)
@@ -89,19 +87,32 @@ def _filter_installed_imports(import_names):
 
 def main():
     """Main entry point for the smolagents launcher."""
-    _setup_optional_tracing()
+    # Parse command line arguments
+    args = parse_arguments()
 
     # Create single timestamp for logs and workspace
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    # Auto-save logs to separate files
-    os.makedirs('logs', exist_ok=True)
-    sys.stdout = open(f'logs/freephdlabor_{timestamp}.out', 'w', buffering=1)
-    sys.stderr = open(f'logs/freephdlabor_{timestamp}.err', 'w', buffering=1)
+    # Opt-in file logging (stdout/stderr redirection).
+    enable_file_logs = args.log_to_files or (
+        os.getenv("FREEPHDLABOR_LOG_TO_FILES", "0").strip().lower() in {"1", "true", "yes", "on"}
+    )
+    if enable_file_logs:
+        os.makedirs("logs", exist_ok=True)
+        out_path = f"logs/freephdlabor_{timestamp}.out"
+        err_path = f"logs/freephdlabor_{timestamp}.err"
+        print(f"📝 Redirecting stdout/stderr to: {out_path}, {err_path}")
+        sys.stdout = open(out_path, "w", buffering=1)
+        sys.stderr = open(err_path, "w", buffering=1)
 
-    # Parse command line arguments
-    args = parse_arguments()
-    
+    # Only force LiteLLM debug when debug mode is explicitly enabled.
+    if args.debug:
+        os.environ["LITELLM_LOG"] = "DEBUG"
+    else:
+        os.environ.setdefault("LITELLM_LOG", "WARNING")
+
+    _setup_optional_tracing()
+
     # Load LLM config file if it exists
     llm_config = load_llm_config()
 

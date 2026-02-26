@@ -41,6 +41,12 @@ Examples:
         action="store_true",
         help="Enable debug logging"
     )
+
+    parser.add_argument(
+        "--log-to-files",
+        action="store_true",
+        help="Redirect stdout/stderr to logs/freephdlabor_<timestamp>.{out,err}"
+    )
     
     # GPT-5 specific parameters
     parser.add_argument(

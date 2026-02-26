@@ -1,0 +1,7 @@
+-r external_tools/run_experiment_tool/requirements.txt
+
+# Re-assert compatibility with smolagents<->huggingface stack.
+transformers==4.44.2
+datasets==2.21.0
+huggingface-hub<1.0.0
+tensorboard

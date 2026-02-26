@@ -14,7 +14,7 @@ from ..toolkits.general_tools.fetch_arxiv_papers.fetch_arxiv_papers_tools import
 # OpenDeepSearch depends on crawl4ai; make this optional so local/PDF-only runs still work.
 try:
     from ..toolkits.general_tools.open_deep_search.ods_tool import OpenDeepSearchTool
-except Exception:  # pragma: no cover - optional dependency fallback
+except (ImportError, ModuleNotFoundError):  # pragma: no cover - optional dependency fallback
     OpenDeepSearchTool = None
 from ..toolkits.writeup.vlm_document_analysis_tool import VLMDocumentAnalysisTool
 from ..toolkits.generate_idea_tool import GenerateIdeaTool

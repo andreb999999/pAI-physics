@@ -3,6 +3,32 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_NAME="${1:-freephdlabor}"
+PROFILE_RAW="${2:-full}"
+PROFILE="${PROFILE_RAW// /}"
+
+if [[ -z "$PROFILE" ]]; then
+  PROFILE="full"
+fi
+
+IFS=',' read -r -a PROFILE_ITEMS <<< "$PROFILE"
+
+has_capability() {
+  local cap="$1"
+  local item=""
+  for item in "${PROFILE_ITEMS[@]}"; do
+    if [[ "$item" == "full" || "$item" == "$cap" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+if ! has_capability minimal && ! has_capability docs && ! has_capability web && ! has_capability experiment; then
+  echo "Error: profile '$PROFILE_RAW' is invalid."
+  echo "Use one of: minimal, docs, web, experiment, full"
+  echo "You can combine capabilities with commas (example: minimal,web)."
+  exit 1
+fi
 
 if ! command -v conda >/dev/null 2>&1; then
   echo "Error: conda not found. Install Miniconda/Anaconda first."
@@ -23,17 +49,37 @@ fi
 conda activate "$ENV_NAME"
 
 python -m pip install --upgrade pip
-python -m pip install -r "$REPO_ROOT/requirements-core.txt"
-python -m pip install -r "$REPO_ROOT/external_tools/run_experiment_tool/requirements.txt"
+python -m pip install -r "$REPO_ROOT/requirements-minimal.txt"
+python -m pip install -r "$REPO_ROOT/requirements-observability.txt"
 
-# Re-assert compatibility between smolagents and experiment-tool stack.
-python -m pip install "transformers==4.44.2" "datasets==2.21.0" "huggingface-hub<1.0.0"
+if has_capability docs; then
+  python -m pip install -r "$REPO_ROOT/requirements-docs.txt"
+fi
 
-# Required by crawl4ai at runtime.
-python -m playwright install chromium
+if has_capability web; then
+  python -m pip install -r "$REPO_ROOT/requirements-web.txt"
+  # Required by crawl4ai at runtime.
+  python -m playwright install chromium
+fi
+
+if has_capability experiment; then
+  python -m pip install -r "$REPO_ROOT/requirements-experiment.txt"
+fi
 
 python -m pip check
-python "$REPO_ROOT/scripts/preflight_check.py"
+
+PREFLIGHT_ARGS=()
+if has_capability docs; then
+  PREFLIGHT_ARGS+=("--with-docs")
+fi
+if has_capability web; then
+  PREFLIGHT_ARGS+=("--with-web")
+fi
+if has_capability experiment; then
+  PREFLIGHT_ARGS+=("--with-experiment")
+fi
+python "$REPO_ROOT/scripts/preflight_check.py" "${PREFLIGHT_ARGS[@]}"
 
 echo "Setup complete."
+echo "Installed profile: $PROFILE_RAW"
 echo "Next: add API key(s) in $REPO_ROOT/.env and run launch_multiagent.py"

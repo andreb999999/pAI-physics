@@ -1,0 +1,7 @@
+mammoth==1.9.1
+markdownify==1.1.0
+python-pptx
+puremagic
+pydub
+SpeechRecognition
+youtube-transcript-api

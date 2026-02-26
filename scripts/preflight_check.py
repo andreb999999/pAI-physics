@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import argparse
 import importlib
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -37,7 +39,40 @@ def check_playwright_chromium() -> str | None:
     return None
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Validate freephdlabor runtime dependencies and optional capabilities."
+    )
+    parser.add_argument(
+        "--with-docs",
+        action="store_true",
+        help="Treat document parser stack as required.",
+    )
+    parser.add_argument(
+        "--with-web",
+        action="store_true",
+        help="Treat web crawling stack as required.",
+    )
+    parser.add_argument(
+        "--with-experiment",
+        action="store_true",
+        help="Treat experiment tool stack as required.",
+    )
+    return parser.parse_args()
+
+
+def _check_modules(modules: list[str], errors: list[str], warnings: list[str], required: bool) -> None:
+    for mod in modules:
+        err = check_import(mod)
+        if err:
+            if required:
+                errors.append(err)
+            else:
+                warnings.append(err)
+
+
 def main() -> int:
+    args = parse_args()
     errors: list[str] = []
     warnings: list[str] = []
 
@@ -58,7 +93,11 @@ def main() -> int:
         "dotenv",
         "fitz",
         "pdfminer",
-        "crawl4ai",
+        "requests",
+        "bs4",
+        "pypdf",
+    ]
+    docs_modules = [
         "mammoth",
         "markdownify",
         "pptx",
@@ -67,15 +106,35 @@ def main() -> int:
         "speech_recognition",
         "youtube_transcript_api",
     ]
+    web_modules = [
+        "crawl4ai",
+        "playwright",
+    ]
+    experiment_modules = [
+        "transformers",
+        "datasets",
+    ]
 
-    for mod in required_modules:
-        err = check_import(mod)
+    _check_modules(required_modules, errors, warnings, required=True)
+    _check_modules(docs_modules, errors, warnings, required=args.with_docs)
+    _check_modules(web_modules, errors, warnings, required=args.with_web)
+    _check_modules(experiment_modules, errors, warnings, required=args.with_experiment)
+
+    # Validate chromium only if web capability is requested/installed.
+    if args.with_web or check_import("playwright") is None:
+        err = check_playwright_chromium()
         if err:
-            errors.append(err)
+            if args.with_web:
+                errors.append(err)
+            else:
+                warnings.append(err)
 
-    err = check_playwright_chromium()
-    if err:
-        errors.append(err)
+    # Warn if pydub is installed but ffmpeg is not available.
+    if check_import("pydub") is None and shutil.which("ffmpeg") is None:
+        warnings.append(
+            "pydub is installed but ffmpeg is not on PATH. "
+            "Install ffmpeg for audio transcription features."
+        )
 
     api_key_names = [
         "OPENAI_API_KEY",
