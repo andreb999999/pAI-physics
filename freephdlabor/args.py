@@ -114,4 +114,29 @@ Examples:
         help="The research task description to be carried out by the multiagent system. Can be used with --resume to tell the system to continue working on a previous task."
     )
 
+    parser.add_argument(
+        "--require-pdf",
+        action="store_true",
+        help="For paper-writing runs, require final_paper.pdf before the manager can terminate successfully."
+    )
+
+    parser.add_argument(
+        "--enforce-paper-artifacts",
+        action="store_true",
+        help="Enforce paper artifact checks (always final_paper.tex; optionally final_paper.pdf with --require-pdf and experiments_to_run_later.md with --require-experiment-plan)."
+    )
+
+    parser.add_argument(
+        "--manager-max-steps",
+        type=int,
+        default=None,
+        help="Override manager agent max steps for this run."
+    )
+
+    parser.add_argument(
+        "--require-experiment-plan",
+        action="store_true",
+        help="When paper artifact enforcement is enabled, also require experiments_to_run_later.md."
+    )
+
     return parser.parse_args()

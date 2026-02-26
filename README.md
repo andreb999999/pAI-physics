@@ -78,6 +78,18 @@ python launch_multiagent.py \
   --reasoning-effort none \
   --verbosity low \
   --task "Continue from existing outputs."
+
+# Optional reliability controls for paper tasks:
+# - enforce truthful artifact reporting and required deliverables
+# - require final_paper.pdf before successful termination
+# - optionally require experiments_to_run_later.md as an explicit planning deliverable
+python launch_multiagent.py \
+  --resume /absolute/path/to/results/my_project_001 \
+  --task "Write and refine the paper, then produce final_paper.tex and final_paper.pdf." \
+  --enforce-paper-artifacts \
+  --require-pdf \
+  --require-experiment-plan \
+  --manager-max-steps 30
 ```
 
 ## 7) Provide Context Files (PDF/TXT/MD)
@@ -173,6 +185,26 @@ brew install ffmpeg
 ### No API key detected
 
 Check `.env` exists and contains a valid key. Then rerun preflight.
+
+### Reduce citation retries / token burn (optional)
+
+You can tune Semantic Scholar retry behavior:
+
+```bash
+export FREEPHDLABOR_SS_MAX_RETRIES=2
+export FREEPHDLABOR_SS_BASE_DELAY_SEC=2
+export FREEPHDLABOR_SS_COOLDOWN_SEC=60
+```
+
+### Limit large tool outputs in context (optional)
+
+To prevent huge file dumps from inflating context/tokens:
+
+```bash
+export FREEPHDLABOR_SEE_FILE_MAX_CHARS=12000
+export FREEPHDLABOR_SEARCH_MAX_CHARS=12000
+export FREEPHDLABOR_SEARCH_MAX_MATCHES=200
+```
 
 ## 11) Handoff Checklist (for a coworker)
 

@@ -67,6 +67,7 @@ from freephdlabor.token_usage_tracker import (
     initialize_run_token_tracker,
     patch_smolagents_monitoring,
 )
+from freephdlabor.result_validation import sanitize_result_payload
 
 
 def _filter_installed_imports(import_names):
@@ -228,6 +229,37 @@ def main():
     print(f"📁 Active workspace: {results_base_dir}")
     print(f"📝 Task: {task[:100]}{'...' if len(task) > 100 else ''}")
 
+    # Paper artifact gate can be forced by flag, or auto-enabled for obvious paper tasks.
+    auto_enforce_paper_artifacts = (
+        "final_paper" in task.lower()
+        or "experiments_to_run_later" in task.lower()
+    )
+    enforce_paper_artifacts = args.enforce_paper_artifacts or auto_enforce_paper_artifacts
+    required_paper_artifacts = []
+    require_experiment_plan = args.require_experiment_plan or (
+        "experiments_to_run_later" in task.lower()
+    )
+    if enforce_paper_artifacts:
+        required_paper_artifacts = ["final_paper.tex"]
+        if require_experiment_plan:
+            required_paper_artifacts.append("experiments_to_run_later.md")
+        if args.require_pdf:
+            required_paper_artifacts.append("final_paper.pdf")
+
+    os.environ["FREEPHDLABOR_REQUIRE_PDF"] = "1" if args.require_pdf else "0"
+    os.environ["FREEPHDLABOR_ENFORCE_PAPER_ARTIFACTS"] = (
+        "1" if enforce_paper_artifacts else "0"
+    )
+    os.environ["FREEPHDLABOR_REQUIRE_EXPERIMENT_PLAN"] = (
+        "1" if require_experiment_plan else "0"
+    )
+    if enforce_paper_artifacts:
+        print(
+            "🧭 Paper artifact gate enabled (required: "
+            + ", ".join(required_paper_artifacts)
+            + ")"
+        )
+
     # Create a model (after workspace is known so budget files live in workspace)
     budget_config = llm_config.get("budget", {}) if llm_config else {}
     model = create_model(
@@ -278,7 +310,10 @@ def main():
             essential_imports=essential_imports,
             enable_planning=args.enable_planning,
             planning_interval=args.planning_interval,
-            interrupt_callback=interrupt_callback
+            interrupt_callback=interrupt_callback,
+            require_pdf=args.require_pdf,
+            enforce_paper_artifacts=enforce_paper_artifacts,
+            require_experiment_plan=require_experiment_plan,
         )
         
         print("\n" + "=" * 50)
@@ -286,7 +321,24 @@ def main():
         print(f"📝 Task: {task}")
         print("=" * 50)
 
-        result = manager.run(task)
+        if args.manager_max_steps is not None:
+            result = manager.run(task, max_steps=args.manager_max_steps)
+        else:
+            result = manager.run(task)
+
+        sanitized_result = sanitize_result_payload(
+            result=result,
+            workspace_dir=results_base_dir,
+            required_artifacts=required_paper_artifacts,
+        )
+        if sanitized_result != result:
+            print("⚠️ Final result artifacts were sanitized to match filesystem state.")
+            result = sanitized_result
+        if isinstance(result, dict) and result.get("status") == "incomplete":
+            print(
+                "⚠️ Run marked incomplete: missing required artifacts = "
+                + ", ".join(result.get("missing_required_artifacts", []))
+            )
 
         print("\n" + "=" * 50)
         print("✅ Task finished!")

@@ -293,13 +293,29 @@ class LaTeXCompilerTool(Tool):
                     search_source="both"
                 )
 
-                # Parse search result
-                if search_result and '"success": true' in search_result.lower():
-                    result_data = json.loads(search_result)
-                    if result_data.get('citations'):
-                        return result_data['citations'][0]
+                result_data = json.loads(search_result) if search_result else {}
 
-                # No results found - not a transient error, return None
+                # Success path: citation_search_tool returns citations directly.
+                citations = result_data.get("citations", [])
+                if citations:
+                    return citations[0]
+
+                # Retry transient provider errors embedded in tool output.
+                err_text = str(result_data.get("error", "")).lower()
+                is_transient_error = any(
+                    marker in err_text
+                    for marker in ["rate limit", "429", "timeout", "500", "503", "connection", "cooldown"]
+                )
+                if is_transient_error and attempt < max_attempts - 1:
+                    wait_time = 2 ** (attempt + 1)
+                    print(
+                        f"Warning: Citation search transient failure for '{description}' "
+                        f"(attempt {attempt + 1}/{max_attempts}); retrying in {wait_time}s"
+                    )
+                    time.sleep(wait_time)
+                    continue
+
+                # No results (or non-transient issue): stop retrying.
                 return None
 
             except Exception as e:

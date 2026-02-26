@@ -81,6 +81,72 @@ class CitationSearchTool(Tool):
         super().__init__()
         self.arxiv_base_url = "http://export.arxiv.org/api/query?"
         self.semantic_scholar_base_url = "https://api.semanticscholar.org/graph/v1/paper/search"
+        self.semantic_scholar_max_retries = self._safe_int_env(
+            "FREEPHDLABOR_SS_MAX_RETRIES", 3
+        )
+        self.semantic_scholar_base_delay = self._safe_float_env(
+            "FREEPHDLABOR_SS_BASE_DELAY_SEC", 2.0
+        )
+        self.semantic_scholar_cooldown = self._safe_float_env(
+            "FREEPHDLABOR_SS_COOLDOWN_SEC", 60.0
+        )
+        self.semantic_scholar_timeout = self._safe_int_env(
+            "FREEPHDLABOR_SS_TIMEOUT_SEC", 30
+        )
+        self._semantic_scholar_cooldown_until = 0.0
+        self._cache_ttl_seconds = self._safe_int_env(
+            "FREEPHDLABOR_CITATION_CACHE_TTL_SEC", 1800
+        )
+        self._cache_max_entries = self._safe_int_env(
+            "FREEPHDLABOR_CITATION_CACHE_MAX_ENTRIES", 256
+        )
+        self._cache: Dict[str, Dict[str, Any]] = {}
+
+    @staticmethod
+    def _safe_int_env(name: str, default: int) -> int:
+        try:
+            value = int(os.getenv(name, str(default)))
+            return value if value >= 0 else default
+        except Exception:
+            return default
+
+    @staticmethod
+    def _safe_float_env(name: str, default: float) -> float:
+        try:
+            value = float(os.getenv(name, str(default)))
+            return value if value >= 0 else default
+        except Exception:
+            return default
+
+    @staticmethod
+    def _extract_arxiv_id(text: str) -> Optional[str]:
+        if not text:
+            return None
+        # Supports patterns like:
+        # - arXiv:1706.03762
+        # - 1706.03762
+        # - 1706.03762v3
+        match = re.search(r"(?:arxiv:)?\s*(\d{4}\.\d{4,5}(?:v\d+)?)", text, flags=re.IGNORECASE)
+        if not match:
+            return None
+        return match.group(1)
+
+    def _cache_get(self, key: str) -> Optional[str]:
+        entry = self._cache.get(key)
+        if not entry:
+            return None
+        if time.time() - entry["created_at"] > self._cache_ttl_seconds:
+            self._cache.pop(key, None)
+            return None
+        return entry["value"]
+
+    def _cache_put(self, key: str, value: str) -> None:
+        if self._cache_max_entries <= 0:
+            return
+        if len(self._cache) >= self._cache_max_entries and self._cache:
+            oldest_key = min(self._cache.items(), key=lambda item: item[1]["created_at"])[0]
+            self._cache.pop(oldest_key, None)
+        self._cache[key] = {"value": value, "created_at": time.time()}
         
     def forward(self, search_query: str, max_results: int = 10, search_source: str = "both") -> str:
         """
@@ -95,14 +161,33 @@ class CitationSearchTool(Tool):
             JSON string containing structured citations
         """
         try:
+            cache_key = f"{search_source}|{max_results}|{search_query.strip().lower()}"
+            cached = self._cache_get(cache_key)
+            if cached is not None:
+                return cached
+
             citations = []
+            arxiv_id = self._extract_arxiv_id(search_query)
+            # Deterministic mode for explicit arXiv IDs: prioritize exact arXiv lookup
+            # and skip Semantic Scholar when source='both' to avoid retry loops/noisy matches.
+            deterministic_arxiv_lookup = arxiv_id is not None and search_source in ["arxiv", "both"]
             
             if search_source in ["arxiv", "both"]:
-                arxiv_results = self._search_arxiv(search_query, max(1, max_results // 2) if search_source == "both" else max_results)
+                arxiv_results = self._search_arxiv(
+                    arxiv_id if deterministic_arxiv_lookup else search_query,
+                    max(1, max_results // 2) if search_source == "both" else max_results,
+                )
                 citations.extend(arxiv_results)
 
-            if search_source in ["semantic_scholar", "both"]:
-                ss_results = self._search_semantic_scholar(search_query, max(1, max_results // 2) if search_source == "both" else max_results)
+            use_semantic_scholar = search_source in ["semantic_scholar", "both"]
+            if deterministic_arxiv_lookup and search_source == "both":
+                use_semantic_scholar = False
+
+            if use_semantic_scholar:
+                ss_results = self._search_semantic_scholar(
+                    search_query,
+                    max(1, max_results // 2) if search_source == "both" else max_results,
+                )
                 citations.extend(ss_results)
             
             # Remove duplicates based on title similarity
@@ -130,7 +215,9 @@ class CitationSearchTool(Tool):
                 }
             }
             
-            return json.dumps(result, indent=2)
+            result_json = json.dumps(result, indent=2)
+            self._cache_put(cache_key, result_json)
+            return result_json
             
         except Exception as e:
             error_result = {
@@ -146,8 +233,15 @@ class CitationSearchTool(Tool):
         try:
             # Add small delay to be respectful to arXiv API
             time.sleep(1)
-            
-            url = f"{self.arxiv_base_url}search_query=all:{query}&start=0&max_results={max_results}&sortBy=submittedDate&sortOrder=descending"
+            arxiv_id = self._extract_arxiv_id(query)
+            if arxiv_id:
+                url = f"{self.arxiv_base_url}id_list={arxiv_id}"
+            else:
+                url = (
+                    f"{self.arxiv_base_url}search_query=all:{query}"
+                    f"&start=0&max_results={max_results}"
+                    "&sortBy=submittedDate&sortOrder=descending"
+                )
             
             headers = {
                 "User-Agent": "Academic-Citation-Tool/1.0 (research-tool)"
@@ -163,11 +257,14 @@ class CitationSearchTool(Tool):
             return []
     
     def _search_semantic_scholar(self, query: str, max_results: int) -> List[Dict[str, Any]]:
-        """Search Semantic Scholar for papers with rate limiting."""
+        """Search Semantic Scholar for papers with capped retries and cooldown."""
         try:
-            # Add delay to respect rate limits (Semantic Scholar allows ~100 requests/5 minutes)
-            time.sleep(2)  # 2 second delay between requests
-            
+            now = time.time()
+            if now < self._semantic_scholar_cooldown_until:
+                remaining = int(self._semantic_scholar_cooldown_until - now)
+                print(f"Warning: Semantic Scholar in cooldown, skipping request ({remaining}s remaining).")
+                return []
+
             params = {
                 "query": query,
                 "limit": max_results,
@@ -178,30 +275,47 @@ class CitationSearchTool(Tool):
                 "User-Agent": "Academic-Citation-Tool/1.0 (research-tool; contact@example.com)"
             }
             
-            response = requests.get(
-                self.semantic_scholar_base_url, 
-                params=params, 
-                headers=headers,
-                timeout=30
-            )
-            
-            if response.status_code == 429:
-                print("Warning: Semantic Scholar rate limit hit, waiting and retrying...")
-                time.sleep(10)  # Wait 10 seconds before retry
+            # Add small delay between requests to reduce burstiness.
+            time.sleep(self.semantic_scholar_base_delay)
+
+            for attempt in range(self.semantic_scholar_max_retries + 1):
                 response = requests.get(
-                    self.semantic_scholar_base_url, 
-                    params=params, 
+                    self.semantic_scholar_base_url,
+                    params=params,
                     headers=headers,
-                    timeout=30
+                    timeout=self.semantic_scholar_timeout
                 )
-            
-            response.raise_for_status()
-            data = response.json()
-            
-            return self._parse_semantic_scholar_response(data)
+                if response.status_code == 200:
+                    data = response.json()
+                    return self._parse_semantic_scholar_response(data)
+
+                retryable = response.status_code in {429, 500, 502, 503, 504}
+                if retryable and attempt < self.semantic_scholar_max_retries:
+                    wait_seconds = self.semantic_scholar_base_delay * (2 ** attempt)
+                    print(
+                        "Warning: Semantic Scholar request failed "
+                        f"(status {response.status_code}), retrying in {wait_seconds:.1f}s "
+                        f"[attempt {attempt + 1}/{self.semantic_scholar_max_retries}]"
+                    )
+                    time.sleep(wait_seconds)
+                    continue
+
+                if response.status_code == 429:
+                    self._semantic_scholar_cooldown_until = time.time() + self.semantic_scholar_cooldown
+                    print(
+                        "Warning: Semantic Scholar rate limit exceeded. "
+                        f"Entering cooldown for {int(self.semantic_scholar_cooldown)}s."
+                    )
+                    return []
+
+                response.raise_for_status()
+                return []
+
+            return []
             
         except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 429:
+            if e.response is not None and e.response.status_code == 429:
+                self._semantic_scholar_cooldown_until = time.time() + self.semantic_scholar_cooldown
                 print(f"Warning: Semantic Scholar rate limit exceeded. Try again later.")
                 return []
             else:

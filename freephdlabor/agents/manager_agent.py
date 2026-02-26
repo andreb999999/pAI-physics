@@ -6,6 +6,7 @@ Orchestrates IdeationAgent and other agents in the multi-agent system.
 import os
 from typing import List
 from .base_research_agent import BaseResearchAgent
+from ..result_validation import validate_result_artifacts
 
 from .reviewer_agent import ReviewerAgent
 from .ideation_agent import IdeationAgent
@@ -54,6 +55,10 @@ class ManagerAgent(BaseResearchAgent):
         """
         # Store the interpreter for later use (BaseResearchAgent will handle workspace executor)
         self.interpreter = interpreter
+        self.require_pdf = bool(kwargs.pop("require_pdf", False))
+        self.enforce_paper_artifacts = bool(kwargs.pop("enforce_paper_artifacts", False))
+        self.require_experiment_plan = bool(kwargs.pop("require_experiment_plan", False))
+        existing_final_answer_checks = kwargs.pop("final_answer_checks", [])
 
         # Create inter-agent messages folder (specific to ManagerAgent)
         if workspace_dir:
@@ -192,6 +197,10 @@ Approach: Comprehensive documentation of all experimental artifacts without sele
             workspace_dir=workspace_dir,
             tools=tools,
             managed_agents=self.managed_agents,
+            final_answer_checks=[
+                *existing_final_answer_checks,
+                self._validate_manager_success_criteria,
+            ],
             **kwargs
         )
 
@@ -203,3 +212,41 @@ Approach: Comprehensive documentation of all experimental artifacts without sele
     
         # Resume memory if possible
         self.resume_memory()
+
+    def _paper_required_artifacts(self) -> list[str]:
+        required = ["final_paper.tex"]
+        if self.require_experiment_plan:
+            required.append("experiments_to_run_later.md")
+        if self.require_pdf:
+            required.append("final_paper.pdf")
+        return required
+
+    def _validate_manager_success_criteria(self, final_answer, memory, agent=None):
+        """
+        Ensure manager does not terminate with false artifact claims.
+        """
+        if not self.enforce_paper_artifacts:
+            return True
+
+        workspace = self.workspace_dir or "."
+        summary = validate_result_artifacts(
+            result=final_answer,
+            workspace_dir=workspace,
+            required_artifacts=self._paper_required_artifacts(),
+        )
+
+        if summary["missing_required_artifacts"]:
+            raise ValueError(
+                "TERMINATION_BLOCKED: Missing required paper artifacts: "
+                + ", ".join(summary["missing_required_artifacts"])
+            )
+
+        # If the model reports artifacts, force truthful reporting.
+        if summary["artifacts"] and summary["missing_artifacts"]:
+            raise ValueError(
+                "TERMINATION_BLOCKED: Final answer lists artifacts that do not exist: "
+                + ", ".join(summary["missing_artifacts"])
+                + ". Create them or remove them from the artifacts list."
+            )
+
+        return True

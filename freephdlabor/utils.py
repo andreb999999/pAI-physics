@@ -229,7 +229,18 @@ from freephdlabor.interpreters import WorkspacePythonExecutor
 from freephdlabor.agents.reviewer_agent import ReviewerAgent
 from freephdlabor.agents.proofreading_agent import ProofreadingAgent
 
-def initialize_agent_system(model, workspace_dir, workspace_interpreter, essential_imports, enable_planning=False, planning_interval=3, interrupt_callback=None):
+def initialize_agent_system(
+    model,
+    workspace_dir,
+    workspace_interpreter,
+    essential_imports,
+    enable_planning=False,
+    planning_interval=3,
+    interrupt_callback=None,
+    require_pdf=False,
+    enforce_paper_artifacts=False,
+    require_experiment_plan=False,
+):
     """
     Initialize the complete multi-agent system with consistent configuration.
 
@@ -244,6 +255,9 @@ def initialize_agent_system(model, workspace_dir, workspace_interpreter, essenti
         enable_planning: Enable planning feature for research agents
         planning_interval: Interval for planning steps (e.g., 3 = replan every 3 steps)
         interrupt_callback: Setup Interrupt Callback
+        require_pdf: If True, manager requires final_paper.pdf when paper artifact checks are enabled
+        enforce_paper_artifacts: If True, enable manager paper artifact final-answer checks
+        require_experiment_plan: If True, manager also requires experiments_to_run_later.md
 
     Returns:
         ManagerAgent: Configured with pre-initialized specialist agents
@@ -341,6 +355,9 @@ Approach: Comprehensive documentation of all experimental artifacts without sele
         managed_agents=managed_agents,
         additional_authorized_imports=essential_imports,
         step_callbacks=[interrupt_callback],
+        require_pdf=require_pdf,
+        enforce_paper_artifacts=enforce_paper_artifacts,
+        require_experiment_plan=require_experiment_plan,
     )
     print("✅ ManagerAgent initialized with specialist agents")
     

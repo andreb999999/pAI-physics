@@ -4,6 +4,38 @@ from typing import Any
 import importlib.util
 
 
+def _safe_int_env(name: str, default: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+        return value if value >= 0 else default
+    except Exception:
+        return default
+
+
+def _truncate_text(content: str, max_chars: int, tool_name: str) -> str:
+    if max_chars <= 0 or len(content) <= max_chars:
+        return content
+
+    # Keep beginning + middle + end to reduce blind spots.
+    head_chars = max(1, int(max_chars * 0.5))
+    mid_chars = max(1, int(max_chars * 0.2))
+    tail_chars = max(1, max_chars - head_chars - mid_chars)
+
+    head = content[:head_chars]
+    mid_start = max(0, (len(content) // 2) - (mid_chars // 2))
+    mid = content[mid_start: mid_start + mid_chars]
+    tail = content[-tail_chars:]
+    omitted = len(content) - len(head) - len(mid) - len(tail)
+    return (
+        f"[{tool_name}] Output truncated to {max_chars} characters "
+        f"(omitted {omitted} chars). "
+        "Use search_keyword for targeted extraction.\n\n"
+        f"--- Begin excerpt ---\n{head}\n\n"
+        f"--- Middle excerpt ---\n{mid}\n\n"
+        f"--- End excerpt ---\n{tail}"
+    )
+
+
 class ListDir(Tool):
     name = "list_dir"
     description = (
@@ -101,9 +133,10 @@ class SeeFile(Tool):
             return str(e)
         if not os.path.exists(filepath):
             return f"The file {filename} does not exist."
-        with open(filepath, "r") as file:
+        with open(filepath, "r", encoding="utf-8", errors="replace") as file:
             content = file.read()
-        return content
+        max_chars = _safe_int_env("FREEPHDLABOR_SEE_FILE_MAX_CHARS", 12000)
+        return _truncate_text(content, max_chars=max_chars, tool_name="see_file")
 
     def _safe_path(self, path: str) -> str:
         """Convert path to absolute workspace path with clear error messages for agents."""
@@ -297,7 +330,11 @@ class SearchKeyword(Tool):
                             results.append(result)
                     except Exception as e:
                         results.append(f"[{rel_path}]: Error reading file ({e})")
-            return "\n\n".join(results) if results else f"No matches found for '{keyword}' in folder '{path}'."
+            if not results:
+                return f"No matches found for '{keyword}' in folder '{path}'."
+            body = "\n\n".join(results)
+            max_chars = _safe_int_env("FREEPHDLABOR_SEARCH_MAX_CHARS", 12000)
+            return _truncate_text(body, max_chars=max_chars, tool_name="search_keyword")
         else:
             return f"The path '{path}' is neither a file nor a directory."
 
@@ -310,6 +347,11 @@ class SearchKeyword(Tool):
 
         num_lines = len(lines)
         match_indices = [i for i, line in enumerate(lines) if keyword in line]
+        max_matches = _safe_int_env("FREEPHDLABOR_SEARCH_MAX_MATCHES", 200)
+        truncated_matches = False
+        if max_matches > 0 and len(match_indices) > max_matches:
+            match_indices = match_indices[:max_matches]
+            truncated_matches = True
 
         if not match_indices:
             return f"[{display_path}]: No matches found for '{keyword}'."
@@ -323,7 +365,15 @@ class SearchKeyword(Tool):
         sorted_output = sorted(output_lines)
         formatted_output = [f"{i+1}: {lines[i].rstrip()}" for i in sorted_output]
 
-        return f"--- Matches in [{display_path}] ---\n" + "\n".join(formatted_output)
+        body = f"--- Matches in [{display_path}] ---\n" + "\n".join(formatted_output)
+        if truncated_matches:
+            body += (
+                f"\n\n[search_keyword] Match list truncated to first {max_matches} matches. "
+                "Narrow the keyword or search within a smaller file scope."
+            )
+
+        max_chars = _safe_int_env("FREEPHDLABOR_SEARCH_MAX_CHARS", 12000)
+        return _truncate_text(body, max_chars=max_chars, tool_name="search_keyword")
 
     def _safe_path(self, path: str) -> str:
         """Convert path to absolute workspace path with clear error messages for agents."""
