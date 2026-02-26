@@ -63,6 +63,10 @@ litellm.completion = filter_model_params(litellm.completion)
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from freephdlabor.utils import create_model, initialize_agent_system
+from freephdlabor.token_usage_tracker import (
+    initialize_run_token_tracker,
+    patch_smolagents_monitoring,
+)
 
 
 def _filter_installed_imports(import_names):
@@ -210,6 +214,16 @@ def main():
 
     # Set environment variables for agents to use
     os.environ["RESULTS_BASE_DIR"] = results_base_dir
+
+    # Initialize run-scoped token tracking and patch step monitor display
+    run_id = f"{timestamp}_{os.getpid()}"
+    token_file = initialize_run_token_tracker(
+        workspace_dir=results_base_dir,
+        run_id=run_id,
+        reset=True,
+    )
+    patch_smolagents_monitoring()
+    print(f"📊 Run token tracker initialized: {token_file} (run_id={run_id})")
 
     print(f"📁 Active workspace: {results_base_dir}")
     print(f"📝 Task: {task[:100]}{'...' if len(task) > 100 else ''}")

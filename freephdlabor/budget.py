@@ -137,6 +137,20 @@ class BudgetManager:
         }
         self._write_ledger(entry)
 
+        # Also track run-scoped cumulative tokens used by terminal step summaries.
+        try:
+            from .token_usage_tracker import record_token_usage
+
+            record_token_usage(
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                source="budgeted_model",
+                model_id=model_id,
+            )
+        except Exception:
+            # Never let token-tracker errors break budget accounting.
+            pass
+
         if self.hard_stop and self.total_usd >= self.usd_limit:
             # Create lock file to prevent further calls
             os.makedirs(os.path.dirname(self.lock_path), exist_ok=True)

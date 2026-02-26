@@ -128,6 +128,25 @@ def chunk_file(path: Path) -> List[Dict[str, Any]]:
 
 def embed_texts(texts: list[str], client, embed_model: str) -> np.ndarray:
     resp = client.embeddings.create(model=embed_model, input=texts)
+    # Track token usage for direct embeddings API calls when available.
+    try:
+        usage = getattr(resp, "usage", None)
+        if usage is not None:
+            prompt_tokens = int(getattr(usage, "prompt_tokens", getattr(usage, "input_tokens", 0)) or 0)
+            # Embeddings do not have output tokens in the chat-completion sense.
+            completion_tokens = int(getattr(usage, "completion_tokens", getattr(usage, "output_tokens", 0)) or 0)
+            if prompt_tokens or completion_tokens:
+                from ....token_usage_tracker import record_token_usage
+
+                record_token_usage(
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    source="repo_indexer_embeddings",
+                    model_id=embed_model,
+                )
+    except Exception:
+        # Never fail indexing due to tracker issues.
+        pass
     return np.asarray([d.embedding for d in resp.data], dtype="float32")
 
 # ─────────────────────────────── Vector store ───────────────────────────────

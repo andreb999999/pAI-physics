@@ -754,6 +754,28 @@ class ImageConverter(MediaConverter):
         ]
 
         response = client.chat.completions.create(model=model, messages=messages)
+        # Track usage for direct OpenAI calls from markdown conversion helpers.
+        try:
+            usage = getattr(response, "usage", None)
+            if usage is not None:
+                prompt_tokens = int(
+                    getattr(usage, "prompt_tokens", getattr(usage, "input_tokens", 0)) or 0
+                )
+                completion_tokens = int(
+                    getattr(usage, "completion_tokens", getattr(usage, "output_tokens", 0)) or 0
+                )
+                if prompt_tokens or completion_tokens:
+                    from ....token_usage_tracker import record_token_usage
+
+                    record_token_usage(
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                        source="mdconvert",
+                        model_id=model,
+                    )
+        except Exception:
+            # Never fail conversion because of tracking errors.
+            pass
         return response.choices[0].message.content
 
 

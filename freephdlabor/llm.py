@@ -43,6 +43,54 @@ AVAILABLE_LLMS = [
 ]
 
 
+def _safe_int(value: Any) -> int:
+    try:
+        if value is None:
+            return 0
+        return int(value)
+    except Exception:
+        return 0
+
+
+def _record_response_token_usage(response: Any, model_id: str, source: str) -> None:
+    """
+    Record usage from raw OpenAI/Anthropic responses into run-scoped token totals.
+    """
+    try:
+        usage = getattr(response, "usage", None)
+        if usage is None:
+            return
+
+        prompt_tokens = 0
+        completion_tokens = 0
+
+        if isinstance(usage, dict):
+            prompt_tokens = _safe_int(usage.get("prompt_tokens", usage.get("input_tokens", 0)))
+            completion_tokens = _safe_int(usage.get("completion_tokens", usage.get("output_tokens", 0)))
+        else:
+            prompt_tokens = _safe_int(
+                getattr(usage, "prompt_tokens", getattr(usage, "input_tokens", 0))
+            )
+            completion_tokens = _safe_int(
+                getattr(usage, "completion_tokens", getattr(usage, "output_tokens", 0))
+            )
+
+        if prompt_tokens == 0 and completion_tokens == 0:
+            return
+
+        from .token_usage_tracker import record_token_usage
+
+        record_token_usage(
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            source=source,
+            model_id=model_id,
+        )
+    except Exception:
+        # Token tracking should never interrupt main execution.
+        pass
+
+
 # Get N responses from a single message, used for ensembling.
 @backoff.on_exception(backoff.expo, (openai.RateLimitError, openai.APITimeoutError))
 def get_batch_responses_from_llm(
@@ -76,6 +124,7 @@ def get_batch_responses_from_llm(
             stop=None,
             seed=0,
         )
+        _record_response_token_usage(response, model, "llm_batch")
         content = [r.message.content for r in response.choices]
         new_msg_history = [
             new_msg_history + [{"role": "assistant", "content": c}] for c in content
@@ -93,6 +142,7 @@ def get_batch_responses_from_llm(
             n=n_responses,
             stop=None,
         )
+        _record_response_token_usage(response, model, "llm_batch")
         content = [r.message.content for r in response.choices]
         new_msg_history = [
             new_msg_history + [{"role": "assistant", "content": c}] for c in content
@@ -110,6 +160,7 @@ def get_batch_responses_from_llm(
             n=n_responses,
             stop=None,
         )
+        _record_response_token_usage(response, model, "llm_batch")
         reasoning_content = [r.message.reasoning_content for r in response.choices]
         content = [r.message.content for r in response.choices]
         new_msg_history = [
@@ -128,6 +179,7 @@ def get_batch_responses_from_llm(
             n=n_responses,
             stop=None,
         )
+        _record_response_token_usage(response, model, "llm_batch")
         content = [r.message.content for r in response.choices]
         new_msg_history = [
             new_msg_history + [{"role": "assistant", "content": c}] for c in content
@@ -192,6 +244,7 @@ def get_response_from_llm(
             system=system_message,
             messages=new_msg_history,
         )
+        _record_response_token_usage(response, model, "llm_single")
         content = response.content[0].text
         new_msg_history = new_msg_history + [
             {
@@ -222,6 +275,7 @@ def get_response_from_llm(
             stop=None,
             seed=0,
         )
+        _record_response_token_usage(response, model, "llm_single")
         content = response.choices[0].message.content
         new_msg_history = new_msg_history + [{"role": "assistant", "content": content}]
     elif model in ["o1-preview-2024-09-12", "o1-mini-2024-09-12", "o1-2024-12-17", "o3-mini-2025-01-31",]:
@@ -239,6 +293,7 @@ def get_response_from_llm(
             #stop=None,
             seed=0,
         )
+        _record_response_token_usage(response, model, "llm_single")
         content = response.choices[0].message.content
         new_msg_history = new_msg_history + [{"role": "assistant", "content": content}]
     elif model == "deepseek-coder":
@@ -254,6 +309,7 @@ def get_response_from_llm(
             n=1,
             stop=None,
         )
+        _record_response_token_usage(response, model, "llm_single")
         content = response.choices[0].message.content
         new_msg_history = new_msg_history + [{"role": "assistant", "content": content}]
     elif model in ["deepseek-reasoner", "deepseek/deepseek-r1:nitro"]:
@@ -269,6 +325,7 @@ def get_response_from_llm(
             n=1,
             stop=None,
         )
+        _record_response_token_usage(response, model, "llm_single")
         # reasoning_content = response.choices[0].message.reasoning_content
         # print(f"@@@\n reasoning_content is {reasoning_content}")
         content = response.choices[0].message.content
@@ -287,6 +344,7 @@ def get_response_from_llm(
             n=1,
             stop=None,
         )
+        _record_response_token_usage(response, model, "llm_single")
         content = response.choices[0].message.content
         new_msg_history = new_msg_history + [{"role": "assistant", "content": content}]
     # elif model == "deepseek/deepseek-reasoner":
@@ -468,6 +526,7 @@ def get_response_from_vlm(
             n=1,
             seed=0,
         )
+        _record_response_token_usage(response, model, "vlm")
         content_response = response.choices[0].message.content
         
         # Update message history

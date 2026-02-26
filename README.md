@@ -98,7 +98,30 @@ python launch_multiagent.py \
   --task "Read inputs/*.pdf and inputs/*.md and inputs/*.txt. Create context_summary.md. Do NOT run experiments."
 ```
 
-## 8) Stop a Running Job
+## 8) Pause/Steer a Running Job (No Restart)
+
+The callback server listens on `127.0.0.1:5001` by default.
+
+From another terminal, connect and send:
+
+```bash
+nc 127.0.0.1 5001
+```
+
+Then type:
+
+1. `interrupt` (first line)
+2. Your instruction text
+3. Two empty lines (press Enter twice) to submit
+4. `m` for modification or `n` for new task
+
+Important behavior:
+
+- `interrupt` does **not** restart the run
+- it pauses at the next step boundary, appends your instruction to memory, and resumes from current state
+- this is steering, not process termination
+
+## 9) Stop (Kill) a Running Job
 
 In the same terminal where it is running:
 
@@ -110,7 +133,20 @@ If needed from another terminal:
 pkill -f launch_multiagent.py
 ```
 
-## 9) Common Issues
+If it does not stop, target the PID directly:
+
+```bash
+pgrep -f launch_multiagent.py
+kill <PID>
+```
+
+Last resort:
+
+```bash
+kill -9 <PID>
+```
+
+## 10) Common Issues
 
 ### Missing optional dependency (example: `crawl4ai`)
 
@@ -138,7 +174,7 @@ brew install ffmpeg
 
 Check `.env` exists and contains a valid key. Then rerun preflight.
 
-## 10) Handoff Checklist (for a coworker)
+## 11) Handoff Checklist (for a coworker)
 
 Before sharing, confirm:
 

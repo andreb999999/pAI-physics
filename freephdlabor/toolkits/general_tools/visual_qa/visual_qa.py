@@ -178,10 +178,30 @@ def visualizer(image_path: str, question: str | None = None) -> str:
     }
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {os.getenv('OPENAI_API_KEY')}"}
     response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
+    body = response.json()
+
+    # Track token usage for this direct OpenAI call, if usage is available.
     try:
-        output = response.json()["choices"][0]["message"]["content"]
+        usage = body.get("usage", {})
+        prompt_tokens = int(usage.get("prompt_tokens", usage.get("input_tokens", 0)) or 0)
+        completion_tokens = int(usage.get("completion_tokens", usage.get("output_tokens", 0)) or 0)
+        if prompt_tokens or completion_tokens:
+            from ....token_usage_tracker import record_token_usage
+
+            record_token_usage(
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                source="visual_qa",
+                model_id="gpt-4o",
+            )
     except Exception:
-        raise Exception(f"Response format unexpected: {response.json()}")
+        # Never fail the tool for tracking issues.
+        pass
+
+    try:
+        output = body["choices"][0]["message"]["content"]
+    except Exception:
+        raise Exception(f"Response format unexpected: {body}")
 
     if add_note:
         output = f"You did not provide a particular question, so here is a detailed caption for the image: {output}"
