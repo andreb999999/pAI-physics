@@ -228,6 +228,10 @@ from freephdlabor.agents.writeup_agent import WriteupAgent
 from freephdlabor.interpreters import WorkspacePythonExecutor
 from freephdlabor.agents.reviewer_agent import ReviewerAgent
 from freephdlabor.agents.proofreading_agent import ProofreadingAgent
+from freephdlabor.agents.math_proposer_agent import MathProposerAgent
+from freephdlabor.agents.math_prover_agent import MathProverAgent
+from freephdlabor.agents.math_rigorous_verifier_agent import MathRigorousVerifierAgent
+from freephdlabor.agents.math_empirical_verifier_agent import MathEmpiricalVerifierAgent
 
 def initialize_agent_system(
     model,
@@ -240,6 +244,7 @@ def initialize_agent_system(
     require_pdf=False,
     enforce_paper_artifacts=False,
     require_experiment_plan=False,
+    enable_math_agents=False,
 ):
     """
     Initialize the complete multi-agent system with consistent configuration.
@@ -258,6 +263,7 @@ def initialize_agent_system(
         require_pdf: If True, manager requires final_paper.pdf when paper artifact checks are enabled
         enforce_paper_artifacts: If True, enable manager paper artifact final-answer checks
         require_experiment_plan: If True, manager also requires experiments_to_run_later.md
+        enable_math_agents: If True, include theorem-oriented math agents in manager delegation pool
 
     Returns:
         ManagerAgent: Configured with pre-initialized specialist agents
@@ -346,8 +352,70 @@ Approach: Comprehensive documentation of all experimental artifacts without sele
     )
     print("✅ ProofreadingAgent initialized")
 
-    # Create ManagerAgent with pre-initialized agents (including NEW ResourcePreparationAgent)
-    managed_agents = [ideation_agent, experimentation_agent, resource_preparation_agent, writeup_agent, reviewer_agent, proofreading_agent]
+    managed_agents = [
+        ideation_agent,
+        experimentation_agent,
+        resource_preparation_agent,
+        writeup_agent,
+        reviewer_agent,
+        proofreading_agent,
+    ]
+
+    if enable_math_agents:
+        math_proposer_agent = MathProposerAgent(
+            model=model,
+            workspace_dir=workspace_dir,
+            name="math_proposer_agent",
+            description="A specialist agent for constructing mathematical claim graphs (claims, assumptions, dependencies).",
+            additional_authorized_imports=essential_imports,
+            step_callbacks=[interrupt_callback],
+            **planning_config
+        )
+        print("✅ MathProposerAgent initialized")
+
+        math_prover_agent = MathProverAgent(
+            model=model,
+            workspace_dir=workspace_dir,
+            name="math_prover_agent",
+            description="A specialist agent for writing structured proof drafts tied to claim graph items.",
+            additional_authorized_imports=essential_imports,
+            step_callbacks=[interrupt_callback],
+            **planning_config
+        )
+        print("✅ MathProverAgent initialized")
+
+        math_rigorous_verifier_agent = MathRigorousVerifierAgent(
+            model=model,
+            workspace_dir=workspace_dir,
+            name="math_rigorous_verifier_agent",
+            description="A specialist agent for auditing proof rigor and symbolic completeness.",
+            additional_authorized_imports=essential_imports,
+            step_callbacks=[interrupt_callback],
+            **planning_config
+        )
+        print("✅ MathRigorousVerifierAgent initialized")
+
+        math_empirical_verifier_agent = MathEmpiricalVerifierAgent(
+            model=model,
+            workspace_dir=workspace_dir,
+            name="math_empirical_verifier_agent",
+            description="A specialist agent for numeric sanity checks and counterexample search on math claims.",
+            additional_authorized_imports=essential_imports,
+            step_callbacks=[interrupt_callback],
+            **planning_config
+        )
+        print("✅ MathEmpiricalVerifierAgent initialized")
+
+        managed_agents.extend(
+            [
+                math_proposer_agent,
+                math_prover_agent,
+                math_rigorous_verifier_agent,
+                math_empirical_verifier_agent,
+            ]
+        )
+
+    # Create ManagerAgent with pre-initialized agents
     manager = ManagerAgent(
         model=model,
         interpreter=workspace_interpreter,
@@ -358,6 +426,7 @@ Approach: Comprehensive documentation of all experimental artifacts without sele
         require_pdf=require_pdf,
         enforce_paper_artifacts=enforce_paper_artifacts,
         require_experiment_plan=require_experiment_plan,
+        enable_math_agents=enable_math_agents,
     )
     print("✅ ManagerAgent initialized with specialist agents")
     

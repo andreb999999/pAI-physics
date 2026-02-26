@@ -7,12 +7,17 @@ import os
 from typing import List
 from .base_research_agent import BaseResearchAgent
 from ..result_validation import validate_result_artifacts
+from ..math_acceptance_validation import validate_math_acceptance
 
 from .reviewer_agent import ReviewerAgent
 from .ideation_agent import IdeationAgent
 from .experimentation_agent import ExperimentationAgent
 from .resource_preparation_agent import ResourcePreparationAgent
 from .writeup_agent import WriteupAgent
+from .math_proposer_agent import MathProposerAgent
+from .math_prover_agent import MathProverAgent
+from .math_rigorous_verifier_agent import MathRigorousVerifierAgent
+from .math_empirical_verifier_agent import MathEmpiricalVerifierAgent
 from ..toolkits.general_tools.file_editing.file_editing_tools import (
     SeeFile,
     CreateFileWithContent,
@@ -58,6 +63,7 @@ class ManagerAgent(BaseResearchAgent):
         self.require_pdf = bool(kwargs.pop("require_pdf", False))
         self.enforce_paper_artifacts = bool(kwargs.pop("enforce_paper_artifacts", False))
         self.require_experiment_plan = bool(kwargs.pop("require_experiment_plan", False))
+        self.enable_math_agents = bool(kwargs.pop("enable_math_agents", False))
         existing_final_answer_checks = kwargs.pop("final_answer_checks", [])
 
         # Create inter-agent messages folder (specific to ManagerAgent)
@@ -150,6 +156,44 @@ Approach: Comprehensive documentation of all experimental artifacts without sele
 
             self.managed_agents = [ideation_agent, experimentation_agent, resource_preparation_agent, writeup_agent, reviewer_agent]
 
+            if self.enable_math_agents:
+                math_proposer_agent = MathProposerAgent(
+                    model=model,
+                    workspace_dir=workspace_dir,
+                    name="math_proposer_agent",
+                    description="A specialist agent for constructing mathematical claim graphs (claims, assumptions, dependencies).",
+                    additional_authorized_imports=essential_imports,
+                )
+                math_prover_agent = MathProverAgent(
+                    model=model,
+                    workspace_dir=workspace_dir,
+                    name="math_prover_agent",
+                    description="A specialist agent for writing structured proof drafts tied to claim graph items.",
+                    additional_authorized_imports=essential_imports,
+                )
+                math_rigorous_verifier_agent = MathRigorousVerifierAgent(
+                    model=model,
+                    workspace_dir=workspace_dir,
+                    name="math_rigorous_verifier_agent",
+                    description="A specialist agent for auditing proof rigor and symbolic completeness.",
+                    additional_authorized_imports=essential_imports,
+                )
+                math_empirical_verifier_agent = MathEmpiricalVerifierAgent(
+                    model=model,
+                    workspace_dir=workspace_dir,
+                    name="math_empirical_verifier_agent",
+                    description="A specialist agent for numeric sanity checks and counterexample search on math claims.",
+                    additional_authorized_imports=essential_imports,
+                )
+                self.managed_agents.extend(
+                    [
+                        math_proposer_agent,
+                        math_prover_agent,
+                        math_rigorous_verifier_agent,
+                        math_empirical_verifier_agent,
+                    ]
+                )
+
         # Build dynamic agent list for prompt
         available_agents = [agent.name for agent in self.managed_agents]
 
@@ -223,30 +267,38 @@ Approach: Comprehensive documentation of all experimental artifacts without sele
 
     def _validate_manager_success_criteria(self, final_answer, memory, agent=None):
         """
-        Ensure manager does not terminate with false artifact claims.
+        Ensure manager does not terminate with false artifact claims
+        or invalid theorem-acceptance state.
         """
-        if not self.enforce_paper_artifacts:
-            return True
-
         workspace = self.workspace_dir or "."
-        summary = validate_result_artifacts(
-            result=final_answer,
-            workspace_dir=workspace,
-            required_artifacts=self._paper_required_artifacts(),
-        )
 
-        if summary["missing_required_artifacts"]:
-            raise ValueError(
-                "TERMINATION_BLOCKED: Missing required paper artifacts: "
-                + ", ".join(summary["missing_required_artifacts"])
+        if self.enforce_paper_artifacts:
+            summary = validate_result_artifacts(
+                result=final_answer,
+                workspace_dir=workspace,
+                required_artifacts=self._paper_required_artifacts(),
             )
 
-        # If the model reports artifacts, force truthful reporting.
-        if summary["artifacts"] and summary["missing_artifacts"]:
-            raise ValueError(
-                "TERMINATION_BLOCKED: Final answer lists artifacts that do not exist: "
-                + ", ".join(summary["missing_artifacts"])
-                + ". Create them or remove them from the artifacts list."
-            )
+            if summary["missing_required_artifacts"]:
+                raise ValueError(
+                    "TERMINATION_BLOCKED: Missing required paper artifacts: "
+                    + ", ".join(summary["missing_required_artifacts"])
+                )
+
+            # If the model reports artifacts, force truthful reporting.
+            if summary["artifacts"] and summary["missing_artifacts"]:
+                raise ValueError(
+                    "TERMINATION_BLOCKED: Final answer lists artifacts that do not exist: "
+                    + ", ".join(summary["missing_artifacts"])
+                    + ". Create them or remove them from the artifacts list."
+                )
+
+        if self.enable_math_agents:
+            math_summary = validate_math_acceptance(workspace_dir=workspace)
+            if math_summary["graph_present"] and not math_summary["is_valid"]:
+                raise ValueError(
+                    "TERMINATION_BLOCKED: Math claim acceptance audit failed: "
+                    + "; ".join(math_summary["errors"])
+                )
 
         return True

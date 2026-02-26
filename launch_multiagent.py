@@ -228,6 +228,8 @@ def main():
 
     print(f"📁 Active workspace: {results_base_dir}")
     print(f"📝 Task: {task[:100]}{'...' if len(task) > 100 else ''}")
+    if args.enable_math_agents:
+        print("Math agent workflow enabled (claim graph + prover/verifier loop)")
 
     # Paper artifact gate can be forced by flag, or auto-enabled for obvious paper tasks.
     auto_enforce_paper_artifacts = (
@@ -314,6 +316,7 @@ def main():
             require_pdf=args.require_pdf,
             enforce_paper_artifacts=enforce_paper_artifacts,
             require_experiment_plan=require_experiment_plan,
+            enable_math_agents=args.enable_math_agents,
         )
         
         print("\n" + "=" * 50)

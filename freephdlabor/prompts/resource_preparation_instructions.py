@@ -70,9 +70,9 @@ After creating the symlink to the actual ExperimentationAgent experiment folder,
 
 **TIER 3 - Context (Group Summary)**:
 - **Repetitive patterns**: Group by common patterns and provide counts
-  - Pattern: `*_epoch\d+.*` → "Training checkpoint files across N epochs"
-  - Pattern: `*_seed\d+.*` → "Multi-seed experiment results (N runs)"
-  - Pattern: `*_proc\d+.*` → "Parallel process outputs (N processes)"
+  - Pattern: `*_epoch\\d+.*` → "Training checkpoint files across N epochs"
+  - Pattern: `*_seed\\d+.*` → "Multi-seed experiment results (N runs)"
+  - Pattern: `*_proc\\d+.*` → "Parallel process outputs (N processes)"
 
 ## Workflow
 

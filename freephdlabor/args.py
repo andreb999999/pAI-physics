@@ -134,6 +134,12 @@ Examples:
     )
 
     parser.add_argument(
+        "--enable-math-agents",
+        action="store_true",
+        help="Enable theorem-oriented math agents (proposer, prover, rigorous verifier, empirical verifier)."
+    )
+
+    parser.add_argument(
         "--require-experiment-plan",
         action="store_true",
         help="When paper artifact enforcement is enabled, also require experiments_to_run_later.md."

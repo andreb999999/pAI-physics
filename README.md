@@ -1,4 +1,4 @@
-# Internal Setup Guide
+# freephdlabor Runbook
 
 This repository runs a multi-agent research workflow from a local workspace.
 
@@ -6,10 +6,10 @@ This repository runs a multi-agent research workflow from a local workspace.
 
 - macOS or Linux
 - Conda installed
-- Python 3.11 (managed by bootstrap)
+- Python 3.11 (managed by bootstrap script)
 - At least one LLM API key
 
-## 2) Quick Install (Recommended)
+## 2) Install (Recommended)
 
 From repo root:
 
@@ -21,14 +21,20 @@ Install profiles:
 
 - `minimal`: core runtime only
 - `docs`: document/audio parsing extras
-- `web`: web crawling extras (includes Playwright)
-- `experiment`: experiment-tool stack
+- `web`: web crawling extras (includes Playwright Chromium install)
+- `experiment`: experiment stack
 - `full`: all capabilities
 
 You can combine profiles:
 
 ```bash
 ./scripts/bootstrap.sh researchlab minimal,web
+```
+
+Activate the environment before running:
+
+```bash
+conda activate researchlab
 ```
 
 ## 3) Configure API Keys
@@ -44,16 +50,15 @@ OPENROUTER_API_KEY=...
 DEEPSEEK_API_KEY=...
 ```
 
-## 4) Verify Environment
+## 4) Preflight Check
 
 ```bash
-conda activate researchlab
 python scripts/preflight_check.py --with-docs --with-web --with-experiment
 ```
 
-If you installed fewer capabilities, remove the related flags.
+If you did not install all capabilities, remove the related flags.
 
-## 5) Run a Task
+## 5) Start a New Run
 
 ```bash
 python launch_multiagent.py \
@@ -62,90 +67,60 @@ python launch_multiagent.py \
   --task "Summarize inputs and propose next research steps."
 ```
 
-By default, stdout/stderr are written to `logs/freephdlabor_<timestamp>.out/.err`.
+By default, stdout/stderr are redirected to:
 
-Disable file logging if you want output only in terminal:
+- `logs/freephdlabor_<timestamp>.out`
+- `logs/freephdlabor_<timestamp>.err`
+
+Disable file logging if needed:
 
 ```bash
 python launch_multiagent.py --no-log-to-files --task "..."
 ```
 
-## 6) Resume a Workspace
+## 6) Resume an Existing Workspace
 
 ```bash
 python launch_multiagent.py \
   --resume /absolute/path/to/results/my_project_001 \
-  --reasoning-effort none \
-  --verbosity low \
   --task "Continue from existing outputs."
-
-# Optional reliability controls for paper tasks:
-# - enforce truthful artifact reporting and required deliverables
-# - require final_paper.pdf before successful termination
-# - optionally require experiments_to_run_later.md as an explicit planning deliverable
-python launch_multiagent.py \
-  --resume /absolute/path/to/results/my_project_001 \
-  --task "Write and refine the paper, then produce final_paper.tex and final_paper.pdf." \
-  --enforce-paper-artifacts \
-  --require-pdf \
-  --require-experiment-plan \
-  --manager-max-steps 30
 ```
 
-## 7) Provide Context Files (PDF/TXT/MD)
+## 7) Live Steering (Interrupt Without Restart)
 
-1. Put files into workspace `inputs/`:
+The launcher starts a callback socket (default `127.0.0.1:5001`).
 
-```bash
-mkdir -p /absolute/path/to/results/my_project_001/inputs
-```
-
-2. Run with an explicit instruction:
-
-```bash
-python launch_multiagent.py \
-  --resume /absolute/path/to/results/my_project_001 \
-  --reasoning-effort none \
-  --verbosity low \
-  --task "Read inputs/*.pdf and inputs/*.md and inputs/*.txt. Create context_summary.md. Do NOT run experiments."
-```
-
-## 8) Pause/Steer a Running Job (No Restart)
-
-The callback server listens on `127.0.0.1:5001` by default.
-
-From another terminal, connect and send:
+From another terminal:
 
 ```bash
 nc 127.0.0.1 5001
 ```
 
-Then type:
+Then send:
 
-1. `interrupt` (first line)
+1. `interrupt` (or `stop` / `pause`)
 2. Your instruction text
-3. Two empty lines (press Enter twice) to submit
+3. Enter twice (empty line, empty line)
 4. `m` for modification or `n` for new task
 
-Important behavior:
+Behavior:
 
-- `interrupt` does **not** restart the run
-- it pauses at the next step boundary, appends your instruction to memory, and resumes from current state
-- this is steering, not process termination
+- This does not restart the process.
+- The run pauses at a step boundary, appends your instruction, and resumes.
 
-## 9) Stop (Kill) a Running Job
+## 8) Stop a Running Job
 
-In the same terminal where it is running:
+Same terminal:
 
 - `Ctrl + C`
 
-If needed from another terminal:
+From another terminal:
 
 ```bash
 pkill -f launch_multiagent.py
 ```
 
-If it does not stop, target the PID directly:
+Target PID directly:
 
 ```bash
 pgrep -f launch_multiagent.py
@@ -158,11 +133,145 @@ Last resort:
 kill -9 <PID>
 ```
 
-## 10) Common Issues
+## 9) Paper Reliability Gates
+
+Use these when you want strict paper deliverables:
+
+```bash
+python launch_multiagent.py \
+  --resume /absolute/path/to/results/my_project_001 \
+  --task "Write and refine the paper, then produce final_paper.tex and final_paper.pdf." \
+  --enforce-paper-artifacts \
+  --require-pdf \
+  --require-experiment-plan \
+  --manager-max-steps 30
+```
+
+What this enforces:
+
+- truthful artifact reporting in final answer
+- required files present before successful termination
+
+## 10) Math Workflow (Theorem/Proof Pipeline)
+
+Enable math agents:
+
+```bash
+python launch_multiagent.py \
+  --resume /absolute/path/to/results/my_project_001 \
+  --task "Develop and validate theorem claims for this ML theory project." \
+  --enable-math-agents
+```
+
+Math workspace artifacts:
+
+- `math_workspace/claim_graph.json`
+- `math_workspace/proofs/<claim_id>.md`
+- `math_workspace/checks/<claim_id>.jsonl`
+- `math_workspace/lemma_library.md`
+
+Manager-side acceptance gate (enabled during math runs):
+
+- accepted claims must have proof/check artifacts
+- symbolic audit must pass
+- numeric evidence must pass or be explicitly waived
+- accepted claims can only depend on accepted claims
+- all `must_accept` claims must be accepted
+
+If this gate fails, termination is blocked with `TERMINATION_BLOCKED`.
+
+## 11) Lemma Library (Fast Path for Known Lemmas)
+
+If `lemma_library.md` is missing, a starter file is auto-created when the claim graph is initialized.
+
+Create/update manually:
+
+```bash
+mkdir -p /absolute/path/to/results/my_project_001/math_workspace
+```
+
+Suggested format:
+
+```markdown
+# Standard Lemma Library (Math Fast Path)
+
+## L_smooth_descent
+- tier: 1
+- area: optimization
+- statement: If f is L-smooth, then f(y) <= f(x) + <grad f(x), y-x> + (L/2)||y-x||^2.
+- assumptions:
+  - f is differentiable
+  - grad f is L-Lipschitz
+- source: Nesterov, Introductory Lectures on Convex Optimization
+- usage_notes: use for descent-step bounds
+
+## L_operator_nuclear_duality
+- tier: 1
+- area: matrix
+- statement: <A,B> <= ||A||_2 ||B||_*
+- assumptions:
+  - A,B are real matrices with compatible shape
+- source: Matrix Analysis texts
+- usage_notes: use in operator-vs-nuclear norm arguments
+```
+
+Prompt to generate a high-quality library with GPT Pro:
+
+```text
+Create a production-ready `lemma_library.md` for an ML-theory project.
+
+Requirements:
+1. Output only markdown content for the file.
+2. Include 30-80 lemmas max, prioritized by practical reuse for optimization/matrix/scaling-law proofs.
+3. For each lemma, use this schema exactly:
+   - id (heading, e.g., ## L_smooth_descent)
+   - tier (0 primitive, 1 standard ML-theory, 2 specialized known, 3 novel)
+   - area
+   - statement (precise and checkable)
+   - assumptions (explicit list)
+   - source (book/paper/internal note)
+   - usage_notes (1 line)
+4. Do not include uncheckable vague statements.
+5. Keep notation consistent and define conventions if needed.
+6. Prefer lemmas that reduce proof-token cost (common inequalities, smoothness/convexity tools, matrix norm identities, concentration basics).
+7. Add a short "Policy" section at top explaining when to use library-backed lemmas vs proving from scratch.
+
+Project context:
+- Focus: ML-theory papers with matrix calculus and optimization.
+- Goal: avoid wasting reasoning budget on known/easy lemmas.
+```
+
+## 12) Context File Ingestion (PDF/TXT/MD)
+
+Place files:
+
+```bash
+mkdir -p /absolute/path/to/results/my_project_001/inputs
+```
+
+Run:
+
+```bash
+python launch_multiagent.py \
+  --resume /absolute/path/to/results/my_project_001 \
+  --reasoning-effort none \
+  --verbosity low \
+  --task "Read inputs/*.pdf and inputs/*.md and inputs/*.txt. Create context_summary.md. Do NOT run experiments."
+```
+
+## 13) Common Issues
+
+### `ModuleNotFoundError: yaml` / `smolagents` / `litellm`
+
+Environment is incomplete. Re-run bootstrap:
+
+```bash
+./scripts/bootstrap.sh researchlab minimal
+conda activate researchlab
+python scripts/preflight_check.py
+```
 
 ### Missing optional dependency (example: `crawl4ai`)
-
-Install web profile:
 
 ```bash
 ./scripts/bootstrap.sh researchlab web
@@ -176,19 +285,15 @@ python -m playwright install chromium
 
 ### Audio warning about ffmpeg
 
-Install ffmpeg:
-
 ```bash
 brew install ffmpeg
 ```
 
 ### No API key detected
 
-Check `.env` exists and contains a valid key. Then rerun preflight.
+Check `.env` and shell environment variables.
 
-### Reduce citation retries / token burn (optional)
-
-You can tune Semantic Scholar retry behavior:
+### Reduce citation retries / token burn
 
 ```bash
 export FREEPHDLABOR_SS_MAX_RETRIES=2
@@ -196,9 +301,7 @@ export FREEPHDLABOR_SS_BASE_DELAY_SEC=2
 export FREEPHDLABOR_SS_COOLDOWN_SEC=60
 ```
 
-### Limit large tool outputs in context (optional)
-
-To prevent huge file dumps from inflating context/tokens:
+### Limit very large tool output in context
 
 ```bash
 export FREEPHDLABOR_SEE_FILE_MAX_CHARS=12000
@@ -206,19 +309,16 @@ export FREEPHDLABOR_SEARCH_MAX_CHARS=12000
 export FREEPHDLABOR_SEARCH_MAX_MATCHES=200
 ```
 
-## 11) Handoff Checklist (for a coworker)
+## 14) Git Hygiene Before Push
 
-Before sharing, confirm:
-
-- `./scripts/bootstrap.sh researchlab full` completes
-- `python scripts/preflight_check.py --with-docs --with-web --with-experiment` passes
-- A small test task runs successfully
-- `.env` is not committed
-
-Check with:
+Before pushing:
 
 ```bash
 git status -sb
 ```
 
-If `.env` appears tracked, untrack it before pushing.
+Sanity notes:
+
+- `.env`, `logs/`, `results/`, and `*.log` are ignored by default.
+- Confirm no secrets are tracked.
+- Confirm only intended code/docs changes are staged.

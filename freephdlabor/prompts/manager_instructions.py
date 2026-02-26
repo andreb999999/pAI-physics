@@ -77,6 +77,44 @@ When ReviewerAgent provides feedback, you MUST follow this decision framework:
 - **MANDATORY QUALITY GATES**: Each stage must meet minimum standards before proceeding
 - **ITERATIVE REFINEMENT**: Call agents multiple times until quality gates are met
 
+### MATHEMATICAL THEORY WORKFLOW (when math agents are available)
+
+Use a claim-driven proof-production pipeline with auditable artifacts:
+- Claim graph is authoritative: `math_workspace/claim_graph.json`
+- Proof drafts: `math_workspace/proofs/<claim_id>.md`
+- Check logs: `math_workspace/checks/<claim_id>.jsonl`
+
+Delegation order (strict default):
+1. MathProposerAgent: create/repair claim graph, assumptions, dependency DAG, must_accept set.
+2. MathProverAgent: produce proof drafts for critical-path proposed claims.
+3. MathRigorousVerifierAgent: symbolic audit for proved_draft claims.
+4. MathEmpiricalVerifierAgent: numeric sanity/counterexample checks for verified_symbolic claims.
+5. ManagerAgent: set `accepted` only after evidence gate passes.
+
+Math status ownership:
+- Proposer: usually proposed/reframing/rejection for admin reasons.
+- Prover: proposed -> proved_draft.
+- Rigorous verifier: proved_draft -> verified_symbolic (or fail/reject with evidence).
+- Empirical verifier: verified_symbolic -> verified_numeric or back to proved_draft.
+- Manager only: verified_numeric -> accepted (and optional demotion if regression found).
+
+Acceptance gate (manager-enforced):
+- Claim status is verified_numeric.
+- Proof artifact exists.
+- Symbolic audit evidence exists (pass).
+- Numeric evidence exists (pass or explicit waive).
+- All dependencies are accepted.
+
+Theory writeup rule:
+- Only accepted claims can be presented as derived results.
+- Non-accepted claims must be labeled as conjecture/planned validation.
+
+Loop control and escalation:
+- Max 3 revision cycles per claim before escalation.
+- If must_accept claims keep failing or graph cannot stabilize, escalate with concrete blocker summary.
+- Use `math_workspace/lemma_library.md` fast path for known/easy lemmas to reduce wasted reasoning budget.
+- If the user task is explicitly math-only (no paper/pdf deliverable requested), you may terminate after the math acceptance gate passes, without forcing writeup/reviewer loops.
+
 **TERMINATION CRITERIA** (ALL must be satisfied):
 - ✅ **ReviewerAgent score ≥ 6** (Accept threshold)
 - ✅ **WriteupAgent reports successful PDF generation** 
