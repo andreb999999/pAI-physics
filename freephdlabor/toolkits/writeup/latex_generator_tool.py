@@ -460,6 +460,7 @@ Generate only the LaTeX content for this section."""
 
         # Use provided title or default
         title = paper_title if paper_title else "Research Paper Title"
+        watermark_text = "Generated with a research agent created by Pierfrancesco Beneventano"
 
         # Use ICML template by default if available (ResourcePreparationAgent copies it automatically)
         icml_style_path = os.path.join(self.working_dir, "paper_workspace", "icml2024.sty") if self.working_dir else None
@@ -475,6 +476,8 @@ Generate only the LaTeX content for this section."""
 \\usepackage{{subfigure}}
 \\usepackage{{booktabs}}
 \\usepackage{{hyperref}}
+\\usepackage{{xcolor}}
+\\usepackage{{eso-pic}}
 
 % Use the ICML 2024 style (comment out for blind review)
 \\usepackage[accepted]{{icml2024}}
@@ -495,7 +498,18 @@ Generate only the LaTeX content for this section."""
 % Running title
 \\icmltitlerunning{{{title}}}
 
+% White attribution watermark (rendered on every page background)
+\\newcommand{{\\AgentAttributionText}}{{{watermark_text}}}
+\\newcommand{{\\AgentAttributionWatermark}}{{%
+  \\AddToShipoutPictureBG{{%
+    \\AtPageCenter{{%
+      \\makebox(0,0){{\\rotatebox{{45}}{{\\textcolor{{white}}{{\\footnotesize \\AgentAttributionText}}}}}}%
+    }}%
+  }}%
+}}
+
 \\begin{{document}}
+\\AgentAttributionWatermark
 
 \\twocolumn[
 \\icmltitle{{{title}}}
@@ -526,12 +540,25 @@ Generate only the LaTeX content for this section."""
 \\usepackage{{algpseudocode}}
 \\usepackage{{hyperref}}
 \\usepackage{{natbib}}
+\\usepackage{{xcolor}}
+\\usepackage{{eso-pic}}
 
 \\title{{{title}}}
 \\author{{Author Names}}
 \\date{{}}
 
+% White attribution watermark (rendered on every page background)
+\\newcommand{{\\AgentAttributionText}}{{{watermark_text}}}
+\\newcommand{{\\AgentAttributionWatermark}}{{%
+  \\AddToShipoutPictureBG{{%
+    \\AtPageCenter{{%
+      \\makebox(0,0){{\\rotatebox{{45}}{{\\textcolor{{white}}{{\\footnotesize \\AgentAttributionText}}}}}}%
+    }}%
+  }}%
+}}
+
 \\begin{{document}}
+\\AgentAttributionWatermark
 \\maketitle"""
         else:
             # General academic style
@@ -542,12 +569,25 @@ Generate only the LaTeX content for this section."""
 \\usepackage{{booktabs}}
 \\usepackage{{hyperref}}
 \\usepackage{{natbib}}
+\\usepackage{{xcolor}}
+\\usepackage{{eso-pic}}
 
 \\title{{{title}}}
 \\author{{Author Names}}
 \\date{{}}
 
+% White attribution watermark (rendered on every page background)
+\\newcommand{{\\AgentAttributionText}}{{{watermark_text}}}
+\\newcommand{{\\AgentAttributionWatermark}}{{%
+  \\AddToShipoutPictureBG{{%
+    \\AtPageCenter{{%
+      \\makebox(0,0){{\\rotatebox{{45}}{{\\textcolor{{white}}{{\\footnotesize \\AgentAttributionText}}}}}}%
+    }}%
+  }}%
+}}
+
 \\begin{{document}}
+\\AgentAttributionWatermark
 \\maketitle"""
     
     def _clean_latex_output(self, raw_output: str) -> str:
@@ -699,4 +739,3 @@ Generate only the LaTeX content for this section."""
             context += f"- {cite_key}: {title}\n"
 
         return context
-

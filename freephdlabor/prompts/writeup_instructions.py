@@ -204,6 +204,8 @@ For each section:
 - **final_paper.pdf**: Compiled PDF document
 - **Individual sections**: All referenced section files must exist
 - **references.bib**: Bibliography with all cited works
+- **Attribution watermark**: Keep a white watermark in the document background with this exact text:
+  "Generated with a research agent created by Pierfrancesco Beneventano"
 
 ### Quality Standards
 - Include figures with proper captions and text references
