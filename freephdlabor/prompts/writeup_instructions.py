@@ -55,6 +55,10 @@ ResourcePreparationAgent has prepared comprehensive experimental documentation f
 ## Editorial Contract (Mandatory in quality-focused runs)
 
 Treat writing as an editorial pipeline with explicit artifacts:
+- `paper_workspace/author_style_guide.md`: author voice and structural contract.
+- `paper_workspace/intro_skeleton.tex`: intro blueprint (questions + takeaways).
+- `paper_workspace/style_macros.tex`: question/takeaway environment macros.
+- `paper_workspace/reader_contract.json`: mapping from intro questions/takeaways to evidence.
 - `paper_workspace/editorial_contract.md`: non-negotiable writing rules.
 - `paper_workspace/theorem_map.json`: canonical theorem/lemma placement map.
 - `paper_workspace/revision_log.md`: append a short pass log for each major rewrite.
@@ -62,6 +66,9 @@ Treat writing as an editorial pipeline with explicit artifacts:
 If these files do not exist, create them first with concise, practical content.
 
 Required editorial behavior:
+- The introduction must include explicit research questions and explicit takeaways.
+- The introduction should follow the skeleton style used in your papers (question blocks and takeaway boxes).
+- Every takeaway must point to evidence (figure/table/theorem/section).
 - Keep main body concise: state results clearly and avoid repeated motivation paragraphs.
 - Define key terms once, then refer by labels.
 - Keep proof sketches in main text short; place heavy derivations in appendix files.
@@ -229,6 +236,10 @@ For each section:
 - **Attribution watermark**: Keep a white watermark in the document background with this exact text:
   "Generated with a research agent created by Pierfrancesco Beneventano"
 - **paper_workspace/revision_log.md**: Brief changelog of draft/copy-edit/review cycles
+- **paper_workspace/author_style_guide.md**: Author-specific voice and intro constraints
+- **paper_workspace/intro_skeleton.tex**: Question/takeaway intro template
+- **paper_workspace/style_macros.tex**: Styling macros for question/takeaway blocks
+- **paper_workspace/reader_contract.json**: Question/takeaway to evidence map
 - **paper_workspace/theorem_map.json**: Theorem map for non-redundant structure
 - **paper_workspace/editorial_contract.md**: Writing contract used for consistency
 - **paper_workspace/claim_traceability.json**: Required when math claim workflow is active

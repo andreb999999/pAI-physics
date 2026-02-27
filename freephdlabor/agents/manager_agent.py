@@ -9,6 +9,7 @@ from .base_research_agent import BaseResearchAgent
 from ..result_validation import validate_result_artifacts
 from ..math_acceptance_validation import validate_math_acceptance
 from ..paper_traceability_validation import validate_claim_traceability
+from ..review_verdict_validation import validate_review_verdict
 
 from .reviewer_agent import ReviewerAgent
 from .ideation_agent import IdeationAgent
@@ -69,6 +70,7 @@ class ManagerAgent(BaseResearchAgent):
         self.enforce_editorial_artifacts = bool(
             kwargs.pop("enforce_editorial_artifacts", False)
         )
+        self.min_review_score = int(kwargs.pop("min_review_score", 8))
         existing_final_answer_checks = kwargs.pop("final_answer_checks", [])
 
         # Create inter-agent messages folder (specific to ManagerAgent)
@@ -291,11 +293,16 @@ Approach: Comprehensive documentation of all experimental artifacts without sele
         if self.enforce_editorial_artifacts:
             required.extend(
                 [
+                    "paper_workspace/author_style_guide.md",
+                    "paper_workspace/intro_skeleton.tex",
+                    "paper_workspace/style_macros.tex",
+                    "paper_workspace/reader_contract.json",
                     "paper_workspace/editorial_contract.md",
                     "paper_workspace/theorem_map.json",
                     "paper_workspace/revision_log.md",
                     "paper_workspace/copyedit_report.md",
                     "paper_workspace/review_report.md",
+                    "paper_workspace/review_verdict.json",
                 ]
             )
             if self.enable_math_agents:
@@ -344,5 +351,16 @@ Approach: Comprehensive documentation of all experimental artifacts without sele
                         "TERMINATION_BLOCKED: Claim traceability audit failed: "
                         + "; ".join(traceability_summary["errors"])
                     )
+
+        if self.enforce_editorial_artifacts:
+            review_summary = validate_review_verdict(
+                workspace_dir=workspace,
+                min_review_score=self.min_review_score,
+            )
+            if not review_summary["is_valid"]:
+                raise ValueError(
+                    "TERMINATION_BLOCKED: Review verdict gate failed: "
+                    + "; ".join(review_summary["errors"])
+                )
 
         return True

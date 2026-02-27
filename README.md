@@ -2,6 +2,8 @@
 
 This repository runs a multi-agent research workflow from a local workspace.
 
+Built for a **human-on-the-loop** workflow (not human-in-the-loop), freephdlabor is designed to let researchers steer direction while autonomous, customizable, and promptable agents execute the heavy research work. The goal is simple: keep human intent and scientific taste at the center, while the agent system performs at the best level your guidance can unlock.
+
 ## System Map
 
 ### Agent Orchestration
@@ -42,13 +44,14 @@ flowchart LR
     G1 -- "yes" --> PA["Required paper artifacts<br/>final_paper.tex (+ optional pdf/plan)"]
     PA --> G2{"--enforce-editorial-artifacts?"}
     G2 -- "no" --> END2["Paper artifact gate only"]
-    G2 -- "yes" --> EA["Editorial artifacts<br/>editorial_contract/theorem_map/revision_log/<br/>copyedit_report/review_report"]
+    G2 -- "yes" --> EA["Editorial artifacts<br/>author_style_guide/intro_skeleton/style_macros/<br/>reader_contract/editorial_contract/theorem_map/<br/>revision_log/copyedit_report/review_report/review_verdict"]
 
     EA --> G3{"--enable-math-agents?"}
     G3 -- "no" --> END3["Editorial + paper gates"]
     G3 -- "yes" --> MA["Math acceptance gate<br/>accepted claims + proof/check evidence"]
     MA --> CT["Claim traceability gate<br/>paper claims -> accepted claim ids"]
-    CT --> END4["All enabled gates pass"]
+    CT --> RV["Review verdict gate<br/>overall_score >= min_review_score,<br/>no hard blockers, ai_voice_risk != high"]
+    RV --> END4["All enabled gates pass"]
 ```
 
 ## 1) Prerequisites
@@ -150,6 +153,7 @@ python launch_multiagent.py --no-log-to-files --task "..."
 - `--enable-math-agents`: enable math proposer/prover/verifier agents.
 - `--require-experiment-plan`: require `experiments_to_run_later.md` when paper artifact enforcement is active.
 - `--enforce-editorial-artifacts`: require editorial workflow artifacts for high-quality writing runs.
+- `--min-review-score`: strict reviewer threshold for editorial gate (default `8`).
 
 ## 6) Resume an Existing Workspace
 
@@ -216,6 +220,7 @@ python launch_multiagent.py \
   --task "Write and refine the paper, then produce final_paper.tex and final_paper.pdf." \
   --enforce-paper-artifacts \
   --enforce-editorial-artifacts \
+  --min-review-score 8 \
   --require-pdf \
   --require-experiment-plan \
   --manager-max-steps 30
@@ -226,12 +231,18 @@ What this enforces:
 - truthful artifact reporting in final answer
 - required files present before successful termination
 - if `--enforce-editorial-artifacts` is enabled:
+  - `paper_workspace/author_style_guide.md`
+  - `paper_workspace/intro_skeleton.tex`
+  - `paper_workspace/style_macros.tex`
+  - `paper_workspace/reader_contract.json`
   - `paper_workspace/editorial_contract.md`
   - `paper_workspace/theorem_map.json`
   - `paper_workspace/revision_log.md`
   - `paper_workspace/copyedit_report.md`
   - `paper_workspace/review_report.md`
+  - `paper_workspace/review_verdict.json`
   - plus `paper_workspace/claim_traceability.json` when `--enable-math-agents` is active
+  - reviewer verdict gate: `overall_score >= --min-review-score`, no hard blockers, and `ai_voice_risk != high`
 
 Editorial artifact mode is optional and intended for high-quality, final-form writing runs.
 

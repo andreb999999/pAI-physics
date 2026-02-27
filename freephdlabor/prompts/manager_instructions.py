@@ -37,13 +37,17 @@ When ReviewerAgent provides feedback, you MUST follow this decision framework:
 **SCORE 3-4 (Reject/Weak Reject)**:
 - **REVISION REQUIRED**: Paper needs significant improvements
 - **Decision Process**: Same as above based on issue type
-- **Continue iterations** until score improves to acceptable level (≥6)
+- **Continue iterations** until score improves to acceptable level (strict mode target: ≥8)
 
 **SCORE 5 (Borderline)**:
-- **OPTIONAL REVISION**: Consider one more WriteupAgent iteration for minor improvements
-- May proceed if time constraints require it
+- **REVISION REQUIRED IN STRICT MODE**: Do not terminate in strict publication mode.
+- In non-strict runs, you may proceed only if user explicitly prefers speed over quality.
 
-**SCORE 6+ (Accept)**:
+**SCORE 6-7 (Moderate/Weak Accept)**:
+- **REVISION STRONGLY RECOMMENDED**: Usually not publication-ready under strict quality requirements.
+- Use at least one more WriteupAgent + ProofreadingAgent + ReviewerAgent cycle.
+
+**SCORE 8+ (Publication-Ready Accept)**:
 - **ACCEPTABLE QUALITY**: May terminate successfully
 - Research workflow complete
 
@@ -120,6 +124,10 @@ Loop control and escalation:
 Treat writing as a gated pipeline, not a single-step generation:
 1. WriteupAgent draft pass:
    - Produce/update paper sections and `final_paper.tex`.
+   - Create/update `paper_workspace/author_style_guide.md`.
+   - Create/update `paper_workspace/intro_skeleton.tex`.
+   - Create/update `paper_workspace/style_macros.tex`.
+   - Create/update `paper_workspace/reader_contract.json`.
    - Create/update `paper_workspace/editorial_contract.md`.
    - Create/update `paper_workspace/theorem_map.json`.
 2. ProofreadingAgent concision/copy-edit pass:
@@ -127,9 +135,10 @@ Treat writing as a gated pipeline, not a single-step generation:
    - Normalize notation and wording consistency.
    - Produce `paper_workspace/copyedit_report.md`.
 3. ReviewerAgent review pass:
-   - Produce `paper_workspace/review_report.md` with explicit strengths/weaknesses and score.
+   - Produce `paper_workspace/review_report.md`.
+   - Produce `paper_workspace/review_verdict.json` with score, hard blockers, intro compliance, and revision plan.
 4. Manager loop:
-   - If score < 6 or quality issues remain, return to WriteupAgent/ProofreadingAgent with specific fixes.
+   - If score < strict threshold (default 8) or quality issues remain, return to WriteupAgent/ProofreadingAgent with specific fixes.
    - Log each pass in `paper_workspace/revision_log.md`.
 
 When math agents are enabled in a writing run:
@@ -138,7 +147,11 @@ When math agents are enabled in a writing run:
 - Non-accepted claims must be labeled as assumptions/conjectures/planned validation.
 
 **TERMINATION CRITERIA** (ALL must be satisfied):
-- ✅ **ReviewerAgent score ≥ 6** (Accept threshold)
+- ✅ **Reviewer verdict gate passes**:
+  - overall_score >= strict threshold (default 8)
+  - hard_blockers is empty
+  - ai_voice_risk is not high
+  - intro questions/takeaways are present and supported
 - ✅ **WriteupAgent reports successful PDF generation** 
 - ✅ **All experimental data properly analyzed and presented**
 - ✅ **No critical issues remain unaddressed**
@@ -164,7 +177,7 @@ ManagerAgent: "ReviewerAgent, please re-review the improved paper."
 ### FAILURE MODE PREVENTION
 
 **🚫 FORBIDDEN BEHAVIORS**:
-- **NEVER terminate with ReviewerAgent score < 6**
+- **NEVER terminate with ReviewerAgent score < 8 in strict publication mode**
 - **NEVER ignore agent feedback or error reports**
 - **NEVER assume "good enough" without reviewer approval**  
 - **NEVER skip quality verification steps**
@@ -193,7 +206,7 @@ ManagerAgent: "ReviewerAgent, please re-review the improved paper."
 3. **If all agents hit limits**: Terminate with best available result and detailed explanation of remaining issues
 
 **PROGRESS INDICATORS** (Continue iterating if seeing):
-- ✅ ReviewerAgent scores are improving (1→2→3→4→5→6)
+- ✅ ReviewerAgent scores are improving toward publication quality (for example 4→5→6→7→8)
 - ✅ Specific issues are being resolved (citations fixed, figures corrected)
 - ✅ Agents report concrete progress on requested changes
 

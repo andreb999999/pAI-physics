@@ -148,7 +148,14 @@ Examples:
     parser.add_argument(
         "--enforce-editorial-artifacts",
         action="store_true",
-        help="When paper artifact enforcement is enabled, also require editorial workflow artifacts (editorial_contract.md, theorem_map.json, revision_log.md, copyedit_report.md, review_report.md, and claim_traceability.json in math mode).",
+        help="When paper artifact enforcement is enabled, also require editorial workflow artifacts (author_style_guide.md, intro_skeleton.tex, style_macros.tex, reader_contract.json, editorial_contract.md, theorem_map.json, revision_log.md, copyedit_report.md, review_report.md, review_verdict.json, and claim_traceability.json in math mode).",
+    )
+
+    parser.add_argument(
+        "--min-review-score",
+        type=int,
+        default=8,
+        help="Minimum reviewer overall_score required by the strict review gate (used with --enforce-editorial-artifacts).",
     )
 
     return parser.parse_args()

@@ -251,11 +251,16 @@ def main():
         if enforce_editorial_artifacts:
             required_paper_artifacts.extend(
                 [
+                    "paper_workspace/author_style_guide.md",
+                    "paper_workspace/intro_skeleton.tex",
+                    "paper_workspace/style_macros.tex",
+                    "paper_workspace/reader_contract.json",
                     "paper_workspace/editorial_contract.md",
                     "paper_workspace/theorem_map.json",
                     "paper_workspace/revision_log.md",
                     "paper_workspace/copyedit_report.md",
                     "paper_workspace/review_report.md",
+                    "paper_workspace/review_verdict.json",
                 ]
             )
             if args.enable_math_agents:
@@ -334,6 +339,7 @@ def main():
             require_experiment_plan=require_experiment_plan,
             enable_math_agents=args.enable_math_agents,
             enforce_editorial_artifacts=enforce_editorial_artifacts,
+            min_review_score=args.min_review_score,
         )
         
         print("\n" + "=" * 50)

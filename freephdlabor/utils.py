@@ -246,6 +246,7 @@ def initialize_agent_system(
     require_experiment_plan=False,
     enable_math_agents=False,
     enforce_editorial_artifacts=False,
+    min_review_score=8,
 ):
     """
     Initialize the complete multi-agent system with consistent configuration.
@@ -266,6 +267,7 @@ def initialize_agent_system(
         require_experiment_plan: If True, manager also requires experiments_to_run_later.md
         enable_math_agents: If True, include theorem-oriented math agents in manager delegation pool
         enforce_editorial_artifacts: If True, enforce editorial workflow artifacts in paper runs
+        min_review_score: Minimum reviewer overall_score required by strict editorial gate
 
     Returns:
         ManagerAgent: Configured with pre-initialized specialist agents
@@ -430,6 +432,7 @@ Approach: Comprehensive documentation of all experimental artifacts without sele
         require_experiment_plan=require_experiment_plan,
         enable_math_agents=enable_math_agents,
         enforce_editorial_artifacts=enforce_editorial_artifacts,
+        min_review_score=min_review_score,
     )
     print("✅ ManagerAgent initialized with specialist agents")
     
