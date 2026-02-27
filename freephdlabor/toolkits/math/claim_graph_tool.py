@@ -18,7 +18,8 @@ class MathClaimGraphTool(Tool):
     Manage a shared math claim graph at math_workspace/claim_graph.json.
 
     Use this tool to initialize the graph, add/update claims, connect dependencies,
-    validate structural consistency, and list progress by status.
+    validate structural consistency, list progress by status, and maintain an
+    incremental lemma library index to avoid wasting tokens on full-file rewrites.
 
     Actions:
     - init
@@ -29,12 +30,16 @@ class MathClaimGraphTool(Tool):
     - get_claim
     - list_claims
     - validate_graph
+    - list_lemmas
+    - get_lemma
+    - upsert_lemma
+    - touch_lemma_usage
     """
 
     inputs = {
         "action": {
             "type": "string",
-            "description": "Action name (init, add_claim, update_claim, set_status, add_dependency, get_claim, list_claims, validate_graph)",
+            "description": "Action name (init, add_claim, update_claim, set_status, add_dependency, get_claim, list_claims, validate_graph, list_lemmas, get_lemma, upsert_lemma, touch_lemma_usage)",
         },
         "claim_id": {
             "type": "string",
@@ -81,6 +86,51 @@ class MathClaimGraphTool(Tool):
             "description": "Workspace subdir where claim_graph.json lives (default: math_workspace)",
             "nullable": True,
         },
+        "lemma_id": {
+            "type": "string",
+            "description": "Lemma id for lemma-library actions",
+            "nullable": True,
+        },
+        "lemma_tier": {
+            "type": "string",
+            "description": "Lemma tier (tier0, tier1, tier2, tier3)",
+            "nullable": True,
+        },
+        "lemma_statement": {
+            "type": "string",
+            "description": "Canonical lemma statement",
+            "nullable": True,
+        },
+        "lemma_conditions": {
+            "type": "string",
+            "description": "Conditions/assumptions required by lemma",
+            "nullable": True,
+        },
+        "lemma_source": {
+            "type": "string",
+            "description": "Source pointer (book/paper/internal note)",
+            "nullable": True,
+        },
+        "lemma_usage_notes": {
+            "type": "string",
+            "description": "One-line usage guidance for this project",
+            "nullable": True,
+        },
+        "lemma_tags_json": {
+            "type": "string",
+            "description": "JSON array of lemma tags",
+            "nullable": True,
+        },
+        "lemma_status": {
+            "type": "string",
+            "description": "Lemma status (active, deprecated, draft)",
+            "nullable": True,
+        },
+        "lemma_limit": {
+            "type": "integer",
+            "description": "Optional max number of lemmas returned by list_lemmas",
+            "nullable": True,
+        },
     }
 
     output_type = "string"
@@ -110,6 +160,15 @@ class MathClaimGraphTool(Tool):
         notes: Optional[str] = None,
         must_accept: Optional[bool] = None,
         workspace_subdir: Optional[str] = "math_workspace",
+        lemma_id: Optional[str] = None,
+        lemma_tier: Optional[str] = None,
+        lemma_statement: Optional[str] = None,
+        lemma_conditions: Optional[str] = None,
+        lemma_source: Optional[str] = None,
+        lemma_usage_notes: Optional[str] = None,
+        lemma_tags_json: Optional[str] = None,
+        lemma_status: Optional[str] = None,
+        lemma_limit: Optional[int] = None,
     ) -> str:
         try:
             action = (action or "").strip()
@@ -124,16 +183,136 @@ class MathClaimGraphTool(Tool):
                 graph = self._load_graph(graph_path)
                 self._save_graph(graph_path, graph)
                 lemma_library_path = self._ensure_lemma_library(workspace_dir)
+                lemma_index_path = self._ensure_lemma_library_index(workspace_dir)
                 return json.dumps(
                     {
                         "success": True,
                         "action": action,
                         "graph_path": graph_path,
                         "lemma_library_path": lemma_library_path,
+                        "lemma_index_path": lemma_index_path,
                         "claim_count": len(graph["claims"]),
                     },
                     indent=2,
                 )
+
+            if action in {"list_lemmas", "get_lemma", "upsert_lemma", "touch_lemma_usage"}:
+                lemma_index_path = self._ensure_lemma_library_index(workspace_dir)
+                index = self._load_lemma_library_index(lemma_index_path)
+
+                if action == "list_lemmas":
+                    entries = index.get("entries", [])
+                    if lemma_limit is not None:
+                        try:
+                            lim = max(0, int(lemma_limit))
+                            entries = entries[:lim]
+                        except Exception:
+                            pass
+                    return json.dumps(
+                        {
+                            "success": True,
+                            "action": action,
+                            "lemma_index_path": lemma_index_path,
+                            "lemma_count": len(index.get("entries", [])),
+                            "entries": entries,
+                        },
+                        indent=2,
+                    )
+
+                if action == "get_lemma":
+                    if not lemma_id:
+                        return self._error("'lemma_id' is required for get_lemma")
+                    lemma = self._find_lemma(index, lemma_id)
+                    if lemma is None:
+                        return self._error(f"lemma '{lemma_id}' not found")
+                    return json.dumps(
+                        {
+                            "success": True,
+                            "action": action,
+                            "lemma": lemma,
+                            "lemma_index_path": lemma_index_path,
+                        },
+                        indent=2,
+                    )
+
+                if action == "upsert_lemma":
+                    if not lemma_id:
+                        return self._error("'lemma_id' is required for upsert_lemma")
+
+                    lemma = self._find_lemma(index, lemma_id)
+                    created = lemma is None
+                    if created:
+                        if not lemma_statement:
+                            return self._error(
+                                "'lemma_statement' is required when creating a new lemma entry"
+                            )
+                        lemma = {
+                            "id": lemma_id,
+                            "tier": "tier1",
+                            "statement": "",
+                            "conditions": "",
+                            "source": "",
+                            "usage_notes": "",
+                            "tags": [],
+                            "status": "active",
+                            "usage_count": 0,
+                            "created_at": self._now_iso(),
+                            "updated_at": self._now_iso(),
+                            "last_used_at": "",
+                        }
+                        index.setdefault("entries", []).append(lemma)
+
+                    if lemma_tier is not None:
+                        lemma["tier"] = self._normalize_lemma_tier(lemma_tier)
+                    if lemma_statement is not None:
+                        lemma["statement"] = lemma_statement
+                    if lemma_conditions is not None:
+                        lemma["conditions"] = lemma_conditions
+                    if lemma_source is not None:
+                        lemma["source"] = lemma_source
+                    if lemma_usage_notes is not None:
+                        lemma["usage_notes"] = lemma_usage_notes
+                    if lemma_tags_json is not None:
+                        lemma["tags"] = self._parse_json_list(lemma_tags_json)
+                    if lemma_status is not None:
+                        lemma["status"] = self._normalize_lemma_status(lemma_status)
+
+                    lemma["updated_at"] = self._now_iso()
+                    self._save_lemma_library_index(lemma_index_path, index)
+                    self._sync_lemma_library_markdown(workspace_dir, index)
+
+                    return json.dumps(
+                        {
+                            "success": True,
+                            "action": action,
+                            "created": created,
+                            "lemma": lemma,
+                            "lemma_index_path": lemma_index_path,
+                            "lemma_library_path": os.path.join(workspace_dir, "lemma_library.md"),
+                        },
+                        indent=2,
+                    )
+
+                if action == "touch_lemma_usage":
+                    if not lemma_id:
+                        return self._error("'lemma_id' is required for touch_lemma_usage")
+                    lemma = self._find_lemma(index, lemma_id)
+                    if lemma is None:
+                        return self._error(f"lemma '{lemma_id}' not found")
+                    lemma["usage_count"] = int(lemma.get("usage_count", 0) or 0) + 1
+                    lemma["last_used_at"] = self._now_iso()
+                    lemma["updated_at"] = self._now_iso()
+                    self._save_lemma_library_index(lemma_index_path, index)
+                    self._sync_lemma_library_markdown(workspace_dir, index)
+                    return json.dumps(
+                        {
+                            "success": True,
+                            "action": action,
+                            "lemma": lemma,
+                            "lemma_index_path": lemma_index_path,
+                        },
+                        indent=2,
+                    )
 
             graph = self._load_graph(graph_path)
 
@@ -298,33 +477,247 @@ class MathClaimGraphTool(Tool):
 
     def _ensure_lemma_library(self, workspace_dir: str) -> str:
         path = os.path.join(workspace_dir, "lemma_library.md")
-        if os.path.exists(path):
+        if os.path.exists(path) and os.path.getsize(path) > 0:
             return path
 
-        default_text = """# Standard Lemma Library (Math Fast Path)
-
-Use this file to avoid re-deriving standard results.
-
-Policy:
-- Tier 0 (primitive): use inline without claim nodes (e.g., triangle inequality, Cauchy-Schwarz).
-- Tier 1 (standard ML-theory): prefer library-backed claim nodes with `origin:library`.
-- Tier 2 (specialized known): require explicit conditions and source notes.
-- Tier 3 (novel): full proof workflow required.
-
-Suggested entries:
-- L_smooth_descent: Descent lemma under L-smoothness.
-- L_convex_first_order: First-order condition for convex functions.
-- L_trace_frobenius_duality: trace(A^T B) <= ||A||_F ||B||_F.
-- L_operator_nuclear_duality: <A,B> <= ||A||_2 ||B||_*.
-
-For each library-backed claim you use, ensure claim notes include:
-- exact condition set
-- source pointer (paper/textbook/internal note)
-- any scope caveats
-"""
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(default_text)
+        index = self._load_lemma_library_index(self._ensure_lemma_library_index(workspace_dir))
+        self._sync_lemma_library_markdown(workspace_dir, index)
         return path
+
+    def _lemma_library_index_path(self, workspace_dir: str) -> str:
+        return os.path.join(workspace_dir, "lemma_library_index.json")
+
+    def _ensure_lemma_library_index(self, workspace_dir: str) -> str:
+        path = self._lemma_library_index_path(workspace_dir)
+        if os.path.exists(path):
+            return path
+        md_path = os.path.join(workspace_dir, "lemma_library.md")
+        migrated_entries = self._parse_lemma_library_markdown(md_path)
+        index = {
+            "version": 1,
+            "created_at": self._now_iso(),
+            "updated_at": self._now_iso(),
+            "entries": migrated_entries if migrated_entries else self._default_lemma_entries(),
+        }
+        self._save_lemma_library_index(path, index)
+        return path
+
+    def _load_lemma_library_index(self, path: str) -> Dict[str, Any]:
+        if not os.path.exists(path):
+            return {
+                "version": 1,
+                "created_at": self._now_iso(),
+                "updated_at": self._now_iso(),
+                "entries": self._default_lemma_entries(),
+            }
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if "entries" not in data or not isinstance(data["entries"], list):
+            raise ValueError("invalid lemma_library_index format: missing 'entries' list")
+        return data
+
+    def _save_lemma_library_index(self, path: str, index: Dict[str, Any]) -> None:
+        index["updated_at"] = self._now_iso()
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(index, f, indent=2)
+
+    def _sync_lemma_library_markdown(self, workspace_dir: str, index: Dict[str, Any]) -> None:
+        path = os.path.join(workspace_dir, "lemma_library.md")
+        lines: List[str] = []
+        lines.append("# Standard Lemma Library (Math Fast Path)")
+        lines.append("")
+        lines.append("This file is synchronized from `lemma_library_index.json`.")
+        lines.append("Use `math_claim_graph_tool` lemma actions for incremental updates:")
+        lines.append("- `list_lemmas`")
+        lines.append("- `get_lemma`")
+        lines.append("- `upsert_lemma`")
+        lines.append("- `touch_lemma_usage`")
+        lines.append("")
+        lines.append("Policy:")
+        lines.append("- Tier 0 (primitive): inline only, usually no claim node.")
+        lines.append("- Tier 1 (standard ML-theory): prefer library-backed claim nodes (`origin:library`).")
+        lines.append("- Tier 2 (specialized known): explicit conditions and source required.")
+        lines.append("- Tier 3 (novel): full proof workflow required.")
+        lines.append("")
+
+        entries = index.get("entries", [])
+        if not entries:
+            lines.append("_No entries yet._")
+        else:
+            for entry in entries:
+                lines.append(f"## {entry.get('id', '')}")
+                lines.append(f"- tier: {entry.get('tier', 'tier1')}")
+                lines.append(f"- status: {entry.get('status', 'active')}")
+                lines.append(f"- statement: {entry.get('statement', '')}")
+                lines.append(f"- conditions: {entry.get('conditions', '')}")
+                lines.append(f"- source: {entry.get('source', '')}")
+                lines.append(f"- usage_notes: {entry.get('usage_notes', '')}")
+                tags = entry.get("tags", [])
+                lines.append(f"- tags: {', '.join(str(t) for t in tags) if tags else ''}")
+                lines.append(f"- usage_count: {entry.get('usage_count', 0)}")
+                lines.append(f"- last_used_at: {entry.get('last_used_at', '')}")
+                lines.append("")
+
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines).rstrip() + "\n")
+
+    def _default_lemma_entries(self) -> List[Dict[str, Any]]:
+        now = self._now_iso()
+        return [
+            {
+                "id": "L_smooth_descent_standard",
+                "tier": "tier1",
+                "statement": "Descent inequality for L-smooth objectives.",
+                "conditions": "Objective is differentiable and L-smooth.",
+                "source": "Canonical optimization texts (set exact source per project).",
+                "usage_notes": "Use for one-step progress bounds.",
+                "tags": ["area:optimization", "origin:library"],
+                "status": "active",
+                "usage_count": 0,
+                "created_at": now,
+                "updated_at": now,
+                "last_used_at": "",
+            },
+            {
+                "id": "L_operator_nuclear_duality",
+                "tier": "tier1",
+                "statement": "<A,B> <= ||A||_2 ||B||_* for compatible real matrices.",
+                "conditions": "Finite-dimensional real matrices with compatible shapes.",
+                "source": "Standard matrix analysis references.",
+                "usage_notes": "Use in operator-vs-nuclear norm arguments.",
+                "tags": ["area:matrix", "origin:library"],
+                "status": "active",
+                "usage_count": 0,
+                "created_at": now,
+                "updated_at": now,
+                "last_used_at": "",
+            },
+        ]
+
+    def _parse_lemma_library_markdown(self, md_path: str) -> List[Dict[str, Any]]:
+        """
+        Best-effort migration parser for existing manual lemma_library.md files.
+        Expected loose schema:
+          ## L_id
+          - tier: ...
+          - statement: ...
+          - conditions: ...
+          - source: ...
+          - usage_notes: ...
+          - tags: a, b
+          - status: active
+        """
+        if not os.path.exists(md_path):
+            return []
+        try:
+            with open(md_path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+        except Exception:
+            return []
+
+        entries: List[Dict[str, Any]] = []
+        current: Optional[Dict[str, Any]] = None
+
+        def _finish_current():
+            nonlocal current
+            if not current:
+                return
+            if not current.get("id"):
+                current = None
+                return
+            now = self._now_iso()
+            current.setdefault("tier", "tier1")
+            current.setdefault("statement", "")
+            current.setdefault("conditions", "")
+            current.setdefault("source", "")
+            current.setdefault("usage_notes", "")
+            current.setdefault("tags", [])
+            current.setdefault("status", "active")
+            current.setdefault("usage_count", 0)
+            current.setdefault("created_at", now)
+            current.setdefault("updated_at", now)
+            current.setdefault("last_used_at", "")
+            entries.append(current)
+            current = None
+
+        for raw in lines:
+            line = raw.strip()
+            if line.startswith("## "):
+                _finish_current()
+                cid = line[3:].strip()
+                if cid:
+                    current = {"id": cid}
+                continue
+            if current is None:
+                continue
+            if not line.startswith("-"):
+                continue
+            body = line[1:].strip()
+            if ":" not in body:
+                continue
+            key, value = body.split(":", 1)
+            key = key.strip().lower()
+            value = value.strip()
+            if key == "tier":
+                current["tier"] = self._normalize_lemma_tier(value)
+            elif key == "statement":
+                current["statement"] = value
+            elif key == "conditions":
+                current["conditions"] = value
+            elif key == "source":
+                current["source"] = value
+            elif key in {"usage_notes", "usage"}:
+                current["usage_notes"] = value
+            elif key == "tags":
+                current["tags"] = [x.strip() for x in value.split(",") if x.strip()]
+            elif key == "status":
+                current["status"] = self._normalize_lemma_status(value)
+            elif key == "usage_count":
+                try:
+                    current["usage_count"] = int(value)
+                except Exception:
+                    current["usage_count"] = 0
+            elif key == "last_used_at":
+                current["last_used_at"] = value
+        _finish_current()
+
+        # Keep deterministic order and unique IDs (first occurrence wins).
+        seen = set()
+        uniq: List[Dict[str, Any]] = []
+        for e in entries:
+            cid = str(e.get("id", "")).strip()
+            if not cid or cid in seen:
+                continue
+            seen.add(cid)
+            uniq.append(e)
+        return uniq
+
+    @staticmethod
+    def _find_lemma(index: Dict[str, Any], lemma_id: str) -> Optional[Dict[str, Any]]:
+        for entry in index.get("entries", []):
+            if str(entry.get("id", "")) == str(lemma_id):
+                return entry
+        return None
+
+    @staticmethod
+    def _normalize_lemma_tier(value: str) -> str:
+        v = str(value or "").strip().lower().replace(" ", "")
+        if v in {"0", "tier0"}:
+            return "tier0"
+        if v in {"1", "tier1"}:
+            return "tier1"
+        if v in {"2", "tier2"}:
+            return "tier2"
+        if v in {"3", "tier3"}:
+            return "tier3"
+        return "tier1"
+
+    @staticmethod
+    def _normalize_lemma_status(value: str) -> str:
+        v = str(value or "").strip().lower()
+        if v in {"active", "deprecated", "draft"}:
+            return v
+        return "active"
 
     @staticmethod
     def _find_claim(graph: Dict[str, Any], claim_id: str) -> Optional[Dict[str, Any]]:

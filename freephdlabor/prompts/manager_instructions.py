@@ -117,6 +117,7 @@ Loop control and escalation:
 - Max 3 revision cycles per claim before escalation.
 - If must_accept claims keep failing or graph cannot stabilize, escalate with concrete blocker summary.
 - Use `math_workspace/lemma_library.md` fast path for known/easy lemmas to reduce wasted reasoning budget.
+- Prefer incremental lemma actions (`list_lemmas`, `get_lemma`, `upsert_lemma`, `touch_lemma_usage`) over full-file rewrites.
 - If the user task is explicitly math-only (no paper/pdf deliverable requested), you may terminate after the math acceptance gate passes, without forcing writeup/reviewer loops.
 
 ### EDITORIAL WORKFLOW (for paper-quality runs)

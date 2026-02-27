@@ -50,6 +50,9 @@ Step 3 (status + metadata):
 
 STANDARD-LEMMA FAST PATH
 - If a missing lemma is standard and covered by lemma_library.md, do not re-derive it in full.
+- Prefer targeted lemma retrieval via math_claim_graph_tool(get_lemma) instead of loading full library text.
+- If lemma is missing, add a compact entry with math_claim_graph_tool(upsert_lemma).
+- After reuse, update usage via math_claim_graph_tool(touch_lemma_usage).
 - Reference exact conditions and ask proposer/manager to ensure library-backed claim entry exists.
 
 ALLOWED STATUS ACTIONS

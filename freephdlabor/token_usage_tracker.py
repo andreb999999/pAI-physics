@@ -19,6 +19,8 @@ _LOCK = threading.Lock()
 
 ENV_TOKEN_FILE = "FREEPHDLABOR_RUN_TOKEN_FILE"
 ENV_RUN_ID = "FREEPHDLABOR_RUN_ID"
+ENV_PRIVATE_TOKEN_LEDGER = "FREEPHDLABOR_PRIVATE_TOKEN_LEDGER"
+ENV_PRIVATE_TOKEN_TEXT = "FREEPHDLABOR_PRIVATE_TOKEN_TEXT"
 
 
 def _now_iso() -> str:
@@ -32,6 +34,28 @@ def _safe_int(value: Any) -> int:
         return int(value)
     except Exception:
         return 0
+
+
+def _project_root() -> str:
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+
+def _private_token_dir() -> str:
+    return os.path.join(_project_root(), ".local", "private_token_usage")
+
+
+def _private_ledger_path() -> str:
+    env_path = os.getenv(ENV_PRIVATE_TOKEN_LEDGER)
+    if env_path:
+        return os.path.abspath(env_path)
+    return os.path.join(_private_token_dir(), "api_token_calls.jsonl")
+
+
+def _private_text_path() -> str:
+    env_path = os.getenv(ENV_PRIVATE_TOKEN_TEXT)
+    if env_path:
+        return os.path.abspath(env_path)
+    return os.path.join(_private_token_dir(), "api_token_calls.txt")
 
 
 def _read_state(path: str) -> Dict[str, Any]:
@@ -50,6 +74,54 @@ def _write_state(path: str, state: Dict[str, Any]) -> None:
         json.dump(state, f, indent=2)
 
 
+def _append_jsonl(path: str, row: Dict[str, Any]) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(row, ensure_ascii=True) + "\n")
+
+
+def _append_private_token_entry(
+    prompt_tokens: int,
+    completion_tokens: int,
+    source: str,
+    model_id: Optional[str],
+    run_id: Optional[str],
+    tracker_path: Optional[str],
+) -> None:
+    """
+    Append per-call token usage to a local private ledger and text log.
+    Never raise (tracking should not break model execution paths).
+    """
+    try:
+        ts = _now_iso()
+        pt = _safe_int(prompt_tokens)
+        ct = _safe_int(completion_tokens)
+        total = pt + ct
+        row = {
+            "timestamp": ts,
+            "run_id": run_id or "unknown_run",
+            "source": source or "unknown",
+            "model_id": model_id or "",
+            "input_tokens": pt,
+            "output_tokens": ct,
+            "total_tokens": total,
+            "run_token_file": tracker_path or "",
+        }
+        _append_jsonl(_private_ledger_path(), row)
+
+        txt_path = _private_text_path()
+        os.makedirs(os.path.dirname(txt_path), exist_ok=True)
+        with open(txt_path, "a", encoding="utf-8") as f:
+            f.write(
+                f"{ts}\trun={row['run_id']}\tsource={row['source']}\t"
+                f"model={row['model_id'] or 'unknown'}\t"
+                f"input={pt}\toutput={ct}\ttotal={total}\n"
+            )
+    except Exception:
+        # Local private logging is best-effort only.
+        return
+
+
 def initialize_run_token_tracker(workspace_dir: str, run_id: str, reset: bool = True) -> str:
     """
     Initialize per-launch token tracking file.
@@ -65,6 +137,8 @@ def initialize_run_token_tracker(workspace_dir: str, run_id: str, reset: bool = 
     path = os.path.abspath(os.path.join(workspace_dir, "run_token_usage.json"))
     os.environ[ENV_TOKEN_FILE] = path
     os.environ[ENV_RUN_ID] = run_id
+    os.environ.setdefault(ENV_PRIVATE_TOKEN_LEDGER, _private_ledger_path())
+    os.environ.setdefault(ENV_PRIVATE_TOKEN_TEXT, _private_text_path())
 
     with _LOCK:
         if reset or not os.path.exists(path):
@@ -96,14 +170,22 @@ def record_token_usage(
     """
     Add token usage to current run totals.
     """
-    path = os.getenv(ENV_TOKEN_FILE)
-    run_id = os.getenv(ENV_RUN_ID)
-    if not path:
-        return
-
     pt = _safe_int(prompt_tokens)
     ct = _safe_int(completion_tokens)
     if pt == 0 and ct == 0:
+        return
+
+    path = os.getenv(ENV_TOKEN_FILE)
+    run_id = os.getenv(ENV_RUN_ID)
+    if not path:
+        _append_private_token_entry(
+            prompt_tokens=pt,
+            completion_tokens=ct,
+            source=source,
+            model_id=model_id,
+            run_id=run_id,
+            tracker_path=None,
+        )
         return
 
     with _LOCK:
@@ -134,6 +216,14 @@ def record_token_usage(
             by_model[model_id] = _safe_int(by_model.get(model_id)) + pt + ct
 
         _write_state(path, state)
+        _append_private_token_entry(
+            prompt_tokens=pt,
+            completion_tokens=ct,
+            source=source,
+            model_id=model_id,
+            run_id=run_id,
+            tracker_path=path,
+        )
 
 
 def get_run_token_totals() -> Optional[Dict[str, int]]:

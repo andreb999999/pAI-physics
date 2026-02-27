@@ -46,6 +46,11 @@ Step 3:
 
 STANDARD-LEMMA FAST PATH
 - For known/easy lemmas, prefer math_workspace/lemma_library.md.
+- Use math_claim_graph_tool incremental lemma actions to keep token usage low:
+  - list_lemmas (discover existing entries)
+  - get_lemma (fetch only one entry you need)
+  - upsert_lemma (add/update one entry)
+  - touch_lemma_usage (mark reuse)
 - Create lightweight library-backed nodes (for example, tag with origin:library).
 - Avoid spending time re-deriving primitive/standard facts.
 

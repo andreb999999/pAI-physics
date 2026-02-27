@@ -277,6 +277,30 @@ If this gate fails, termination is blocked with `TERMINATION_BLOCKED`.
 ## 11) Lemma Library (Fast Path for Known Lemmas)
 
 If `lemma_library.md` is missing, a starter file is auto-created when the claim graph is initialized.
+An incremental index file is also maintained at `math_workspace/lemma_library_index.json` for low-token updates.
+
+Low-token incremental workflow (recommended):
+
+```bash
+# list entries
+python scripts/lemma_library_cli.py --workspace /absolute/path/to/results/my_project_001/math_workspace list
+
+# fetch one entry only
+python scripts/lemma_library_cli.py --workspace /absolute/path/to/results/my_project_001/math_workspace get --lemma-id L_smooth_descent_standard
+
+# add or update one lemma
+python scripts/lemma_library_cli.py --workspace /absolute/path/to/results/my_project_001/math_workspace upsert \
+  --lemma-id L_matrix_holder \
+  --tier tier1 \
+  --statement "<A,B> <= ||A||_2 ||B||_* for compatible matrices." \
+  --conditions "Finite-dimensional real matrices with compatible shapes." \
+  --source "Matrix analysis reference" \
+  --usage-notes "Use for operator-vs-nuclear norm bounds." \
+  --tags-json '["area:matrix","origin:library"]'
+
+# mark usage (helps keep active lemmas prioritized)
+python scripts/lemma_library_cli.py --workspace /absolute/path/to/results/my_project_001/math_workspace touch --lemma-id L_matrix_holder
+```
 
 Create/update manually:
 
