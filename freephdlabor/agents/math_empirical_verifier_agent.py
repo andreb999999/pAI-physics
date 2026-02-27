@@ -26,7 +26,10 @@ class MathEmpiricalVerifierAgent(BaseResearchAgent):
             workspace_dir = os.path.abspath(workspace_dir)
 
         tools = [
-            MathClaimGraphTool(working_dir=workspace_dir),
+            MathClaimGraphTool(
+                working_dir=workspace_dir,
+                allow_accepted_transition=False,
+            ),
             MathProofWorkspaceTool(working_dir=workspace_dir),
             MathNumericalClaimVerifierTool(working_dir=workspace_dir),
         ]

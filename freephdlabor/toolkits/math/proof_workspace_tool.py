@@ -61,6 +61,7 @@ class MathProofWorkspaceTool(Tool):
     }
 
     output_type = "string"
+    _CLAIM_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
     def __init__(self, working_dir: Optional[str] = None):
         super().__init__()
@@ -111,6 +112,11 @@ class MathProofWorkspaceTool(Tool):
 
             if not claim_id:
                 return self._error("'claim_id' is required for this action")
+            if not self._CLAIM_ID_RE.match(str(claim_id)):
+                return self._error(
+                    f"invalid claim_id '{claim_id}'. Allowed pattern: [A-Za-z0-9_.-]+ "
+                    "(prevents proof/check filename collisions)."
+                )
             safe_id = self._safe_id(claim_id)
             proof_path = os.path.join(proofs_dir, f"{safe_id}.md")
             checks_path = os.path.join(checks_dir, f"{safe_id}.jsonl")

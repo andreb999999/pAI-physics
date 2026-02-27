@@ -408,10 +408,17 @@ class DeleteFileOrFolder(Tool):
     name = "delete_file_or_folder"
     description = (
         "Delete a specified file or folder. This action is irreversible."
-        "If no filename is provided, the tool will delete everything in the working directory."
+        "If no filename is provided, a valid confirmation token is required before deleting everything in the working directory."
         "Only files under the allowed working directory are accessible."
     )
-    inputs = {"filename": {"type": "string", "description": "Name of the file or folder to delete."}}
+    inputs = {
+        "filename": {"type": "string", "description": "Name of the file or folder to delete. Use empty string only for explicit workspace wipe."},
+        "confirmation_token": {
+            "type": "string",
+            "description": "Required only when filename is empty. Must match FREEPHDLABOR_WIPE_CONFIRM_TOKEN.",
+            "nullable": True,
+        },
+    }
     output_type = "string"
 
     def __init__(self, working_dir):
@@ -419,8 +426,15 @@ class DeleteFileOrFolder(Tool):
         # Always store working_dir as absolute path to prevent any path resolution issues
         self.working_dir = os.path.abspath(working_dir)
     
-    def forward(self, filename: str) -> str:
+    def forward(self, filename: str, confirmation_token: str = None) -> str:
         if filename == "":
+            required_token = os.getenv("FREEPHDLABOR_WIPE_CONFIRM_TOKEN", "").strip()
+            provided_token = (confirmation_token or "").strip()
+            if not required_token or provided_token != required_token:
+                return (
+                    "Refusing workspace wipe. To wipe all files, set FREEPHDLABOR_WIPE_CONFIRM_TOKEN "
+                    "and pass matching confirmation_token."
+                )
             abs_working_dir = os.path.abspath(self.working_dir)
             # Only delete inside the working directory
             for root, dirs, files in os.walk(abs_working_dir, topdown=False):

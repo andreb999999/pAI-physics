@@ -17,6 +17,7 @@ import json
 import os
 import re
 import tempfile
+import hashlib
 from typing import List, Dict, Any, Optional, Tuple
 from smolagents import Tool
 
@@ -160,7 +161,12 @@ class VLMDocumentAnalysisTool(Tool):
             if pdf_files:
                 if analysis_focus == "pdf_validation":
                     # Use PDF validation pipeline for LaTeX compilation checking
-                    return self._analyze_pdf_comprehensively(pdf_files[0])
+                    cached = self._load_pdf_validation_cache(pdf_files[0])
+                    if cached is not None:
+                        return json.dumps(cached, indent=2)
+                    result_str = self._analyze_pdf_comprehensively(pdf_files[0])
+                    self._save_pdf_validation_cache(pdf_files[0], result_str)
+                    return result_str
                 elif analysis_focus == "pdf_reading":
                     # Use PDF reading pipeline for research paper content analysis
                     return self._analyze_pdf_for_research(pdf_files[0], analysis_focus)
@@ -271,6 +277,55 @@ class VLMDocumentAnalysisTool(Tool):
                 "error": f"Comprehensive PDF analysis failed: {str(e)}",
                 "pdf_path": pdf_path  # Use original path in error case
             })
+
+    def _cache_root(self) -> str:
+        base = self.working_dir if self.working_dir else os.getcwd()
+        cache_dir = os.path.join(base, ".freephdlabor_cache", "vlm_pdf_validation")
+        os.makedirs(cache_dir, exist_ok=True)
+        return cache_dir
+
+    @staticmethod
+    def _file_sha256(path: str) -> str:
+        hasher = hashlib.sha256()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                hasher.update(chunk)
+        return hasher.hexdigest()
+
+    def _cache_path_for_pdf(self, pdf_path: str) -> str:
+        digest = self._file_sha256(pdf_path)
+        return os.path.join(self._cache_root(), f"{digest}.json")
+
+    def _load_pdf_validation_cache(self, pdf_path: str) -> Optional[Dict[str, Any]]:
+        try:
+            cache_path = self._cache_path_for_pdf(pdf_path)
+            if not os.path.exists(cache_path):
+                return None
+            with open(cache_path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+            if isinstance(payload, dict):
+                payload["cache_hit"] = True
+                payload["cache_source"] = "vlm_pdf_validation"
+                return payload
+            return None
+        except Exception:
+            return None
+
+    def _save_pdf_validation_cache(self, pdf_path: str, result_str: str) -> None:
+        try:
+            payload = json.loads(result_str)
+            if not isinstance(payload, dict):
+                return
+            if payload.get("error"):
+                return
+            payload["cache_hit"] = False
+            payload["cache_source"] = "vlm_pdf_validation"
+            cache_path = self._cache_path_for_pdf(pdf_path)
+            with open(cache_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2)
+        except Exception:
+            # Caching must never break analysis flow.
+            return
     
     def _analyze_pdf_for_research(self, pdf_path: str, analysis_focus: str) -> str:
         """

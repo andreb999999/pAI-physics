@@ -104,6 +104,7 @@ class MathNumericalClaimVerifierTool(Tool):
         "False",
         "None",
     }
+    _CLAIM_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
     def __init__(self, working_dir: Optional[str] = None):
         super().__init__()
@@ -199,6 +200,11 @@ class MathNumericalClaimVerifierTool(Tool):
             }
 
             if claim_id and bool(save_report):
+                if not self._CLAIM_ID_RE.match(str(claim_id)):
+                    return self._error(
+                        f"invalid claim_id '{claim_id}'. Allowed pattern: [A-Za-z0-9_.-]+ "
+                        "(prevents checks filename collisions)."
+                    )
                 self._append_report(workspace_subdir or "math_workspace", claim_id, result)
 
             return json.dumps(result, indent=2)

@@ -98,6 +98,12 @@ def validate_math_acceptance(workspace_dir: str) -> Dict[str, Any]:
         if isinstance(claim, dict) and claim.get("id"):
             id_to_claim[str(claim["id"])] = claim
 
+    # Prevent artifact ambiguity: different claim IDs must not map to same safe filename.
+    safe_id_to_claim_ids: Dict[str, List[str]] = {}
+    for cid in id_to_claim.keys():
+        safe = _safe_id(cid)
+        safe_id_to_claim_ids.setdefault(safe, []).append(cid)
+
     accepted_claim_ids = [
         str(c.get("id"))
         for c in claims
@@ -110,6 +116,12 @@ def validate_math_acceptance(workspace_dir: str) -> Dict[str, Any]:
     ]
 
     errors: List[str] = []
+
+    for safe_id, claim_ids in safe_id_to_claim_ids.items():
+        if len(claim_ids) > 1:
+            errors.append(
+                f"claim_id collision after sanitization ({safe_id}): {', '.join(sorted(claim_ids))}"
+            )
 
     for cid in must_accept_claim_ids:
         claim = id_to_claim.get(cid)
@@ -172,6 +184,9 @@ def validate_math_acceptance(workspace_dir: str) -> Dict[str, Any]:
 
         deps = [str(d) for d in claim.get("depends_on", [])]
         for dep in deps:
+            if dep == cid:
+                errors.append(f"accepted claim has self-dependency: {cid}")
+                continue
             dep_claim = id_to_claim.get(dep)
             if dep_claim is None:
                 errors.append(f"accepted claim depends on missing claim: {cid} -> {dep}")

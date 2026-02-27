@@ -10,6 +10,7 @@ from ..result_validation import validate_result_artifacts
 from ..math_acceptance_validation import validate_math_acceptance
 from ..paper_traceability_validation import validate_claim_traceability
 from ..review_verdict_validation import validate_review_verdict
+from ..paper_quality_validation import validate_paper_quality
 
 from .reviewer_agent import ReviewerAgent
 from .ideation_agent import IdeationAgent
@@ -31,6 +32,7 @@ from ..toolkits.general_tools.file_editing.file_editing_tools import (
 )
 from ..toolkits.general_tools.text_inspector.text_inspector_tool import TextInspectorTool
 from ..toolkits.writeup.vlm_document_analysis_tool import VLMDocumentAnalysisTool
+from ..toolkits.math.claim_graph_tool import MathClaimGraphTool
 from ..prompts.manager_instructions import get_manager_system_prompt
 
 
@@ -233,6 +235,14 @@ Approach: Comprehensive documentation of all experimental artifacts without sele
         ).strip().lower() in {"1", "true", "yes", "on"}
         # Keep at least one robust PDF/doc analysis tool available in manager.
         document_tools = [VLMDocumentAnalysisTool(model=raw_model, working_dir=workspace_dir)]
+        if self.enable_math_agents:
+            # Manager-only acceptance gate: only manager can transition claims to accepted.
+            document_tools.append(
+                MathClaimGraphTool(
+                    working_dir=workspace_dir,
+                    allow_accepted_transition=True,
+                )
+            )
         if enable_manager_text_inspector:
             # Always available in manager for PDF/long-doc ingestion when deps exist.
             try:
@@ -361,6 +371,13 @@ Approach: Comprehensive documentation of all experimental artifacts without sele
                 raise ValueError(
                     "TERMINATION_BLOCKED: Review verdict gate failed: "
                     + "; ".join(review_summary["errors"])
+                )
+
+            quality_summary = validate_paper_quality(workspace_dir=workspace)
+            if not quality_summary["is_valid"]:
+                raise ValueError(
+                    "TERMINATION_BLOCKED: Paper quality gate failed: "
+                    + "; ".join(quality_summary["errors"])
                 )
 
         return True

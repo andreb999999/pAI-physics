@@ -221,18 +221,6 @@ def create_model(model_name, reasoning_effort="medium", verbosity="medium", budg
 
     return base_model
 
-from freephdlabor.agents.manager_agent import ManagerAgent
-from freephdlabor.agents.ideation_agent import IdeationAgent
-from freephdlabor.agents.experimentation_agent import ExperimentationAgent
-from freephdlabor.agents.writeup_agent import WriteupAgent
-from freephdlabor.interpreters import WorkspacePythonExecutor
-from freephdlabor.agents.reviewer_agent import ReviewerAgent
-from freephdlabor.agents.proofreading_agent import ProofreadingAgent
-from freephdlabor.agents.math_proposer_agent import MathProposerAgent
-from freephdlabor.agents.math_prover_agent import MathProverAgent
-from freephdlabor.agents.math_rigorous_verifier_agent import MathRigorousVerifierAgent
-from freephdlabor.agents.math_empirical_verifier_agent import MathEmpiricalVerifierAgent
-
 def initialize_agent_system(
     model,
     workspace_dir,
@@ -274,6 +262,19 @@ def initialize_agent_system(
     """
     print("🔧 Initializing multi-agent system...")
 
+    # Lazy import to avoid package-level cycles (toolkits -> utils -> agents -> toolkits)
+    from freephdlabor.agents.manager_agent import ManagerAgent
+    from freephdlabor.agents.ideation_agent import IdeationAgent
+    from freephdlabor.agents.experimentation_agent import ExperimentationAgent
+    from freephdlabor.agents.writeup_agent import WriteupAgent
+    from freephdlabor.agents.resource_preparation_agent import ResourcePreparationAgent
+    from freephdlabor.agents.reviewer_agent import ReviewerAgent
+    from freephdlabor.agents.proofreading_agent import ProofreadingAgent
+    from freephdlabor.agents.math_proposer_agent import MathProposerAgent
+    from freephdlabor.agents.math_prover_agent import MathProverAgent
+    from freephdlabor.agents.math_rigorous_verifier_agent import MathRigorousVerifierAgent
+    from freephdlabor.agents.math_empirical_verifier_agent import MathEmpiricalVerifierAgent
+
     # Determine planning configuration
     planning_config = {}
     if enable_planning:
@@ -305,7 +306,6 @@ def initialize_agent_system(
     print("✅ ExperimentationAgent initialized")
 
     # Initialize ResourcePreparationAgent (NEW - handles heavy preparatory work)
-    from freephdlabor.agents.resource_preparation_agent import ResourcePreparationAgent
     resource_preparation_agent = ResourcePreparationAgent(
         model=model,
         workspace_dir=workspace_dir,

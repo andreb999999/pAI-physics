@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -143,10 +144,24 @@ class MathClaimGraphTool(Tool):
         "accepted",
         "rejected",
     }
+    _CLAIM_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+    _ALLOWED_TRANSITIONS = {
+        "proposed": {"proved_draft", "rejected"},
+        "proved_draft": {"proposed", "verified_symbolic", "rejected"},
+        "verified_symbolic": {"proved_draft", "verified_numeric", "rejected"},
+        "verified_numeric": {"verified_symbolic", "accepted", "rejected"},
+        "accepted": {"verified_numeric", "rejected"},
+        "rejected": {"proposed"},
+    }
 
-    def __init__(self, working_dir: Optional[str] = None):
+    def __init__(
+        self,
+        working_dir: Optional[str] = None,
+        allow_accepted_transition: bool = False,
+    ):
         super().__init__()
         self.working_dir = os.path.abspath(working_dir) if working_dir else None
+        self.allow_accepted_transition = bool(allow_accepted_transition)
 
     def forward(
         self,
@@ -319,16 +334,29 @@ class MathClaimGraphTool(Tool):
             if action == "add_claim":
                 if not claim_id or not statement:
                     return self._error("'claim_id' and 'statement' are required for add_claim")
+                claim_id_err = self._validate_claim_id(claim_id)
+                if claim_id_err:
+                    return self._error(claim_id_err)
                 if self._find_claim(graph, claim_id) is not None:
                     return self._error(f"claim '{claim_id}' already exists")
 
+                parsed_deps = self._parse_json_list(depends_on_json)
+                dep_err = self._validate_claim_ids(parsed_deps, field_name="depends_on")
+                if dep_err:
+                    return self._error(dep_err)
+
+                requested_status = status if status in self._VALID_STATUSES else "proposed"
+                if requested_status == "accepted":
+                    return self._error(
+                        "add_claim cannot initialize directly to accepted; use set_status through the review workflow"
+                    )
                 claim = {
                     "id": claim_id,
                     "statement": statement,
                     "assumptions": self._parse_json_list(assumptions_json),
-                    "depends_on": self._parse_json_list(depends_on_json),
+                    "depends_on": parsed_deps,
                     "tags": self._parse_json_list(tags_json),
-                    "status": status if status in self._VALID_STATUSES else "proposed",
+                    "status": requested_status,
                     "notes": notes or "",
                     "must_accept": bool(must_accept),
                     "created_at": self._now_iso(),
@@ -341,16 +369,27 @@ class MathClaimGraphTool(Tool):
             if action == "update_claim":
                 if not claim_id:
                     return self._error("'claim_id' is required for update_claim")
+                claim_id_err = self._validate_claim_id(claim_id)
+                if claim_id_err:
+                    return self._error(claim_id_err)
                 claim = self._find_claim(graph, claim_id)
                 if claim is None:
                     return self._error(f"claim '{claim_id}' not found")
 
+                material_change = False
                 if statement is not None:
                     claim["statement"] = statement
+                    material_change = True
                 if assumptions_json is not None:
                     claim["assumptions"] = self._parse_json_list(assumptions_json)
+                    material_change = True
                 if depends_on_json is not None:
-                    claim["depends_on"] = self._parse_json_list(depends_on_json)
+                    parsed_deps = self._parse_json_list(depends_on_json)
+                    dep_err = self._validate_claim_ids(parsed_deps, field_name="depends_on")
+                    if dep_err:
+                        return self._error(dep_err)
+                    claim["depends_on"] = parsed_deps
+                    material_change = True
                 if tags_json is not None:
                     claim["tags"] = self._parse_json_list(tags_json)
                 if notes is not None:
@@ -362,8 +401,29 @@ class MathClaimGraphTool(Tool):
                         return self._error(
                             f"invalid status '{status}'. valid: {sorted(self._VALID_STATUSES)}"
                         )
+                    if status == "accepted" and not self.allow_accepted_transition:
+                        return self._error(
+                            "setting status=accepted is manager-only; this tool instance is not allowed to accept claims"
+                        )
+                    transition_err = self._validate_transition(
+                        old_status=str(claim.get("status", "proposed")),
+                        new_status=str(status),
+                        context_action="update_claim",
+                    )
+                    if transition_err:
+                        return self._error(transition_err)
                     claim["status"] = status
 
+                if material_change and status is None:
+                    current_status = str(claim.get("status", "proposed"))
+                    if current_status in {"verified_symbolic", "verified_numeric", "accepted"}:
+                        claim["status"] = "proved_draft"
+                        auto_note = (
+                            "Status auto-reset to proved_draft because statement/assumptions/dependencies changed."
+                        )
+                        claim["notes"] = (
+                            f"{claim.get('notes', '').rstrip()}\n{auto_note}".strip()
+                        )
                 claim["updated_at"] = self._now_iso()
                 self._save_graph(graph_path, graph)
                 return json.dumps({"success": True, "action": action, "claim": claim}, indent=2)
@@ -371,12 +431,26 @@ class MathClaimGraphTool(Tool):
             if action == "set_status":
                 if not claim_id or not status:
                     return self._error("'claim_id' and 'status' are required for set_status")
+                claim_id_err = self._validate_claim_id(claim_id)
+                if claim_id_err:
+                    return self._error(claim_id_err)
                 if status not in self._VALID_STATUSES:
                     return self._error(f"invalid status '{status}'. valid: {sorted(self._VALID_STATUSES)}")
+                if status == "accepted" and not self.allow_accepted_transition:
+                    return self._error(
+                        "setting status=accepted is manager-only; this tool instance is not allowed to accept claims"
+                    )
 
                 claim = self._find_claim(graph, claim_id)
                 if claim is None:
                     return self._error(f"claim '{claim_id}' not found")
+                transition_err = self._validate_transition(
+                    old_status=str(claim.get("status", "proposed")),
+                    new_status=str(status),
+                    context_action="set_status",
+                )
+                if transition_err:
+                    return self._error(transition_err)
                 claim["status"] = status
                 claim["updated_at"] = self._now_iso()
                 self._save_graph(graph_path, graph)
@@ -385,11 +459,17 @@ class MathClaimGraphTool(Tool):
             if action == "add_dependency":
                 if not claim_id or not depends_on_json:
                     return self._error("'claim_id' and 'depends_on_json' are required for add_dependency")
+                claim_id_err = self._validate_claim_id(claim_id)
+                if claim_id_err:
+                    return self._error(claim_id_err)
                 claim = self._find_claim(graph, claim_id)
                 if claim is None:
                     return self._error(f"claim '{claim_id}' not found")
 
                 deps = self._parse_json_list(depends_on_json)
+                dep_err = self._validate_claim_ids(deps, field_name="depends_on")
+                if dep_err:
+                    return self._error(dep_err)
                 for dep in deps:
                     if dep not in claim["depends_on"]:
                         claim["depends_on"].append(dep)
@@ -400,6 +480,9 @@ class MathClaimGraphTool(Tool):
             if action == "get_claim":
                 if not claim_id:
                     return self._error("'claim_id' is required for get_claim")
+                claim_id_err = self._validate_claim_id(claim_id)
+                if claim_id_err:
+                    return self._error(claim_id_err)
                 claim = self._find_claim(graph, claim_id)
                 if claim is None:
                     return self._error(f"claim '{claim_id}' not found")
@@ -742,17 +825,41 @@ class MathClaimGraphTool(Tool):
         claims = graph.get("claims", [])
         ids = {str(c.get("id")) for c in claims if c.get("id")}
         missing_dependencies: Dict[str, List[str]] = {}
+        self_dependencies: Dict[str, List[str]] = {}
         invalid_statuses: Dict[str, str] = {}
+        accepted_dependency_violations: Dict[str, List[str]] = {}
+        invalid_claim_ids: List[str] = []
+        duplicate_claim_ids: List[str] = []
+        seen_ids = set()
 
         for claim in claims:
             cid = str(claim.get("id", ""))
+            if not cid:
+                continue
+            if cid in seen_ids:
+                duplicate_claim_ids.append(cid)
+            else:
+                seen_ids.add(cid)
+            if not self._CLAIM_ID_RE.match(cid):
+                invalid_claim_ids.append(cid)
             status = str(claim.get("status", "proposed"))
             if status not in self._VALID_STATUSES:
                 invalid_statuses[cid] = status
             deps = [str(d) for d in claim.get("depends_on", [])]
+            self_deps = [d for d in deps if d == cid]
+            if self_deps:
+                self_dependencies[cid] = self_deps
             missing = [d for d in deps if d not in ids]
             if missing:
                 missing_dependencies[cid] = missing
+            if status == "accepted":
+                bad = []
+                for dep in deps:
+                    dep_claim = self._find_claim(graph, dep)
+                    if dep_claim is None or str(dep_claim.get("status", "")) != "accepted":
+                        bad.append(dep)
+                if bad:
+                    accepted_dependency_violations[cid] = bad
 
         adjacency: Dict[str, List[str]] = {
             str(claim.get("id")): [str(d) for d in claim.get("depends_on", []) if str(claim.get("id")) != str(d)]
@@ -761,14 +868,55 @@ class MathClaimGraphTool(Tool):
         }
 
         cycles = self._find_cycles(adjacency)
-        is_valid = not missing_dependencies and not invalid_statuses and not cycles
+        is_valid = (
+            not missing_dependencies
+            and not self_dependencies
+            and not invalid_statuses
+            and not invalid_claim_ids
+            and not duplicate_claim_ids
+            and not accepted_dependency_violations
+            and not cycles
+        )
 
         return {
             "is_valid": is_valid,
             "missing_dependencies": missing_dependencies,
+            "self_dependencies": self_dependencies,
             "invalid_statuses": invalid_statuses,
+            "invalid_claim_ids": sorted(set(invalid_claim_ids)),
+            "duplicate_claim_ids": sorted(set(duplicate_claim_ids)),
+            "accepted_dependency_violations": accepted_dependency_violations,
             "cycles": cycles,
         }
+
+    def _validate_claim_id(self, claim_id: str) -> Optional[str]:
+        cid = str(claim_id or "").strip()
+        if not cid:
+            return "claim_id must be non-empty"
+        if not self._CLAIM_ID_RE.match(cid):
+            return (
+                f"invalid claim_id '{cid}'. Allowed pattern: [A-Za-z0-9_.-]+ "
+                "(this prevents proof/check filename collisions)"
+            )
+        return None
+
+    def _validate_claim_ids(self, claim_ids: List[str], field_name: str) -> Optional[str]:
+        for cid in claim_ids:
+            err = self._validate_claim_id(str(cid))
+            if err:
+                return f"{field_name} contains invalid claim id: {err}"
+        return None
+
+    def _validate_transition(self, old_status: str, new_status: str, context_action: str) -> Optional[str]:
+        if old_status == new_status:
+            return None
+        allowed_next = self._ALLOWED_TRANSITIONS.get(old_status, set())
+        if new_status not in allowed_next:
+            return (
+                f"invalid status transition in {context_action}: "
+                f"{old_status} -> {new_status}. Allowed next: {sorted(allowed_next)}"
+            )
+        return None
 
     @staticmethod
     def _find_cycles(adjacency: Dict[str, List[str]]) -> List[List[str]]:
