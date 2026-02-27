@@ -2,6 +2,55 @@
 
 This repository runs a multi-agent research workflow from a local workspace.
 
+## System Map
+
+### Agent Orchestration
+
+```mermaid
+flowchart TD
+    U["User Task"] --> M["ManagerAgent"]
+    M --> I["IdeationAgent"]
+    M --> E["ExperimentationAgent"]
+    M --> R["ResourcePreparationAgent"]
+    M --> W["WriteupAgent"]
+    M --> P["ProofreadingAgent"]
+    M --> V["ReviewerAgent"]
+
+    M -. "optional: --enable-math-agents" .-> MP["MathProposerAgent"]
+    M -. "optional: --enable-math-agents" .-> MPr["MathProverAgent"]
+    M -. "optional: --enable-math-agents" .-> MR["MathRigorousVerifierAgent"]
+    M -. "optional: --enable-math-agents" .-> ME["MathEmpiricalVerifierAgent"]
+
+    I --> WS["Workspace"]
+    E --> WS
+    R --> WS
+    W --> WS
+    P --> WS
+    V --> WS
+    MP --> WS
+    MPr --> WS
+    MR --> WS
+    ME --> WS
+```
+
+### Artifact and Quality Gates
+
+```mermaid
+flowchart LR
+    A["Run Output"] --> G1{"--enforce-paper-artifacts?"}
+    G1 -- "no" --> END1["Manager may terminate on task completion"]
+    G1 -- "yes" --> PA["Required paper artifacts<br/>final_paper.tex (+ optional pdf/plan)"]
+    PA --> G2{"--enforce-editorial-artifacts?"}
+    G2 -- "no" --> END2["Paper artifact gate only"]
+    G2 -- "yes" --> EA["Editorial artifacts<br/>editorial_contract/theorem_map/revision_log/<br/>copyedit_report/review_report"]
+
+    EA --> G3{"--enable-math-agents?"}
+    G3 -- "no" --> END3["Editorial + paper gates"]
+    G3 -- "yes" --> MA["Math acceptance gate<br/>accepted claims + proof/check evidence"]
+    MA --> CT["Claim traceability gate<br/>paper claims -> accepted claim ids"]
+    CT --> END4["All enabled gates pass"]
+```
+
 ## 1) Prerequisites
 
 - macOS or Linux
@@ -78,6 +127,30 @@ Disable file logging if needed:
 python launch_multiagent.py --no-log-to-files --task "..."
 ```
 
+## CLI Options Reference
+
+`launch_multiagent.py` supports:
+
+- `--model`: model id from supported model list.
+- `--interpreter`: python interpreter path used for experiment execution.
+- `--debug`: enable debug logging.
+- `--log-to-files`: force stdout/stderr file redirection (default on).
+- `--no-log-to-files`: disable stdout/stderr file redirection.
+- `--reasoning-effort`: `none|minimal|low|medium|high|xhigh`.
+- `--verbosity`: `low|medium|high`.
+- `--callback_host`: callback server host for live steering (default `127.0.0.1`).
+- `--callback_port`: callback server port for live steering (default `5001`).
+- `--enable-planning`: enable periodic plan/replan behavior.
+- `--planning-interval`: planning frequency in steps when planning is enabled.
+- `--resume`: resume an existing workspace directory.
+- `--task`: task text for new or resumed run.
+- `--require-pdf`: require `final_paper.pdf` for successful paper termination.
+- `--enforce-paper-artifacts`: enforce required paper deliverable artifacts.
+- `--manager-max-steps`: override manager max steps.
+- `--enable-math-agents`: enable math proposer/prover/verifier agents.
+- `--require-experiment-plan`: require `experiments_to_run_later.md` when paper artifact enforcement is active.
+- `--enforce-editorial-artifacts`: require editorial workflow artifacts for high-quality writing runs.
+
 ## 6) Resume an Existing Workspace
 
 ```bash
@@ -142,6 +215,7 @@ python launch_multiagent.py \
   --resume /absolute/path/to/results/my_project_001 \
   --task "Write and refine the paper, then produce final_paper.tex and final_paper.pdf." \
   --enforce-paper-artifacts \
+  --enforce-editorial-artifacts \
   --require-pdf \
   --require-experiment-plan \
   --manager-max-steps 30
@@ -151,6 +225,15 @@ What this enforces:
 
 - truthful artifact reporting in final answer
 - required files present before successful termination
+- if `--enforce-editorial-artifacts` is enabled:
+  - `paper_workspace/editorial_contract.md`
+  - `paper_workspace/theorem_map.json`
+  - `paper_workspace/revision_log.md`
+  - `paper_workspace/copyedit_report.md`
+  - `paper_workspace/review_report.md`
+  - plus `paper_workspace/claim_traceability.json` when `--enable-math-agents` is active
+
+Editorial artifact mode is optional and intended for high-quality, final-form writing runs.
 
 ## 10) Math Workflow (Theorem/Proof Pipeline)
 

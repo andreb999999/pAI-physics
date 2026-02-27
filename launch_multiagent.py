@@ -237,6 +237,7 @@ def main():
         or "experiments_to_run_later" in task.lower()
     )
     enforce_paper_artifacts = args.enforce_paper_artifacts or auto_enforce_paper_artifacts
+    enforce_editorial_artifacts = args.enforce_editorial_artifacts and enforce_paper_artifacts
     required_paper_artifacts = []
     require_experiment_plan = args.require_experiment_plan or (
         "experiments_to_run_later" in task.lower()
@@ -247,6 +248,18 @@ def main():
             required_paper_artifacts.append("experiments_to_run_later.md")
         if args.require_pdf:
             required_paper_artifacts.append("final_paper.pdf")
+        if enforce_editorial_artifacts:
+            required_paper_artifacts.extend(
+                [
+                    "paper_workspace/editorial_contract.md",
+                    "paper_workspace/theorem_map.json",
+                    "paper_workspace/revision_log.md",
+                    "paper_workspace/copyedit_report.md",
+                    "paper_workspace/review_report.md",
+                ]
+            )
+            if args.enable_math_agents:
+                required_paper_artifacts.append("paper_workspace/claim_traceability.json")
 
     os.environ["FREEPHDLABOR_REQUIRE_PDF"] = "1" if args.require_pdf else "0"
     os.environ["FREEPHDLABOR_ENFORCE_PAPER_ARTIFACTS"] = (
@@ -254,6 +267,9 @@ def main():
     )
     os.environ["FREEPHDLABOR_REQUIRE_EXPERIMENT_PLAN"] = (
         "1" if require_experiment_plan else "0"
+    )
+    os.environ["FREEPHDLABOR_ENFORCE_EDITORIAL_ARTIFACTS"] = (
+        "1" if enforce_editorial_artifacts else "0"
     )
     if enforce_paper_artifacts:
         print(
@@ -317,6 +333,7 @@ def main():
             enforce_paper_artifacts=enforce_paper_artifacts,
             require_experiment_plan=require_experiment_plan,
             enable_math_agents=args.enable_math_agents,
+            enforce_editorial_artifacts=enforce_editorial_artifacts,
         )
         
         print("\n" + "=" * 50)

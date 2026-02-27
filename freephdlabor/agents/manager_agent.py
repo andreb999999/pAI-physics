@@ -8,12 +8,14 @@ from typing import List
 from .base_research_agent import BaseResearchAgent
 from ..result_validation import validate_result_artifacts
 from ..math_acceptance_validation import validate_math_acceptance
+from ..paper_traceability_validation import validate_claim_traceability
 
 from .reviewer_agent import ReviewerAgent
 from .ideation_agent import IdeationAgent
 from .experimentation_agent import ExperimentationAgent
 from .resource_preparation_agent import ResourcePreparationAgent
 from .writeup_agent import WriteupAgent
+from .proofreading_agent import ProofreadingAgent
 from .math_proposer_agent import MathProposerAgent
 from .math_prover_agent import MathProverAgent
 from .math_rigorous_verifier_agent import MathRigorousVerifierAgent
@@ -64,6 +66,9 @@ class ManagerAgent(BaseResearchAgent):
         self.enforce_paper_artifacts = bool(kwargs.pop("enforce_paper_artifacts", False))
         self.require_experiment_plan = bool(kwargs.pop("require_experiment_plan", False))
         self.enable_math_agents = bool(kwargs.pop("enable_math_agents", False))
+        self.enforce_editorial_artifacts = bool(
+            kwargs.pop("enforce_editorial_artifacts", False)
+        )
         existing_final_answer_checks = kwargs.pop("final_answer_checks", [])
 
         # Create inter-agent messages folder (specific to ManagerAgent)
@@ -154,7 +159,27 @@ Approach: Comprehensive documentation of all experimental artifacts without sele
                 additional_authorized_imports=essential_imports,
             )
 
-            self.managed_agents = [ideation_agent, experimentation_agent, resource_preparation_agent, writeup_agent, reviewer_agent]
+            from ..prompts.proofreading_instructions import get_proofreading_system_prompt
+            proofreading_agent = ProofreadingAgent(
+                model=model,  # Pass original model, they'll wrap it themselves
+                workspace_dir=workspace_dir,
+                name="proofreading_agent",
+                description=f"""A specialist agent for copy-editing, concision improvements, and final LaTeX quality assurance.
+
+--- SYSTEM INSTRUCTIONS ---
+{get_proofreading_system_prompt(tools=[], managed_agents=None)}
+--- END SYSTEM INSTRUCTIONS ---""",
+                additional_authorized_imports=essential_imports,
+            )
+
+            self.managed_agents = [
+                ideation_agent,
+                experimentation_agent,
+                resource_preparation_agent,
+                writeup_agent,
+                proofreading_agent,
+                reviewer_agent,
+            ]
 
             if self.enable_math_agents:
                 math_proposer_agent = MathProposerAgent(
@@ -263,6 +288,18 @@ Approach: Comprehensive documentation of all experimental artifacts without sele
             required.append("experiments_to_run_later.md")
         if self.require_pdf:
             required.append("final_paper.pdf")
+        if self.enforce_editorial_artifacts:
+            required.extend(
+                [
+                    "paper_workspace/editorial_contract.md",
+                    "paper_workspace/theorem_map.json",
+                    "paper_workspace/revision_log.md",
+                    "paper_workspace/copyedit_report.md",
+                    "paper_workspace/review_report.md",
+                ]
+            )
+            if self.enable_math_agents:
+                required.append("paper_workspace/claim_traceability.json")
         return required
 
     def _validate_manager_success_criteria(self, final_answer, memory, agent=None):
@@ -300,5 +337,12 @@ Approach: Comprehensive documentation of all experimental artifacts without sele
                     "TERMINATION_BLOCKED: Math claim acceptance audit failed: "
                     + "; ".join(math_summary["errors"])
                 )
+            if self.enforce_editorial_artifacts:
+                traceability_summary = validate_claim_traceability(workspace_dir=workspace)
+                if not traceability_summary["is_valid"]:
+                    raise ValueError(
+                        "TERMINATION_BLOCKED: Claim traceability audit failed: "
+                        + "; ".join(traceability_summary["errors"])
+                    )
 
         return True

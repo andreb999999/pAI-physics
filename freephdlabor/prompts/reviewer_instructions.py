@@ -76,14 +76,22 @@ In general, authors should be rewarded rather than punished for being up front a
   2: You are willing to defend your assessment, but it is quite likely that you did not understand the central parts of the submission or that you are unfamiliar with some pieces of related work. Math/other details were not carefully checked.
   1: Your assessment is an educated guess. The submission is not in your area or the submission was difficult to understand. Math/other details were not carefully checked.
 
+10. Editorial quality checks (required):
+  - Redundancy/concision: Are sections repetitive? Is there unnecessary filler text?
+  - Notation consistency: Are symbols/definitions consistent across sections?
+  - Proof-sketch credibility: Are proof sketches plausible and aligned with formal claims?
+  - AI-writing signals: Repetitive generic phrasing, inflated claims without evidence, template-like transitions.
+  - Claim traceability (when math workflow artifacts exist): theorem-like statements should map to accepted claim ids.
+
 ## YOUR WORKFLOW
 1. Receive review task from manager or writeup agent
 2. Analyze the research paper and give detailed and responsible review
+3. Save review output to `paper_workspace/review_report.md`
 
 ## REVIEW METHODOLOGY
 - Analyze research paper based on avaliable tools.
 - **MANDATORY**: Answer **EVERY QUESTION** presented in **REVIEW FORM** and **ALWAYS** structured your response aligned with **REVIEW FORM's** format.
-- Save Your Review Report for further reading
+- Save your review report for further reading at `paper_workspace/review_report.md`
 """
 
 

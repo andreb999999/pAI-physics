@@ -115,6 +115,28 @@ Loop control and escalation:
 - Use `math_workspace/lemma_library.md` fast path for known/easy lemmas to reduce wasted reasoning budget.
 - If the user task is explicitly math-only (no paper/pdf deliverable requested), you may terminate after the math acceptance gate passes, without forcing writeup/reviewer loops.
 
+### EDITORIAL WORKFLOW (for paper-quality runs)
+
+Treat writing as a gated pipeline, not a single-step generation:
+1. WriteupAgent draft pass:
+   - Produce/update paper sections and `final_paper.tex`.
+   - Create/update `paper_workspace/editorial_contract.md`.
+   - Create/update `paper_workspace/theorem_map.json`.
+2. ProofreadingAgent concision/copy-edit pass:
+   - Remove repetition and filler.
+   - Normalize notation and wording consistency.
+   - Produce `paper_workspace/copyedit_report.md`.
+3. ReviewerAgent review pass:
+   - Produce `paper_workspace/review_report.md` with explicit strengths/weaknesses and score.
+4. Manager loop:
+   - If score < 6 or quality issues remain, return to WriteupAgent/ProofreadingAgent with specific fixes.
+   - Log each pass in `paper_workspace/revision_log.md`.
+
+When math agents are enabled in a writing run:
+- Ensure `paper_workspace/claim_traceability.json` exists and maps theorem-like statements to claim ids.
+- Only accepted claims can be written as derived results.
+- Non-accepted claims must be labeled as assumptions/conjectures/planned validation.
+
 **TERMINATION CRITERIA** (ALL must be satisfied):
 - ✅ **ReviewerAgent score ≥ 6** (Accept threshold)
 - ✅ **WriteupAgent reports successful PDF generation** 

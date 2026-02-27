@@ -245,6 +245,7 @@ def initialize_agent_system(
     enforce_paper_artifacts=False,
     require_experiment_plan=False,
     enable_math_agents=False,
+    enforce_editorial_artifacts=False,
 ):
     """
     Initialize the complete multi-agent system with consistent configuration.
@@ -264,6 +265,7 @@ def initialize_agent_system(
         enforce_paper_artifacts: If True, enable manager paper artifact final-answer checks
         require_experiment_plan: If True, manager also requires experiments_to_run_later.md
         enable_math_agents: If True, include theorem-oriented math agents in manager delegation pool
+        enforce_editorial_artifacts: If True, enforce editorial workflow artifacts in paper runs
 
     Returns:
         ManagerAgent: Configured with pre-initialized specialist agents
@@ -357,8 +359,8 @@ Approach: Comprehensive documentation of all experimental artifacts without sele
         experimentation_agent,
         resource_preparation_agent,
         writeup_agent,
-        reviewer_agent,
         proofreading_agent,
+        reviewer_agent,
     ]
 
     if enable_math_agents:
@@ -427,6 +429,7 @@ Approach: Comprehensive documentation of all experimental artifacts without sele
         enforce_paper_artifacts=enforce_paper_artifacts,
         require_experiment_plan=require_experiment_plan,
         enable_math_agents=enable_math_agents,
+        enforce_editorial_artifacts=enforce_editorial_artifacts,
     )
     print("✅ ManagerAgent initialized with specialist agents")
     

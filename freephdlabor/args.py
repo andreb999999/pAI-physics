@@ -145,4 +145,10 @@ Examples:
         help="When paper artifact enforcement is enabled, also require experiments_to_run_later.md."
     )
 
+    parser.add_argument(
+        "--enforce-editorial-artifacts",
+        action="store_true",
+        help="When paper artifact enforcement is enabled, also require editorial workflow artifacts (editorial_contract.md, theorem_map.json, revision_log.md, copyedit_report.md, review_report.md, and claim_traceability.json in math mode).",
+    )
+
     return parser.parse_args()

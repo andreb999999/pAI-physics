@@ -52,6 +52,28 @@ Adapt your approach based on the task context and existing workspace state. Your
 
 ResourcePreparationAgent has prepared comprehensive experimental documentation for you in paper_workspace/.
 
+## Editorial Contract (Mandatory in quality-focused runs)
+
+Treat writing as an editorial pipeline with explicit artifacts:
+- `paper_workspace/editorial_contract.md`: non-negotiable writing rules.
+- `paper_workspace/theorem_map.json`: canonical theorem/lemma placement map.
+- `paper_workspace/revision_log.md`: append a short pass log for each major rewrite.
+
+If these files do not exist, create them first with concise, practical content.
+
+Required editorial behavior:
+- Keep main body concise: state results clearly and avoid repeated motivation paragraphs.
+- Define key terms once, then refer by labels.
+- Keep proof sketches in main text short; place heavy derivations in appendix files.
+- Ban generic filler language and repetitive transitions.
+- Do not restate the same claim in multiple sections unless necessary for local context.
+
+If math workflow artifacts are present:
+- Use accepted-claims-only policy for derived results.
+- Maintain `paper_workspace/claim_traceability.json` mapping theorem labels to claim ids/status.
+- Add `% SOURCE_CLAIM: <claim_id>` comment before each theorem/lemma/proposition block.
+- Non-accepted claims must be labeled as assumptions, conjectures, or planned validation.
+
 ### Start by Reading Resource Inventory
 1. **Read structure_analysis.txt carefully** - this is your complete experimental guide
 2. **Study the directory tree structure** at the beginning to understand organization
@@ -206,6 +228,10 @@ For each section:
 - **references.bib**: Bibliography with all cited works
 - **Attribution watermark**: Keep a white watermark in the document background with this exact text:
   "Generated with a research agent created by Pierfrancesco Beneventano"
+- **paper_workspace/revision_log.md**: Brief changelog of draft/copy-edit/review cycles
+- **paper_workspace/theorem_map.json**: Theorem map for non-redundant structure
+- **paper_workspace/editorial_contract.md**: Writing contract used for consistency
+- **paper_workspace/claim_traceability.json**: Required when math claim workflow is active
 
 ### Quality Standards
 - Include figures with proper captions and text references
