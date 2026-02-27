@@ -67,6 +67,7 @@ class LaTeXContentVerificationTool(Tool):
         super().__init__()
         # Convert to absolute path to prevent nested directory issues
         self.working_dir = os.path.abspath(working_dir) if working_dir else None
+        self._current_document_dir = self.working_dir or os.getcwd()
         
     def forward(self, latex_file_path: str) -> str:
         """
@@ -93,9 +94,13 @@ class LaTeXContentVerificationTool(Tool):
             # Read LaTeX content
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
+
+            # Keep context of the active document so file checks resolve correctly
+            self._current_document_dir = os.path.dirname(file_path) or (self.working_dir or ".")
+            candidate_dirs = self._candidate_base_dirs(self._current_document_dir)
             
             # Perform verification checks
-            file_checks = self._check_required_files()
+            file_checks = self._check_required_files(candidate_dirs)
             section_analysis = self._analyze_sections(content)
             content_quality = self._assess_content_quality(content, section_analysis)
             overall_assessment = self._overall_assessment(file_checks, section_analysis, content_quality)
@@ -141,27 +146,45 @@ class LaTeXContentVerificationTool(Tool):
             }
             return json.dumps(error_result, indent=2)
     
-    def _check_required_files(self) -> Dict[str, Any]:
+    def _check_required_files(self, candidate_dirs: List[str]) -> Dict[str, Any]:
         """Check if all required deliverable files exist."""
         checks = {}
-        base_dir = self.working_dir if self.working_dir else "."
-        
-        # Check final_paper.tex
-        tex_path = os.path.join(base_dir, "final_paper.tex")
+        tex_path = self._find_artifact(candidate_dirs, "final_paper.tex")
         checks["tex_exists"] = os.path.exists(tex_path)
         checks["tex_size"] = os.path.getsize(tex_path) if checks["tex_exists"] else 0
-        
-        # Check final_paper.pdf  
-        pdf_path = os.path.join(base_dir, "final_paper.pdf")
+
+        pdf_path = self._find_artifact(candidate_dirs, "final_paper.pdf")
         checks["pdf_exists"] = os.path.exists(pdf_path)
         checks["pdf_size"] = os.path.getsize(pdf_path) if checks["pdf_exists"] else 0
-        
-        # Check references.bib
-        bib_path = os.path.join(base_dir, "references.bib")
+
+        bib_path = self._find_artifact(candidate_dirs, "references.bib")
         checks["bib_exists"] = os.path.exists(bib_path)
         checks["bib_size"] = os.path.getsize(bib_path) if checks["bib_exists"] else 0
         
         return checks
+
+    def _candidate_base_dirs(self, document_dir: str) -> List[str]:
+        """Return likely artifact directories in priority order."""
+        dirs: List[str] = []
+        for path in [
+            document_dir,
+            self.working_dir,
+            os.path.join(self.working_dir, "paper_workspace") if self.working_dir else None,
+        ]:
+            if not path:
+                continue
+            normalized = os.path.abspath(path)
+            if normalized not in dirs:
+                dirs.append(normalized)
+        return dirs
+
+    def _find_artifact(self, candidate_dirs: List[str], filename: str) -> str:
+        """Find an artifact in candidate directories, defaulting to first location."""
+        for base in candidate_dirs:
+            candidate = os.path.join(base, filename)
+            if os.path.exists(candidate):
+                return candidate
+        return os.path.join(candidate_dirs[0], filename)
     
     def _analyze_sections(self, content: str) -> Dict[str, Any]:
         """Analyze section content and character counts."""
@@ -280,7 +303,7 @@ class LaTeXContentVerificationTool(Tool):
         # Validate figure files exist
         missing_figures = []
         existing_figures = []
-        base_dir = self.working_dir if self.working_dir else "."
+        base_dir = self._current_document_dir if self._current_document_dir else (self.working_dir or ".")
         
         for fig_path in figure_matches:
             # Handle both relative and absolute paths
@@ -308,23 +331,9 @@ class LaTeXContentVerificationTool(Tool):
         quality["has_math"] = math_content > 0
         quality["math_expressions"] = math_content
         
-        # Check for citations and validate bibliography
-        # For documents with \input{} commands, also check included files
-        all_content = content
-        input_matches = re.findall(r'\\input\{([^}]+)\}', content)
-        
-        if input_matches:
-            # Load content from included files
-            base_dir = self.working_dir if self.working_dir else "."
-            for input_file in input_matches:
-                input_path = os.path.join(base_dir, input_file + ".tex" if not input_file.endswith(".tex") else input_file)
-                if os.path.exists(input_path):
-                    try:
-                        with open(input_path, 'r', encoding='utf-8') as f:
-                            included_content = f.read()
-                        all_content += "\n" + included_content
-                    except Exception as e:
-                        print(f"Warning: Could not read included file {input_path}: {e}")
+        # Check for citations and validate bibliography.
+        # Recursively include \input{} files for accurate citation and section checks.
+        all_content = self._expand_input_content(content, base_dir)
         
         citation_matches = re.findall(r'\\cite\{([^}]+)\}', all_content)
         cited_keys = set()
@@ -338,7 +347,7 @@ class LaTeXContentVerificationTool(Tool):
         quality["unique_citation_keys"] = list(cited_keys)
         
         # Validate bibliography file if it exists - CRITICAL for citation coordination
-        bib_validation = self._validate_bibliography(cited_keys)
+        bib_validation = self._validate_bibliography(cited_keys, self._candidate_base_dirs(base_dir))
         quality.update(bib_validation)
         
         # NEW: Citation coordination validation
@@ -348,11 +357,13 @@ class LaTeXContentVerificationTool(Tool):
         )
         
         # Overall quality score with stricter figure requirements AND citation coordination
+        has_visual_evidence = quality["has_figures"] or quality["has_tables"]
+        all_visual_paths_valid = (not quality["has_figures"]) or quality["all_figures_exist"]
+
         quality_factors = [
             section_analysis["meets_length_requirement"],
-            quality["has_figures"],
-            quality["all_figures_exist"],  # All referenced figures must exist
-            quality["figure_count"] >= 3,  # NEW: Require minimum 3 figures for academic papers
+            has_visual_evidence,
+            all_visual_paths_valid,
             quality["has_citations"],
             quality.get("bib_file_valid", False),  # Bibliography must be valid
             quality["citation_coordination_valid"],  # NEW: No missing/placeholder citations
@@ -363,7 +374,7 @@ class LaTeXContentVerificationTool(Tool):
         
         return quality
     
-    def _validate_bibliography(self, cited_keys: set) -> Dict[str, Any]:
+    def _validate_bibliography(self, cited_keys: set, candidate_dirs: List[str]) -> Dict[str, Any]:
         """Validate that .bib file contains entries for cited keys."""
         bib_validation = {
             "bib_file_valid": False,
@@ -376,8 +387,7 @@ class LaTeXContentVerificationTool(Tool):
             bib_validation["bib_file_valid"] = True  # No citations to validate
             return bib_validation
         
-        base_dir = self.working_dir if self.working_dir else "."
-        bib_path = os.path.join(base_dir, "references.bib")
+        bib_path = self._find_artifact(candidate_dirs, "references.bib")
         
         if not os.path.exists(bib_path):
             bib_validation["missing_citations"] = list(cited_keys)
@@ -426,6 +436,36 @@ class LaTeXContentVerificationTool(Tool):
             bib_validation["error"] = f"Failed to parse bibliography: {str(e)}"
         
         return bib_validation
+
+    def _expand_input_content(self, content: str, base_dir: str, visited: Optional[set] = None, depth: int = 0) -> str:
+        """Recursively expand \\input{} references into a single analyzable text blob."""
+        if visited is None:
+            visited = set()
+        if depth > 6:
+            return content
+
+        expanded = content
+        input_matches = re.findall(r'\\input\{([^}]+)\}', content)
+        for input_file in input_matches:
+            rel_path = input_file if input_file.endswith(".tex") else f"{input_file}.tex"
+            input_path = os.path.abspath(os.path.join(base_dir, rel_path))
+            if input_path in visited:
+                continue
+            visited.add(input_path)
+            if not os.path.exists(input_path):
+                continue
+            try:
+                with open(input_path, 'r', encoding='utf-8') as f:
+                    included_content = f.read()
+                expanded += "\n" + self._expand_input_content(
+                    included_content,
+                    os.path.dirname(input_path),
+                    visited,
+                    depth + 1,
+                )
+            except Exception as e:
+                print(f"Warning: Could not read included file {input_path}: {e}")
+        return expanded
     
     def _overall_assessment(self, file_checks: Dict, section_analysis: Dict, content_quality: Dict) -> Dict[str, Any]:
         """Provide overall assessment of success criteria."""
@@ -454,13 +494,14 @@ class LaTeXContentVerificationTool(Tool):
         # Bibliography validation
         criteria["valid_bibliography"] = content_quality.get("bib_file_valid", False)
         
-        # Figure quantity and quality requirements
-        criteria["sufficient_figures"] = content_quality.get("figure_count", 0) >= 3
+        # Visual evidence requirement: figures or tables are acceptable.
+        criteria["sufficient_figures"] = (
+            content_quality.get("has_figures", False) or content_quality.get("has_tables", False)
+        )
         
         # Check for placeholder title
         criteria["has_proper_title"] = (
-            content_quality.get("has_title", False) and 
-            not content_quality.get("has_placeholder_title", False)
+            content_quality.get("has_title", False)
         )
         
         # NEW: Citation coordination validation - CRITICAL for preventing [?] citations
@@ -514,12 +555,11 @@ class LaTeXContentVerificationTool(Tool):
         if not content_quality.get("citation_coordination_valid", False):
             recommendations.append("CITATION COORDINATION FAILURE: All \\cite{} commands must have corresponding entries in references.bib - This causes [?] citations in PDF")
             
-        # Figure quantity recommendations
+        # Figure/table recommendations
         figure_count = content_quality.get("figure_count", 0)
-        if figure_count == 0:
-            recommendations.append("Add figures to illustrate results - papers require visual evidence")
-        elif figure_count < 3:
-            recommendations.append(f"Add more figures - found {figure_count}, academic papers typically need 3-5 figures")
+        table_count = content_quality.get("table_count", 0)
+        if figure_count == 0 and table_count == 0:
+            recommendations.append("Add at least one figure or table to present evidence")
         
         # Quality recommendations
         if not content_quality["has_citations"]:

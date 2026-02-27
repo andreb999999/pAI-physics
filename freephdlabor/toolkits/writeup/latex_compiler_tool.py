@@ -556,6 +556,16 @@ class LaTeXCompilerTool(Tool):
 
     def _find_pdflatex_path(self) -> Optional[str]:
         """Adaptively find pdflatex executable path."""
+        # Highest priority: explicit override for deterministic environments.
+        override = os.environ.get("FREEPHDLABOR_PDFLATEX_PATH", "").strip()
+        if override and os.path.isfile(override) and os.access(override, os.X_OK):
+            return override
+
+        # Prefer macOS MacTeX binary before conda PATH candidates.
+        mactex_pdflatex = "/Library/TeX/texbin/pdflatex"
+        if os.path.isfile(mactex_pdflatex) and os.access(mactex_pdflatex, os.X_OK):
+            return mactex_pdflatex
+
         # Method 1: Use which command
         try:
             result = subprocess.run(['which', 'pdflatex'], capture_output=True, text=True, timeout=10)
@@ -593,8 +603,64 @@ class LaTeXCompilerTool(Tool):
 
         return None
 
+    def _is_missing_pdflatex_format(self, output: str) -> bool:
+        """Detect missing pdflatex format-file failures."""
+        if not output:
+            return False
+        lowered = output.lower()
+        return (
+            "can't find the format file" in lowered
+            and "pdflatex.fmt" in lowered
+        ) or ("pdflatex.fmt" in lowered and "i can't find" in lowered)
+
+    def _attempt_pdflatex_format_repair(self, env: Dict[str, str], log: List[str]) -> bool:
+        """Best-effort repair for missing pdflatex.fmt in user-space environments."""
+        repair_commands = [
+            ["fmtutil-user", "--byfmt", "pdflatex"],
+            ["fmtutil-sys", "--byfmt", "pdflatex"],
+            ["mktexfmt", "pdflatex.fmt"],
+        ]
+        any_success = False
+
+        for cmd in repair_commands:
+            exe = shutil.which(cmd[0], path=env.get("PATH"))
+            if not exe:
+                log.append(f"Repair helper not found: {cmd[0]}")
+                continue
+            try:
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                    env=env,
+                )
+                if result.returncode == 0:
+                    any_success = True
+                    log.append(f"Format repair command succeeded: {' '.join(cmd)}")
+                else:
+                    log.append(
+                        f"Format repair command failed ({result.returncode}): {' '.join(cmd)}"
+                    )
+                    if result.stderr:
+                        log.append(f"{cmd[0]} stderr: {result.stderr[:800]}")
+            except Exception as e:
+                log.append(f"Format repair command errored ({' '.join(cmd)}): {e}")
+
+        return any_success
+
     def _find_bibtex_path(self) -> Optional[str]:
         """Adaptively find bibtex executable path."""
+        # Highest priority: explicit override for deterministic environments.
+        override = os.environ.get("FREEPHDLABOR_BIBTEX_PATH", "").strip()
+        if override and os.path.isfile(override) and os.access(override, os.X_OK):
+            return override
+
+        # Prefer macOS MacTeX binary before conda PATH candidates.
+        mactex_bibtex = "/Library/TeX/texbin/bibtex"
+        if os.path.isfile(mactex_bibtex) and os.access(mactex_bibtex, os.X_OK):
+            return mactex_bibtex
+
         # Method 1: Use which command
         try:
             result = subprocess.run(['which', 'bibtex'], capture_output=True, text=True, timeout=10)
@@ -710,6 +776,33 @@ class LaTeXCompilerTool(Tool):
                 timeout=120,
                 env=env
             )
+
+            if result1.returncode != 0:
+                combined_output = f"{result1.stdout}\n{result1.stderr}"
+                if self._is_missing_pdflatex_format(combined_output):
+                    log.append(
+                        "Detected missing pdflatex format file (pdflatex.fmt); "
+                        "attempting automatic format repair."
+                    )
+                    repaired = self._attempt_pdflatex_format_repair(env, log)
+                    if repaired:
+                        log.append("Retrying first pdflatex pass after format repair.")
+                        result1_retry = subprocess.run(
+                            [pdflatex_path, '-interaction=nonstopmode', tex_filename],
+                            capture_output=True,
+                            text=True,
+                            timeout=120,
+                            env=env
+                        )
+                        if result1_retry.returncode == 0:
+                            result1 = result1_retry
+                        else:
+                            result1 = result1_retry
+                    else:
+                        errors.append(
+                            "Missing pdflatex format file (pdflatex.fmt). "
+                            "Run scripts/fix_pdflatex_conda.sh <env_name> to repair TeX formats."
+                        )
 
             if result1.returncode != 0:
                 log.append(f"First pdflatex pass failed with return code {result1.returncode}")

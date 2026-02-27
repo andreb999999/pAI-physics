@@ -6,6 +6,7 @@ workspace directory while maintaining full compatibility with smolagents.
 """
 
 import os
+import re
 import logging
 from typing import Any, Optional, Dict, List, Tuple
 from smolagents import LocalPythonExecutor, Tool
@@ -69,6 +70,14 @@ class WorkspacePythonExecutor(LocalPythonExecutor):
         """
         # Save current directory
         original_dir = os.getcwd()
+        # Guardrail: some models occasionally emit non-Python tool DSL
+        # (e.g., `to=list_dir code ...`) which is invalid for this executor.
+        if re.search(r"(?m)^\s*to\s*=\s*[A-Za-z_]\w*\s+code\b", code_action or ""):
+            raise SyntaxError(
+                "Non-Python tool-call syntax detected (`to=<tool> code`). "
+                "Use executable Python only, e.g. `result = tool_name(arg=...)` "
+                "inside a ```python block."
+            )
         
         try:
             # Change to workspace directory

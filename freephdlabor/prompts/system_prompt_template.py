@@ -142,6 +142,7 @@ Here are the rules you should always follow to solve your task:
 8. The state persists between code executions: so if in one step you've created variables or imported modules, these will all persist.
 9. STRING SYNTAX: Always properly close triple-quoted strings with three double quotes. For multiline content, prefer string concatenation (e.g., "Line 1" + " Line 2") over triple-quoted strings to avoid syntax errors.
 10. NEVER import tool names (for example, `import see_file` or `from x import final_answer`). Tools are already available as callables; call them directly.
+11. NEVER use non-Python tool-call DSL such as `to=<tool> code` or raw JSON tool-call blocks. In this environment, those are invalid and will crash execution. Always call tools as Python functions inside a ```python block.
 
 ALWAYS use the correct markdown format shown in all examples above: ```python your_code_here ```
 

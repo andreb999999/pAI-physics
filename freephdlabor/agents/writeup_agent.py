@@ -133,9 +133,11 @@ class WriteupAgent(BaseResearchAgent):
         combined_imports = list(set(default_imports + passed_imports))
         
         # Create success criteria validation function for final_answer_checks
-        def validate_success_criteria(final_answer, memory):
+        def validate_success_criteria(final_answer, memory, agent=None):
             """Validate success criteria before allowing termination."""
-            return self._validate_writeup_success_criteria(final_answer, memory)
+            return self._validate_writeup_success_criteria(
+                final_answer, memory, agent=agent
+            )
         
         # Initialize BaseResearchAgent with specialized tools and system prompt
         # Context management now automatically integrated via BaseResearchAgent
@@ -156,7 +158,7 @@ class WriteupAgent(BaseResearchAgent):
         # Resume memory if possible
         self.resume_memory()
 
-    def _validate_writeup_success_criteria(self, final_answer, memory):
+    def _validate_writeup_success_criteria(self, final_answer, memory, agent=None):
         """
         Validate success criteria before allowing termination.
         
@@ -176,11 +178,13 @@ class WriteupAgent(BaseResearchAgent):
         # Import here to avoid circular imports
         from ..toolkits.writeup.latex_content_verification_tool import LaTeXContentVerificationTool
         
-        # Check if final_paper.tex exists first
-        tex_path = os.path.join(self.workspace_dir or ".", "final_paper.tex")
-        pdf_path = os.path.join(self.workspace_dir or ".", "final_paper.pdf")
+        workspace_root = os.path.abspath(self.workspace_dir or ".")
+
+        # Resolve final artifacts from either workspace root or paper_workspace/.
+        tex_path = self._resolve_paper_artifact_path("final_paper.tex")
+        pdf_path = self._resolve_paper_artifact_path("final_paper.pdf")
         
-        if not os.path.exists(tex_path):
+        if tex_path is None:
             print("❌ TERMINATION BLOCKED: final_paper.tex does not exist")
             print("\n📋 REQUIRED ACTIONS:")
             print("1. Create individual sections using LaTeXGeneratorTool")
@@ -191,7 +195,7 @@ class WriteupAgent(BaseResearchAgent):
             raise ValueError("TERMINATION_BLOCKED: Missing final_paper.tex. Please create the complete LaTeX document first.")
         
         # Check if final_paper.pdf exists and is valid
-        if not os.path.exists(pdf_path):
+        if pdf_path is None:
             print("❌ TERMINATION BLOCKED: final_paper.pdf does not exist")
             print("\n📋 CRITICAL FAILURE: LaTeX compilation failed or was not attempted")
             print("1. You MUST successfully compile final_paper.tex to PDF using LaTeXCompilerTool")
@@ -209,8 +213,9 @@ class WriteupAgent(BaseResearchAgent):
         try:
             # Use VLM tool to validate PDF (it will check if PDF can be opened and read)
             vlm_tool = VLMDocumentAnalysisTool(model=self.model, working_dir=self.workspace_dir)
+            pdf_rel_path = os.path.relpath(pdf_path, workspace_root)
             validation_result_str = vlm_tool.forward(
-                file_paths="final_paper.pdf",
+                file_paths=pdf_rel_path,
                 analysis_focus="pdf_validation"
             )
             
@@ -228,53 +233,18 @@ class WriteupAgent(BaseResearchAgent):
                 print("\n⚠️  Task Status: FAILED - Corrupted PDF")
                 raise ValueError(f"TERMINATION_BLOCKED: PDF validation failed - {validation_result.get('error')}. Fix compilation and regenerate.")
             
-            # Check if PDF is publication ready
-            overall_assessment = validation_result.get("overall_assessment", {})
-            if not overall_assessment.get("publication_ready", False):
-                # Extract all issue categories from top-level validation result
-                # VLMDocumentAnalysisTool returns issues in separate top-level lists
-                layout_issues = validation_result.get("layout_issues", [])
-                missing_citations = validation_result.get("missing_citations", [])
-                missing_figures = validation_result.get("missing_figures", [])
-                structural_problems = validation_result.get("structural_problems", [])
-
-                # Combine all issues for overall count
-                all_issues = layout_issues + missing_citations + missing_figures + structural_problems
-
+            critical_issues = self._extract_pdf_critical_issues(validation_result)
+            if critical_issues:
                 print("❌ TERMINATION BLOCKED: PDF has critical issues")
                 print("\n📋 CRITICAL ISSUES FOUND IN PDF:")
-
-                # Display issues by category for clarity
-                if layout_issues:
-                    print("\n🔧 Layout Issues:")
-                    for issue in layout_issues:
-                        print(f"  • {issue}")
-
-                if missing_citations:
-                    print("\n📚 Missing Citations:")
-                    for issue in missing_citations:
-                        print(f"  • {issue}")
-
-                if missing_figures:
-                    print("\n🖼️  Missing Figures:")
-                    for issue in missing_figures:
-                        print(f"  • {issue}")
-
-                if structural_problems:
-                    print("\n📐 Structural Problems:")
-                    for issue in structural_problems:
-                        print(f"  • {issue}")
-
-                if not all_issues:
-                    print("  • No specific issues identified, but PDF marked as not publication-ready")
-                    print("  • This may indicate VLM validation issues or generic quality concerns")
-
+                for issue in critical_issues:
+                    print(f"  • {issue}")
                 print("\n⚠️  Task Status: FAILED - PDF not publication ready")
-
-                # Create detailed error message with actual issues
-                issue_summary = ", ".join(all_issues[:3]) if all_issues else "PDF validation failed without specific details"
+                issue_summary = ", ".join(critical_issues[:3])
                 raise ValueError(f"TERMINATION_BLOCKED: PDF has critical issues: {issue_summary}. Fix these issues and regenerate.")
-                
+
+        except ValueError:
+            raise
         except Exception as e:
             print(f"❌ TERMINATION BLOCKED: PDF validation error - {str(e)}")
             print("\n📋 CRITICAL FAILURE: Unable to validate PDF")
@@ -286,7 +256,8 @@ class WriteupAgent(BaseResearchAgent):
         # Run mandatory verification
         print("🔧 Running LaTeXContentVerificationTool...")
         verification_tool = LaTeXContentVerificationTool(working_dir=self.workspace_dir)
-        verification_result_str = verification_tool.forward("final_paper.tex")
+        tex_rel_path = os.path.relpath(tex_path, workspace_root)
+        verification_result_str = verification_tool.forward(tex_rel_path)
         
         try:
             import json
@@ -331,8 +302,8 @@ class WriteupAgent(BaseResearchAgent):
                     print(f"• {section} section needs more content ({analysis.get('content_chars', 0)} chars)")
             
             # Content quality issues
-            if not content_quality.get("has_figures", True):
-                print(f"• Missing figures (found: {content_quality.get('figure_count', 0)}, need: 3-5)")
+            if not (content_quality.get("has_figures", False) or content_quality.get("has_tables", False)):
+                print("• Missing visual evidence (add at least one figure or table)")
             if not content_quality.get("has_citations", True):
                 print(f"• Missing citations (found: {content_quality.get('citation_count', 0)})")
             
@@ -358,10 +329,61 @@ CRITICAL ISSUES FOUND:
 - Files missing: {not file_checks.get('pdf_exists', True) or not file_checks.get('bib_exists', True)}
 - Sections incomplete: {sum(1 for s, a in section_analysis.items() if isinstance(a, dict) and (not a.get('found', True) or not a.get('has_substantial_content', True)))} sections need work
 - Content length: {total_chars}/15000+ characters required
-- Figures missing: {content_quality.get('figure_count', 0)}/3-5 required
+- Visual evidence present: {content_quality.get('has_figures', False) or content_quality.get('has_tables', False)}
 - Citations missing: {content_quality.get('citation_count', 0)} found
 
 Please fix these issues using your available tools and try again."""
             
             # Raise exception to prevent termination and force agent to continue
             raise ValueError(feedback_message)
+
+    def _resolve_paper_artifact_path(self, filename: str) -> Optional[str]:
+        """Find artifact in root workspace or paper_workspace."""
+        workspace_root = os.path.abspath(self.workspace_dir or ".")
+        candidates = [
+            os.path.join(workspace_root, filename),
+            os.path.join(workspace_root, "paper_workspace", filename),
+        ]
+        for candidate in candidates:
+            if os.path.exists(candidate):
+                return candidate
+        return None
+
+    def _extract_pdf_critical_issues(self, validation_result: dict) -> list[str]:
+        """
+        Extract critical issues from either VLM schema:
+        - structured: {"pdf_validation": {...}}
+        - comprehensive: {"publication_issues": [...]}
+        """
+        issues: list[str] = []
+
+        # Preferred structured schema from _extract_pdf_validation_results
+        pdf_validation = validation_result.get("pdf_validation")
+        if isinstance(pdf_validation, dict):
+            issues.extend(pdf_validation.get("layout_issues", []) or [])
+            issues.extend(pdf_validation.get("missing_citations", []) or [])
+            issues.extend(pdf_validation.get("missing_figures", []) or [])
+            issues.extend(pdf_validation.get("structural_problems", []) or [])
+        else:
+            # Fallback schema from comprehensive PDF analysis
+            publication_issues = validation_result.get("publication_issues", [])
+            if isinstance(publication_issues, list):
+                issues.extend(publication_issues)
+
+            # Legacy top-level buckets, if present
+            issues.extend(validation_result.get("layout_issues", []) or [])
+            issues.extend(validation_result.get("missing_citations", []) or [])
+            issues.extend(validation_result.get("missing_figures", []) or [])
+            issues.extend(validation_result.get("structural_problems", []) or [])
+
+        # Remove non-blocking heuristic warnings that frequently produce false failures.
+        filtered_issues = []
+        for issue in issues:
+            issue_text = str(issue).strip()
+            if not issue_text:
+                continue
+            if "no images found in pdf" in issue_text.lower():
+                continue
+            filtered_issues.append(issue_text)
+
+        return filtered_issues

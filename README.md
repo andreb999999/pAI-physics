@@ -75,6 +75,7 @@ Install profiles:
 - `docs`: document/audio parsing extras
 - `web`: web crawling extras (includes Playwright Chromium install)
 - `experiment`: experiment stack
+- `latex`: TeX toolchain (`pdflatex`/`bibtex`) for paper compilation
 - `full`: all capabilities
 
 You can combine profiles:
@@ -105,10 +106,31 @@ DEEPSEEK_API_KEY=...
 ## 4) Preflight Check
 
 ```bash
-python scripts/preflight_check.py --with-docs --with-web --with-experiment
+python scripts/preflight_check.py --with-docs --with-web --with-experiment --with-latex
 ```
 
 If you did not install all capabilities, remove the related flags.
+
+For paper/editorial runs, LaTeX is now fail-fast checked at launcher startup.
+If `pdflatex`/`bibtex` are missing, the run exits immediately with fix commands.
+
+Recommended one-time setup (per conda env) on macOS with MacTeX:
+
+```bash
+brew install --cask mactex
+conda env config vars set -n freephdlabor \
+  FREEPHDLABOR_PDFLATEX_PATH=/Library/TeX/texbin/pdflatex \
+  FREEPHDLABOR_BIBTEX_PATH=/Library/TeX/texbin/bibtex
+conda deactivate && conda activate freephdlabor
+python scripts/preflight_check.py --with-latex
+```
+
+If you see `I can't find the format file pdflatex.fmt` during runs, repair the
+active conda environment with:
+
+```bash
+./scripts/fix_pdflatex_conda.sh freephdlabor
+```
 
 ## 5) Start a New Run
 

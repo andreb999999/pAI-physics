@@ -67,8 +67,15 @@ def artifact_exists(artifact: str, workspace_dir: str) -> bool:
 
     if os.path.isabs(artifact):
         return os.path.exists(artifact)
+    primary_path = os.path.join(workspace_dir, artifact)
+    if os.path.exists(primary_path):
+        return True
 
-    return os.path.exists(os.path.join(workspace_dir, artifact))
+    # Backward-compatible fallback: writeup tools default to paper_workspace/.
+    if artifact in {"final_paper.tex", "final_paper.pdf", "references.bib"}:
+        return os.path.exists(os.path.join(workspace_dir, "paper_workspace", artifact))
+
+    return False
 
 
 def validate_result_artifacts(

@@ -4,6 +4,7 @@ import sys
 import json
 import functools
 import importlib.util
+import shutil
 from datetime import datetime
 import yaml
 
@@ -89,6 +90,54 @@ def _filter_installed_imports(import_names):
             + ", ".join(sorted(set(missing)))
         )
     return available
+
+
+def _resolve_executable(tool_name, env_var, extra_candidates=None):
+    """
+    Resolve an executable from env override, common absolute paths, or PATH.
+    Returns: (resolved_path|None, error|None)
+    """
+    override = os.getenv(env_var, "").strip()
+    if override:
+        candidate = os.path.expanduser(override)
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate, None
+        return None, f"{env_var} points to a missing/non-executable file: {override}"
+
+    for candidate in extra_candidates or []:
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate, None
+
+    found = shutil.which(tool_name)
+    if found:
+        return found, None
+    return None, f"{tool_name} not found on PATH"
+
+
+def _latex_prereq_help(env_name, pdflatex_error, bibtex_error):
+    issues = []
+    if pdflatex_error:
+        issues.append(f"- pdflatex: {pdflatex_error}")
+    if bibtex_error:
+        issues.append(f"- bibtex: {bibtex_error}")
+    issue_text = "\n".join(issues) if issues else "- unknown LaTeX toolchain issue"
+    return (
+        "LaTeX prerequisites are required for paper/editorial runs.\n"
+        f"{issue_text}\n\n"
+        "Fix options:\n"
+        "1) Conda toolchain route:\n"
+        f"   ./scripts/bootstrap.sh {env_name} latex\n"
+        f"   # or: ./scripts/fix_pdflatex_conda.sh {env_name}\n"
+        "2) MacTeX route (macOS):\n"
+        "   brew install --cask mactex\n"
+        "   eval \"$(/usr/libexec/path_helper)\"\n"
+        f"   conda env config vars set -n {env_name} "
+        "FREEPHDLABOR_PDFLATEX_PATH=/Library/TeX/texbin/pdflatex "
+        "FREEPHDLABOR_BIBTEX_PATH=/Library/TeX/texbin/bibtex\n"
+        f"   conda deactivate && conda activate {env_name}\n"
+        "3) Verify:\n"
+        "   python scripts/preflight_check.py --with-latex"
+    )
 
 def main():
     """Main entry point for the smolagents launcher."""
@@ -276,6 +325,31 @@ def main():
     os.environ["FREEPHDLABOR_ENFORCE_EDITORIAL_ARTIFACTS"] = (
         "1" if enforce_editorial_artifacts else "0"
     )
+    require_latex = enforce_paper_artifacts or args.require_pdf or enforce_editorial_artifacts
+    if require_latex:
+        env_name = os.getenv("CONDA_DEFAULT_ENV", "freephdlabor")
+        pdflatex_path, pdflatex_err = _resolve_executable(
+            tool_name="pdflatex",
+            env_var="FREEPHDLABOR_PDFLATEX_PATH",
+            extra_candidates=["/Library/TeX/texbin/pdflatex"],
+        )
+        bibtex_path, bibtex_err = _resolve_executable(
+            tool_name="bibtex",
+            env_var="FREEPHDLABOR_BIBTEX_PATH",
+            extra_candidates=["/Library/TeX/texbin/bibtex"],
+        )
+        if pdflatex_err or bibtex_err:
+            print("❌ Missing LaTeX prerequisites.")
+            print(_latex_prereq_help(env_name, pdflatex_err, bibtex_err))
+            return 1
+        # Keep downstream tools deterministic.
+        os.environ["FREEPHDLABOR_PDFLATEX_PATH"] = pdflatex_path
+        os.environ["FREEPHDLABOR_BIBTEX_PATH"] = bibtex_path
+        print(
+            "✅ LaTeX toolchain detected: "
+            f"pdflatex={pdflatex_path}, bibtex={bibtex_path}"
+        )
+
     if enforce_paper_artifacts:
         print(
             "🧭 Paper artifact gate enabled (required: "

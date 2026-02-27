@@ -5,7 +5,10 @@ import argparse
 import importlib
 import os
 import shutil
+import subprocess
 import sys
+import tempfile
+import textwrap
 from pathlib import Path
 
 
@@ -58,6 +61,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Treat experiment tool stack as required.",
     )
+    parser.add_argument(
+        "--with-latex",
+        action="store_true",
+        help="Treat LaTeX toolchain (pdflatex/bibtex) as required.",
+    )
     return parser.parse_args()
 
 
@@ -69,6 +77,105 @@ def _check_modules(modules: list[str], errors: list[str], warnings: list[str], r
                 errors.append(err)
             else:
                 warnings.append(err)
+
+
+def _resolve_latex_binary(
+    tool_name: str,
+    env_var: str,
+    extra_candidates: list[str] | None = None,
+) -> tuple[str | None, str | None]:
+    override = os.getenv(env_var, "").strip()
+    if override:
+        override_path = Path(override).expanduser()
+        if override_path.exists() and os.access(override_path, os.X_OK):
+            return str(override_path), None
+        return None, f"{env_var} points to missing/non-executable file: {override}"
+
+    for candidate in extra_candidates or []:
+        candidate_path = Path(candidate)
+        if candidate_path.exists() and os.access(candidate_path, os.X_OK):
+            return str(candidate_path), None
+
+    found = shutil.which(tool_name)
+    if found:
+        return found, None
+    return None, f"{tool_name} not found on PATH"
+
+
+def _latex_install_hint() -> str:
+    env_name = os.getenv("CONDA_DEFAULT_ENV", "freephdlabor")
+    return (
+        "Install/repair options:\n"
+        f"  - Conda route: ./scripts/bootstrap.sh {env_name} latex\n"
+        f"  - Conda repair: ./scripts/fix_pdflatex_conda.sh {env_name}\n"
+        "  - macOS MacTeX route: brew install --cask mactex\n"
+        f"    and set persistent env vars:\n"
+        f"    conda env config vars set -n {env_name} "
+        "FREEPHDLABOR_PDFLATEX_PATH=/Library/TeX/texbin/pdflatex "
+        "FREEPHDLABOR_BIBTEX_PATH=/Library/TeX/texbin/bibtex"
+    )
+
+
+def check_latex_toolchain() -> str | None:
+    pdflatex, pdflatex_err = _resolve_latex_binary(
+        tool_name="pdflatex",
+        env_var="FREEPHDLABOR_PDFLATEX_PATH",
+        extra_candidates=["/Library/TeX/texbin/pdflatex"],
+    )
+    if pdflatex_err:
+        return f"{pdflatex_err}\n{_latex_install_hint()}"
+
+    _bibtex, bibtex_err = _resolve_latex_binary(
+        tool_name="bibtex",
+        env_var="FREEPHDLABOR_BIBTEX_PATH",
+        extra_candidates=["/Library/TeX/texbin/bibtex"],
+    )
+    if bibtex_err:
+        return f"{bibtex_err}\n{_latex_install_hint()}"
+
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            tex_path = Path(td) / "preflight_latex_test.tex"
+            tex_path.write_text(
+                textwrap.dedent(
+                    r"""
+                    \documentclass{article}
+                    \begin{document}
+                    preflight latex check
+                    \end{document}
+                    """
+                ).strip()
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    pdflatex,
+                    "-interaction=nonstopmode",
+                    "-halt-on-error",
+                    str(tex_path.name),
+                ],
+                cwd=td,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            if result.returncode != 0:
+                combined = f"{result.stdout}\n{result.stderr}"
+                if "pdflatex.fmt" in combined:
+                    return (
+                        "pdflatex found but missing format file pdflatex.fmt. "
+                        f"Run scripts/fix_pdflatex_conda.sh <env_name> or use MacTeX.\n{_latex_install_hint()}"
+                    )
+                return (
+                    "pdflatex invocation failed during smoke compile. "
+                    f"Return code: {result.returncode}.\n{_latex_install_hint()}"
+                )
+    except Exception as exc:
+        return f"latex toolchain check failed: {exc}\n{_latex_install_hint()}"
+
+    return None
 
 
 def main() -> int:
@@ -119,6 +226,13 @@ def main() -> int:
     _check_modules(docs_modules, errors, warnings, required=args.with_docs)
     _check_modules(web_modules, errors, warnings, required=args.with_web)
     _check_modules(experiment_modules, errors, warnings, required=args.with_experiment)
+
+    latex_err = check_latex_toolchain()
+    if latex_err:
+        if args.with_latex:
+            errors.append(latex_err)
+        else:
+            warnings.append(latex_err)
 
     # Validate chromium only if web capability is requested/installed.
     if args.with_web or check_import("playwright") is None:

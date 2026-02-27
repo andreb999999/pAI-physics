@@ -23,9 +23,9 @@ has_capability() {
   return 1
 }
 
-if ! has_capability minimal && ! has_capability docs && ! has_capability web && ! has_capability experiment; then
+if ! has_capability minimal && ! has_capability docs && ! has_capability web && ! has_capability experiment && ! has_capability latex; then
   echo "Error: profile '$PROFILE_RAW' is invalid."
-  echo "Use one of: minimal, docs, web, experiment, full"
+  echo "Use one of: minimal, docs, web, experiment, latex, full"
   echo "You can combine capabilities with commas (example: minimal,web)."
   exit 1
 fi
@@ -66,6 +66,15 @@ if has_capability experiment; then
   python -m pip install -r "$REPO_ROOT/requirements-experiment.txt"
 fi
 
+if has_capability latex; then
+  # Install TeX toolchain in conda env to support pdflatex/bibtex compilation.
+  conda install -n "$ENV_NAME" -c conda-forge texlive-core latexmk -y
+  # Best-effort format generation to avoid "can't find pdflatex.fmt".
+  if command -v fmtutil-user >/dev/null 2>&1; then
+    fmtutil-user --byfmt pdflatex >/dev/null 2>&1 || true
+  fi
+fi
+
 python -m pip check
 
 PREFLIGHT_ARGS=()
@@ -77,6 +86,9 @@ if has_capability web; then
 fi
 if has_capability experiment; then
   PREFLIGHT_ARGS+=("--with-experiment")
+fi
+if has_capability latex; then
+  PREFLIGHT_ARGS+=("--with-latex")
 fi
 python "$REPO_ROOT/scripts/preflight_check.py" "${PREFLIGHT_ARGS[@]}"
 
