@@ -34,14 +34,15 @@ Step 3:
 
 Step 4 (manual checklist - required even if tool passes):
 1) statement precision (quantifiers/domains/constants)
-2) assumptions explicit + used
+2) assumptions explicit + actually used
 3) dependencies referenced by claim_id and dependency gate satisfied
-4) dimensions/shapes consistent
-5) inequalities justified and constants tracked
-6) probability/calculus conditions explicit where needed
-7) edge/domain constraints explicit
-8) no hidden nontrivial jumps
-9) no placeholders/open issues for upgrade
+4) logical continuity (each step depends on established prior facts)
+5) dimensions/shapes and norm types consistent
+6) inequalities/theorems named and applied under valid conditions
+7) constants tracked from intermediate steps to final bound
+8) probability/calculus conditions explicit where needed
+9) edge/domain constraints explicit
+10) no hidden nontrivial jumps / no unresolved placeholders
 
 Step 5 (audit artifact):
 - Append checks/<claim_id>.jsonl record with:
@@ -51,15 +52,18 @@ Step 5 (audit artifact):
   - verdict=pass|fail
   - issues=[{severity, location, message, suggested_fix}, ...]
   - deps_gate={deps_required, deps_statuses, gate_pass}
+  - logical_chain_gaps=[...]
+  - assumption_usage_findings=[...]
+  - constant_tracking_findings=[...]
 
 Step 6 (status action):
 - proved_draft -> verified_symbolic only if:
-  - strict tool pass
-  - manual checklist pass
-  - all dependencies are at least verified_symbolic (verified_symbolic, verified_numeric, or accepted)
-  - no open issues/placeholders
-- otherwise remain proved_draft
-- set rejected only with explicit invalidity evidence
+  - strict tool pass,
+  - manual checklist pass,
+  - all dependencies are at least verified_symbolic (verified_symbolic, verified_numeric, or accepted),
+  - no open issues/placeholders.
+- otherwise remain proved_draft.
+- set rejected only with explicit invalidity evidence.
 
 ALLOWED STATUS ACTIONS
 - proved_draft -> verified_symbolic

@@ -1,5 +1,5 @@
 """
-MathNumericalClaimVerifierTool - randomized numeric checks for scalar claim equalities.
+MathNumericalClaimVerifierTool - numeric checks for scalar/matrix/rate/bound claims.
 """
 
 from __future__ import annotations
@@ -10,31 +10,36 @@ import os
 import random
 import re
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from smolagents import Tool
+
+try:
+    import numpy as np
+except Exception:  # pragma: no cover - optional dependency fallback
+    np = None
 
 
 class MathNumericalClaimVerifierTool(Tool):
     name = "math_numerical_claim_verifier_tool"
     description = """
-    Numerically test scalar equality claims by random substitution.
+    Numerically test claims in multiple modes:
+    - expression: scalar equalities/inequalities by random substitution
+    - matrix: matrix/tensor norm-based checks
+    - convergence: estimate empirical convergence-rate slope
+    - bound: verify observed values stay below reference bounds
 
-    Provide lhs_expression and rhs_expression plus variable ranges as JSON.
-    Example variable_ranges_json:
-      {"m": [32, 1024], "n": [32, 1024], "eps": [1e-6, 1e-2]}
-
-    This tool is a fast falsification/sanity check (not a formal proof).
+    This tool is a falsification/sanity check, not formal proof.
     """
 
     inputs = {
         "lhs_expression": {
             "type": "string",
-            "description": "Left-hand scalar expression (Python/math syntax)",
+            "description": "Left-hand scalar expression (Python/math syntax). Required for expression mode.",
         },
         "rhs_expression": {
             "type": "string",
-            "description": "Right-hand scalar expression",
+            "description": "Right-hand scalar expression. Required for expression mode.",
         },
         "variable_ranges_json": {
             "type": "string",
@@ -64,6 +69,46 @@ class MathNumericalClaimVerifierTool(Tool):
         "workspace_subdir": {
             "type": "string",
             "description": "Workspace subdir root (default: math_workspace)",
+            "nullable": True,
+        },
+        "verification_mode": {
+            "type": "string",
+            "description": "expression|matrix|convergence|bound (default: expression)",
+            "nullable": True,
+        },
+        "matrix_lhs_json": {
+            "type": "string",
+            "description": "JSON-encoded matrix/tensor for matrix mode",
+            "nullable": True,
+        },
+        "matrix_rhs_json": {
+            "type": "string",
+            "description": "Optional JSON-encoded matrix/tensor target for matrix mode",
+            "nullable": True,
+        },
+        "matrix_norm": {
+            "type": "string",
+            "description": "Norm type for matrix mode: spectral|fro|nuclear|inf|max",
+            "nullable": True,
+        },
+        "convergence_values_json": {
+            "type": "string",
+            "description": "JSON array of nonnegative values over iterations for convergence mode",
+            "nullable": True,
+        },
+        "expected_rate": {
+            "type": "string",
+            "description": "Expected asymptotic rate, e.g. O(1/T), O(1/sqrt(T)), O(log(T)/T)",
+            "nullable": True,
+        },
+        "bound_observed_json": {
+            "type": "string",
+            "description": "JSON array of observed values for bound mode",
+            "nullable": True,
+        },
+        "bound_reference_json": {
+            "type": "string",
+            "description": "JSON array (or single-value array) of reference bounds for bound mode",
             "nullable": True,
         },
     }
@@ -120,84 +165,59 @@ class MathNumericalClaimVerifierTool(Tool):
         claim_id: Optional[str] = None,
         save_report: Optional[bool] = True,
         workspace_subdir: Optional[str] = "math_workspace",
+        verification_mode: Optional[str] = "expression",
+        matrix_lhs_json: Optional[str] = None,
+        matrix_rhs_json: Optional[str] = None,
+        matrix_norm: Optional[str] = "spectral",
+        convergence_values_json: Optional[str] = None,
+        expected_rate: Optional[str] = None,
+        bound_observed_json: Optional[str] = None,
+        bound_reference_json: Optional[str] = None,
     ) -> str:
         try:
-            lhs = (lhs_expression or "").strip()
-            rhs = (rhs_expression or "").strip()
-            if not lhs or not rhs:
-                return self._error("lhs_expression and rhs_expression are required")
-
-            n_trials = max(1, int(num_trials or 64))
+            mode = (verification_mode or "expression").strip().lower()
             tol = float(tolerance if tolerance is not None else 1e-6)
             if tol < 0:
                 tol = 1e-6
 
-            ranges = self._parse_ranges(variable_ranges_json)
-            vars_in_expr = self._extract_variables(lhs + " " + rhs)
+            if mode == "expression":
+                result = self._verify_expression(
+                    lhs_expression=lhs_expression,
+                    rhs_expression=rhs_expression,
+                    variable_ranges_json=variable_ranges_json,
+                    num_trials=num_trials,
+                    tolerance=tol,
+                    claim_id=claim_id,
+                )
+            elif mode == "matrix":
+                result = self._verify_matrix(
+                    matrix_lhs_json=matrix_lhs_json,
+                    matrix_rhs_json=matrix_rhs_json,
+                    rhs_expression=rhs_expression,
+                    matrix_norm=(matrix_norm or "spectral"),
+                    tolerance=tol,
+                    claim_id=claim_id,
+                )
+            elif mode == "convergence":
+                result = self._verify_convergence(
+                    convergence_values_json=convergence_values_json,
+                    expected_rate=expected_rate,
+                    tolerance=tol,
+                    claim_id=claim_id,
+                )
+            elif mode == "bound":
+                result = self._verify_bound(
+                    observed_json=bound_observed_json,
+                    reference_json=bound_reference_json,
+                    tolerance=tol,
+                    claim_id=claim_id,
+                )
+            else:
+                return self._error(
+                    "verification_mode must be one of: expression, matrix, convergence, bound"
+                )
 
-            assignments_seen = []
-            failures = []
-            eval_errors = []
-            max_abs_err = 0.0
-            max_rel_err = 0.0
-
-            for i in range(n_trials):
-                assignment = self._sample_assignment(vars_in_expr, ranges)
-                assignments_seen.append(assignment)
-                try:
-                    lv = float(self._safe_eval(lhs, assignment))
-                    rv = float(self._safe_eval(rhs, assignment))
-                except Exception as e:
-                    eval_errors.append({"trial": i, "assignment": assignment, "error": str(e)})
-                    continue
-
-                if not math.isfinite(lv) or not math.isfinite(rv):
-                    eval_errors.append(
-                        {
-                            "trial": i,
-                            "assignment": assignment,
-                            "error": f"non-finite values lhs={lv}, rhs={rv}",
-                        }
-                    )
-                    continue
-
-                abs_err = abs(lv - rv)
-                denom = max(1.0, abs(lv), abs(rv))
-                rel_err = abs_err / denom
-                max_abs_err = max(max_abs_err, abs_err)
-                max_rel_err = max(max_rel_err, rel_err)
-
-                if abs_err > tol and rel_err > tol:
-                    failures.append(
-                        {
-                            "trial": i,
-                            "assignment": assignment,
-                            "lhs": lv,
-                            "rhs": rv,
-                            "abs_err": abs_err,
-                            "rel_err": rel_err,
-                        }
-                    )
-
-            checked_trials = n_trials - len(eval_errors)
-            verdict = len(failures) == 0 and checked_trials > 0
-
-            result = {
-                "success": True,
-                "claim_id": claim_id,
-                "lhs_expression": lhs,
-                "rhs_expression": rhs,
-                "num_trials": n_trials,
-                "checked_trials": checked_trials,
-                "tolerance": tol,
-                "verdict": "pass" if verdict else "fail",
-                "max_abs_err": max_abs_err,
-                "max_rel_err": max_rel_err,
-                "failure_count": len(failures),
-                "eval_error_count": len(eval_errors),
-                "failures": failures[:10],
-                "eval_errors": eval_errors[:10],
-            }
+            result["verification_mode"] = mode
 
             if claim_id and bool(save_report):
                 if not self._CLAIM_ID_RE.match(str(claim_id)):
@@ -208,19 +228,342 @@ class MathNumericalClaimVerifierTool(Tool):
                 self._append_report(workspace_subdir or "math_workspace", claim_id, result)
 
             return json.dumps(result, indent=2)
-
         except Exception as e:
             return self._error(f"numerical claim verifier failed: {e}")
+
+    def _verify_expression(
+        self,
+        lhs_expression: str,
+        rhs_expression: str,
+        variable_ranges_json: Optional[str],
+        num_trials: Optional[int],
+        tolerance: float,
+        claim_id: Optional[str],
+    ) -> Dict[str, Any]:
+        lhs = (lhs_expression or "").strip()
+        rhs = (rhs_expression or "").strip()
+        if not lhs or not rhs:
+            return {
+                "success": False,
+                "claim_id": claim_id,
+                "verdict": "fail",
+                "error": "lhs_expression and rhs_expression are required for expression mode",
+            }
+
+        n_trials = max(1, int(num_trials or 64))
+        ranges = self._parse_ranges(variable_ranges_json)
+        vars_in_expr = self._extract_variables(lhs + " " + rhs)
+
+        failures = []
+        eval_errors = []
+        max_abs_err = 0.0
+        max_rel_err = 0.0
+
+        for i in range(n_trials):
+            assignment = self._sample_assignment(vars_in_expr, ranges)
+            try:
+                lv = float(self._safe_eval(lhs, assignment))
+                rv = float(self._safe_eval(rhs, assignment))
+            except Exception as e:
+                eval_errors.append({"trial": i, "assignment": assignment, "error": str(e)})
+                continue
+
+            if not math.isfinite(lv) or not math.isfinite(rv):
+                eval_errors.append(
+                    {
+                        "trial": i,
+                        "assignment": assignment,
+                        "error": f"non-finite values lhs={lv}, rhs={rv}",
+                    }
+                )
+                continue
+
+            abs_err = abs(lv - rv)
+            denom = max(1.0, abs(lv), abs(rv))
+            rel_err = abs_err / denom
+            max_abs_err = max(max_abs_err, abs_err)
+            max_rel_err = max(max_rel_err, rel_err)
+
+            if abs_err > tolerance and rel_err > tolerance:
+                failures.append(
+                    {
+                        "trial": i,
+                        "assignment": assignment,
+                        "lhs": lv,
+                        "rhs": rv,
+                        "abs_err": abs_err,
+                        "rel_err": rel_err,
+                    }
+                )
+
+        checked_trials = n_trials - len(eval_errors)
+        verdict = len(failures) == 0 and checked_trials > 0
+
+        return {
+            "success": True,
+            "claim_id": claim_id,
+            "lhs_expression": lhs,
+            "rhs_expression": rhs,
+            "num_trials": n_trials,
+            "checked_trials": checked_trials,
+            "tolerance": tolerance,
+            "verdict": "pass" if verdict else "fail",
+            "max_abs_err": max_abs_err,
+            "max_rel_err": max_rel_err,
+            "failure_count": len(failures),
+            "eval_error_count": len(eval_errors),
+            "failures": failures[:10],
+            "eval_errors": eval_errors[:10],
+        }
+
+    def _verify_matrix(
+        self,
+        matrix_lhs_json: Optional[str],
+        matrix_rhs_json: Optional[str],
+        rhs_expression: str,
+        matrix_norm: str,
+        tolerance: float,
+        claim_id: Optional[str],
+    ) -> Dict[str, Any]:
+        if np is None:
+            return {
+                "success": False,
+                "claim_id": claim_id,
+                "verdict": "fail",
+                "error": "numpy is required for matrix mode",
+            }
+        if not matrix_lhs_json:
+            return {
+                "success": False,
+                "claim_id": claim_id,
+                "verdict": "fail",
+                "error": "matrix_lhs_json is required for matrix mode",
+            }
+
+        lhs = np.array(json.loads(matrix_lhs_json), dtype=float)
+        if lhs.size == 0:
+            return {
+                "success": False,
+                "claim_id": claim_id,
+                "verdict": "fail",
+                "error": "matrix_lhs_json produced empty array",
+            }
+
+        norm_name = (matrix_norm or "spectral").strip().lower()
+        if matrix_rhs_json:
+            rhs = np.array(json.loads(matrix_rhs_json), dtype=float)
+            if rhs.shape != lhs.shape:
+                return {
+                    "success": False,
+                    "claim_id": claim_id,
+                    "verdict": "fail",
+                    "error": f"shape mismatch lhs={lhs.shape}, rhs={rhs.shape}",
+                }
+            diff = lhs - rhs
+            diff_norm = self._matrix_norm(diff, norm_name)
+            verdict = diff_norm <= tolerance
+            return {
+                "success": True,
+                "claim_id": claim_id,
+                "verdict": "pass" if verdict else "fail",
+                "matrix_norm": norm_name,
+                "lhs_shape": list(lhs.shape),
+                "rhs_shape": list(rhs.shape),
+                "difference_norm": diff_norm,
+                "tolerance": tolerance,
+            }
+
+        if not rhs_expression:
+            return {
+                "success": False,
+                "claim_id": claim_id,
+                "verdict": "fail",
+                "error": "Provide either matrix_rhs_json or rhs_expression (scalar bound) for matrix mode",
+            }
+
+        try:
+            bound = float(rhs_expression)
+        except Exception:
+            return {
+                "success": False,
+                "claim_id": claim_id,
+                "verdict": "fail",
+                "error": "rhs_expression must be a numeric scalar bound in matrix mode without matrix_rhs_json",
+            }
+
+        lhs_norm = self._matrix_norm(lhs, norm_name)
+        verdict = lhs_norm <= bound + tolerance
+        return {
+            "success": True,
+            "claim_id": claim_id,
+            "verdict": "pass" if verdict else "fail",
+            "matrix_norm": norm_name,
+            "lhs_shape": list(lhs.shape),
+            "lhs_norm": lhs_norm,
+            "bound": bound,
+            "tolerance": tolerance,
+            "violation": max(0.0, lhs_norm - bound),
+        }
+
+    def _verify_convergence(
+        self,
+        convergence_values_json: Optional[str],
+        expected_rate: Optional[str],
+        tolerance: float,
+        claim_id: Optional[str],
+    ) -> Dict[str, Any]:
+        if np is None:
+            return {
+                "success": False,
+                "claim_id": claim_id,
+                "verdict": "fail",
+                "error": "numpy is required for convergence mode",
+            }
+        if not convergence_values_json:
+            return {
+                "success": False,
+                "claim_id": claim_id,
+                "verdict": "fail",
+                "error": "convergence_values_json is required for convergence mode",
+            }
+
+        values = np.array(json.loads(convergence_values_json), dtype=float).reshape(-1)
+        if values.size < 5:
+            return {
+                "success": False,
+                "claim_id": claim_id,
+                "verdict": "fail",
+                "error": "convergence_values_json must contain at least 5 values",
+            }
+        if np.any(~np.isfinite(values)):
+            return {
+                "success": False,
+                "claim_id": claim_id,
+                "verdict": "fail",
+                "error": "convergence_values_json contains non-finite values",
+            }
+
+        ts = np.arange(1, values.size + 1, dtype=float)
+        positive = np.maximum(np.abs(values), 1e-12)
+        x = np.log(ts)
+        y = np.log(positive)
+        slope = float(np.polyfit(x, y, 1)[0])
+
+        monotone_violations = int(np.sum(values[1:] > values[:-1] + tolerance))
+        verdict = monotone_violations <= max(1, int(0.05 * (values.size - 1)))
+
+        target_slope = self._expected_rate_slope(expected_rate)
+        slope_pass = None
+        if target_slope is not None:
+            slope_pass = slope <= (target_slope + 0.15)
+            verdict = verdict and slope_pass
+
+        return {
+            "success": True,
+            "claim_id": claim_id,
+            "verdict": "pass" if verdict else "fail",
+            "series_length": int(values.size),
+            "estimated_loglog_slope": slope,
+            "expected_rate": expected_rate or "",
+            "target_slope": target_slope,
+            "slope_pass": slope_pass,
+            "monotone_violations": monotone_violations,
+            "initial_value": float(values[0]),
+            "final_value": float(values[-1]),
+            "improvement_ratio": float((values[0] + 1e-12) / (values[-1] + 1e-12)),
+        }
+
+    def _verify_bound(
+        self,
+        observed_json: Optional[str],
+        reference_json: Optional[str],
+        tolerance: float,
+        claim_id: Optional[str],
+    ) -> Dict[str, Any]:
+        if observed_json is None or reference_json is None:
+            return {
+                "success": False,
+                "claim_id": claim_id,
+                "verdict": "fail",
+                "error": "bound_observed_json and bound_reference_json are required for bound mode",
+            }
+
+        observed = [float(x) for x in json.loads(observed_json)]
+        reference = [float(x) for x in json.loads(reference_json)]
+        if not observed:
+            return {
+                "success": False,
+                "claim_id": claim_id,
+                "verdict": "fail",
+                "error": "observed list is empty",
+            }
+        if len(reference) == 1:
+            reference = reference * len(observed)
+        if len(observed) != len(reference):
+            return {
+                "success": False,
+                "claim_id": claim_id,
+                "verdict": "fail",
+                "error": "observed and reference lengths mismatch",
+            }
+
+        violations = []
+        max_violation = 0.0
+        for idx, (o, b) in enumerate(zip(observed, reference)):
+            v = o - b
+            if v > tolerance:
+                violations.append({"index": idx, "observed": o, "bound": b, "violation": v})
+                max_violation = max(max_violation, v)
+
+        verdict = len(violations) == 0
+        return {
+            "success": True,
+            "claim_id": claim_id,
+            "verdict": "pass" if verdict else "fail",
+            "tolerance": tolerance,
+            "num_points": len(observed),
+            "violation_count": len(violations),
+            "max_violation": max_violation,
+            "violations": violations[:20],
+        }
+
+    @staticmethod
+    def _expected_rate_slope(expected_rate: Optional[str]) -> Optional[float]:
+        if not expected_rate:
+            return None
+        rate = expected_rate.replace(" ", "").lower()
+        if "o(1/t)" in rate or "o(1/n)" in rate:
+            return -1.0
+        if "o(1/sqrt(t))" in rate or "o(1/sqrt(n))" in rate:
+            return -0.5
+        if "o(log(t)/t)" in rate or "o(log(n)/n)" in rate:
+            return -1.0
+        return None
+
+    @staticmethod
+    def _matrix_norm(arr: "np.ndarray", norm_name: str) -> float:
+        mode = (norm_name or "spectral").lower()
+        if mode in {"spectral", "op", "operator", "2"}:
+            return float(np.linalg.norm(arr, 2))
+        if mode in {"fro", "frob", "frobenius"}:
+            return float(np.linalg.norm(arr, "fro"))
+        if mode in {"nuclear", "nuc"}:
+            return float(np.linalg.norm(arr, "nuc"))
+        if mode in {"inf", "infinity"}:
+            return float(np.linalg.norm(arr, np.inf))
+        if mode in {"max"}:
+            return float(np.max(np.abs(arr)))
+        raise ValueError(f"unsupported matrix_norm: {norm_name}")
 
     @staticmethod
     def _extract_variables(text: str) -> List[str]:
         tokens = re.findall(r"\b[a-zA-Z_][a-zA-Z0-9_]*\b", text)
         vars_found = []
-        for t in tokens:
-            if t in MathNumericalClaimVerifierTool._RESERVED:
+        for token in tokens:
+            if token in MathNumericalClaimVerifierTool._RESERVED:
                 continue
-            if t not in vars_found:
-                vars_found.append(t)
+            if token not in vars_found:
+                vars_found.append(token)
         return vars_found
 
     @staticmethod

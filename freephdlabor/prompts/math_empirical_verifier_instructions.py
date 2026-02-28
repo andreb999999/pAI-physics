@@ -24,9 +24,11 @@ Step 1 (eligibility):
 - Select status=verified_symbolic claims (prioritize must_accept).
 
 Step 2 (checkability + encoding):
-- If scalarizable equality: define lhs_expression/rhs_expression and variable ranges.
-- If inequality, encode residual form (for example max(lhs-rhs, 0.0) == 0.0) and note this in checks.
-- If not meaningfully scalarizable, append numeric_check_waived with rationale.
+- For scalar equalities/inequalities: use expression mode.
+- For matrix/tensor norm claims: use matrix mode.
+- For convergence-rate claims: use convergence mode.
+- For concentration/bound claims: use bound mode with repeated sampling.
+- If not meaningfully checkable, append numeric_check_waived with rationale.
 
 Step 3 (multi-regime testing):
 - Run at least 3 regimes when feasible:
@@ -34,7 +36,7 @@ Step 3 (multi-regime testing):
   2) small/edge
   3) large/edge
 - Each regime should generally use >= 64 trials unless justified otherwise.
-- Use claim_id and save_report=True so tool artifacts are persisted.
+- Use claim_id and save_report=True so artifacts are persisted.
 
 Step 4 (interpretation):
 - Any nontrivial fail is serious.
@@ -49,6 +51,7 @@ Step 5 (protocol summary artifact):
   - regimes_tested=[...]
   - counterexamples=[...]
   - interpretation=<short diagnosis>
+  - mode_used=expression|matrix|convergence|bound
 
 Step 6 (status action):
 - verified_symbolic -> verified_numeric only when numeric evidence exists and verdict is pass or waived.

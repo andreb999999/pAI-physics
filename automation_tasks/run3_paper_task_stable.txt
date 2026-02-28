@@ -1,0 +1,28 @@
+Analysis and paper run.
+
+Inputs available in this resumed workspace:
+- Theory artifacts in math_workspace/ (claim_graph, proofs, checks, summaries)
+- Experiment artifacts in inputs/experiment_results/ (experiment_results.json, experiment_analysis.md, fairness_protocol.json, comparison_plots_metadata.txt, experiment_plan.md)
+
+Objectives:
+1) Synthesize theory + experiment findings.
+2) Analyze whether the practical evidence is consistent with the conjecture L_1*A_1 ~= L_2*A_2.
+3) Produce complete paper artifacts and compile PDF.
+
+Required outputs:
+- final_paper.tex
+- final_paper.pdf
+- analysis_connection.md (explicit theory-experiment bridge analysis)
+- artifacts_index.md (list of supporting files and how used)
+
+Paper requirements:
+- Include introduction, related work, method/theory, experiment design, results, connection analysis, limitations, conclusion.
+- Clearly separate "proved", "empirically supported", and "open conjecture" claims.
+- Include fairness-protocol details and surrogate/NanoGPT caveats.
+- Include actionable next-step experiment plan for full NanoGPT.
+
+Execution constraints:
+- No external-network tools.
+- No VLM tools.
+- No sub-agent delegation (do not call *_agent callables); execute directly in manager run.
+- Use available local artifacts only, and ensure PDF compilation succeeds.

@@ -3,7 +3,7 @@
 
 main_agents:
   # Model for all main agents (Manager, Ideation, Experimentation, Writeup)
-  model: gpt-5.2
+  model: claude-sonnet-4-5
 
   # GPT-5 specific settings
   reasoning_effort: high
@@ -11,10 +11,10 @@ main_agents:
 
 run_experiment_tool:
   # Models for RunExperimentTool (AI-Scientist-v2 subprocess)
-  code_model: gpt-5.2
-  feedback_model: gpt-5.2
-  vlm_model: gpt-5.2
-  report_model: gpt-5.2
+  code_model: claude-sonnet-4-5
+  feedback_model: claude-sonnet-4-5
+  vlm_model: claude-sonnet-4-5
+  report_model: claude-sonnet-4-5
   # GPT-5 specific settings
   reasoning_effort: high  # minimal, low, medium, high
 
@@ -29,3 +29,6 @@ budget:
     gpt-5.2:
       input_per_1k: 0.00175
       output_per_1k: 0.01400
+    claude-sonnet-4-5:
+      input_per_1k: 0.00300
+      output_per_1k: 0.01500

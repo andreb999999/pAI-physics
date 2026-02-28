@@ -1,0 +1,26 @@
+Experiment run for Adam/AdamW vs Muon comparison.
+
+Objectives:
+1) Produce a fair-comparison methodology for optimizer evaluation on NanoGPT-like training.
+2) Implement and run a local lightweight benchmark that compares Adam/AdamW-like updates vs Muon/sign-gradient-style updates on tractable surrogate tasks.
+3) Save reproducible experiment artifacts, metrics, and analysis in the workspace.
+
+Required outputs:
+- experiment_plan.md (fairness protocol: compute matching, tuning budget parity, schedules, metrics)
+- fairness_protocol.json (machine-readable comparison policy)
+- experiment_results.json (measured metrics from executed local runs)
+- experiment_analysis.md (interpretation of results + pitfalls)
+- comparison_plots metadata or tabular summaries saved as files
+
+Fairness topics to cover:
+- Adam vs AdamW baseline choice and rationale for LM training
+- Equal hyperparameter-search budget per optimizer
+- Matching compute/FLOPs, update count, and wall-clock reporting
+- Metric set: train loss, validation loss/perplexity proxy, throughput, memory
+- Common pitfalls and how protocol avoids them
+
+Execution constraints:
+- No external-network tools (no ArXiv/web search).
+- No VLM tools.
+- No sub-agent delegation (do not call *_agent callables); execute directly in manager run.
+- If NanoGPT code is unavailable locally, run surrogate experiments and clearly label them as proxy evidence while still producing full fairness protocol for NanoGPT.

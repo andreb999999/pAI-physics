@@ -235,6 +235,8 @@ def initialize_agent_system(
     enable_math_agents=False,
     enforce_editorial_artifacts=False,
     min_review_score=8,
+    pipeline_mode="default",
+    followup_max_iterations=3,
 ):
     """
     Initialize the complete multi-agent system with consistent configuration.
@@ -256,6 +258,8 @@ def initialize_agent_system(
         enable_math_agents: If True, include theorem-oriented math agents in manager delegation pool
         enforce_editorial_artifacts: If True, enforce editorial workflow artifacts in paper runs
         min_review_score: Minimum reviewer overall_score required by strict editorial gate
+        pipeline_mode: Workflow mode for manager orchestration
+        followup_max_iterations: Max iterations for results-followup loop in full_research mode
 
     Returns:
         ManagerAgent: Configured with pre-initialized specialist agents
@@ -265,15 +269,20 @@ def initialize_agent_system(
     # Lazy import to avoid package-level cycles (toolkits -> utils -> agents -> toolkits)
     from freephdlabor.agents.manager_agent import ManagerAgent
     from freephdlabor.agents.ideation_agent import IdeationAgent
+    from freephdlabor.agents.literature_review_agent import LiteratureReviewAgent
+    from freephdlabor.agents.research_planner_agent import ResearchPlannerAgent
+    from freephdlabor.agents.results_analysis_agent import ResultsAnalysisAgent
     from freephdlabor.agents.experimentation_agent import ExperimentationAgent
     from freephdlabor.agents.writeup_agent import WriteupAgent
     from freephdlabor.agents.resource_preparation_agent import ResourcePreparationAgent
     from freephdlabor.agents.reviewer_agent import ReviewerAgent
     from freephdlabor.agents.proofreading_agent import ProofreadingAgent
+    from freephdlabor.agents.math_literature_agent import MathLiteratureAgent
     from freephdlabor.agents.math_proposer_agent import MathProposerAgent
     from freephdlabor.agents.math_prover_agent import MathProverAgent
     from freephdlabor.agents.math_rigorous_verifier_agent import MathRigorousVerifierAgent
     from freephdlabor.agents.math_empirical_verifier_agent import MathEmpiricalVerifierAgent
+    from freephdlabor.agents.proof_transcription_agent import ProofTranscriptionAgent
 
     # Determine planning configuration
     planning_config = {}
@@ -293,6 +302,39 @@ def initialize_agent_system(
         **planning_config
     )
     print("✅ IdeationAgent initialized")
+
+    literature_review_agent = LiteratureReviewAgent(
+        model=model,
+        workspace_dir=workspace_dir,
+        name="literature_review_agent",
+        description="A specialist agent for deep, structured literature review with citations and compiled PDF output.",
+        additional_authorized_imports=essential_imports,
+        step_callbacks=[interrupt_callback],
+        **planning_config
+    )
+    print("✅ LiteratureReviewAgent initialized")
+
+    research_planner_agent = ResearchPlannerAgent(
+        model=model,
+        workspace_dir=workspace_dir,
+        name="research_planner_agent",
+        description="A specialist agent for producing structured, literature-grounded research plan proposals.",
+        additional_authorized_imports=essential_imports,
+        step_callbacks=[interrupt_callback],
+        **planning_config
+    )
+    print("✅ ResearchPlannerAgent initialized")
+
+    results_analysis_agent = ResultsAnalysisAgent(
+        model=model,
+        workspace_dir=workspace_dir,
+        name="results_analysis_agent",
+        description="A specialist agent for post-execution analysis, mini literature follow-up, and follow-up decision making.",
+        additional_authorized_imports=essential_imports,
+        step_callbacks=[interrupt_callback],
+        **planning_config
+    )
+    print("✅ ResultsAnalysisAgent initialized")
     
     experimentation_agent = ExperimentationAgent(
         model=model,
@@ -358,6 +400,9 @@ Approach: Comprehensive documentation of all experimental artifacts without sele
 
     managed_agents = [
         ideation_agent,
+        literature_review_agent,
+        research_planner_agent,
+        results_analysis_agent,
         experimentation_agent,
         resource_preparation_agent,
         writeup_agent,
@@ -410,14 +455,43 @@ Approach: Comprehensive documentation of all experimental artifacts without sele
         )
         print("✅ MathEmpiricalVerifierAgent initialized")
 
-        managed_agents.extend(
-            [
-                math_proposer_agent,
-                math_prover_agent,
-                math_rigorous_verifier_agent,
-                math_empirical_verifier_agent,
-            ]
-        )
+        math_agents = [
+            math_proposer_agent,
+            math_prover_agent,
+            math_rigorous_verifier_agent,
+            math_empirical_verifier_agent,
+        ]
+
+        if str(pipeline_mode).strip().lower() == "full_research":
+            math_literature_agent = MathLiteratureAgent(
+                model=model,
+                workspace_dir=workspace_dir,
+                name="math_literature_agent",
+                description="A specialist agent for mining theory literature into reusable lemma libraries and proof strategy support.",
+                additional_authorized_imports=essential_imports,
+                step_callbacks=[interrupt_callback],
+                **planning_config
+            )
+            print("✅ MathLiteratureAgent initialized")
+
+            proof_transcription_agent = ProofTranscriptionAgent(
+                model=model,
+                workspace_dir=workspace_dir,
+                name="proof_transcription_agent",
+                description="A specialist agent for converting proof artifacts into publication-quality LaTeX theory sections and appendices.",
+                additional_authorized_imports=essential_imports,
+                step_callbacks=[interrupt_callback],
+                **planning_config
+            )
+            print("✅ ProofTranscriptionAgent initialized")
+            math_agents.extend(
+                [
+                    math_literature_agent,
+                    proof_transcription_agent,
+                ]
+            )
+
+        managed_agents.extend(math_agents)
 
     # Create ManagerAgent with pre-initialized agents
     manager = ManagerAgent(
@@ -433,6 +507,8 @@ Approach: Comprehensive documentation of all experimental artifacts without sele
         enable_math_agents=enable_math_agents,
         enforce_editorial_artifacts=enforce_editorial_artifacts,
         min_review_score=min_review_score,
+        pipeline_mode=pipeline_mode,
+        followup_max_iterations=followup_max_iterations,
     )
     print("✅ ManagerAgent initialized with specialist agents")
     

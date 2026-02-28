@@ -14,14 +14,19 @@ from ..paper_quality_validation import validate_paper_quality
 
 from .reviewer_agent import ReviewerAgent
 from .ideation_agent import IdeationAgent
+from .literature_review_agent import LiteratureReviewAgent
+from .research_planner_agent import ResearchPlannerAgent
+from .results_analysis_agent import ResultsAnalysisAgent
 from .experimentation_agent import ExperimentationAgent
 from .resource_preparation_agent import ResourcePreparationAgent
 from .writeup_agent import WriteupAgent
 from .proofreading_agent import ProofreadingAgent
+from .math_literature_agent import MathLiteratureAgent
 from .math_proposer_agent import MathProposerAgent
 from .math_prover_agent import MathProverAgent
 from .math_rigorous_verifier_agent import MathRigorousVerifierAgent
 from .math_empirical_verifier_agent import MathEmpiricalVerifierAgent
+from .proof_transcription_agent import ProofTranscriptionAgent
 from ..toolkits.general_tools.file_editing.file_editing_tools import (
     SeeFile,
     CreateFileWithContent,
@@ -69,6 +74,8 @@ class ManagerAgent(BaseResearchAgent):
         self.enforce_paper_artifacts = bool(kwargs.pop("enforce_paper_artifacts", False))
         self.require_experiment_plan = bool(kwargs.pop("require_experiment_plan", False))
         self.enable_math_agents = bool(kwargs.pop("enable_math_agents", False))
+        self.pipeline_mode = str(kwargs.pop("pipeline_mode", "default"))
+        self.followup_max_iterations = int(kwargs.pop("followup_max_iterations", 3))
         self.enforce_editorial_artifacts = bool(
             kwargs.pop("enforce_editorial_artifacts", False)
         )
@@ -102,6 +109,30 @@ class ManagerAgent(BaseResearchAgent):
 --- SYSTEM INSTRUCTIONS ---
 {get_ideation_system_prompt()}
 --- END SYSTEM INSTRUCTIONS ---""",
+                additional_authorized_imports=essential_imports,
+            )
+
+            literature_review_agent = LiteratureReviewAgent(
+                model=model,
+                workspace_dir=workspace_dir,
+                name="literature_review_agent",
+                description="A specialist agent for deep structured literature review with citations and PDF output.",
+                additional_authorized_imports=essential_imports,
+            )
+
+            research_planner_agent = ResearchPlannerAgent(
+                model=model,
+                workspace_dir=workspace_dir,
+                name="research_planner_agent",
+                description="A specialist agent for creating theory+experiment research plans from literature review artifacts.",
+                additional_authorized_imports=essential_imports,
+            )
+
+            results_analysis_agent = ResultsAnalysisAgent(
+                model=model,
+                workspace_dir=workspace_dir,
+                name="results_analysis_agent",
+                description="A specialist agent for mini literature follow-up and follow-up decision after subproject execution.",
                 additional_authorized_imports=essential_imports,
             )
 
@@ -178,6 +209,9 @@ Approach: Comprehensive documentation of all experimental artifacts without sele
 
             self.managed_agents = [
                 ideation_agent,
+                literature_review_agent,
+                research_planner_agent,
+                results_analysis_agent,
                 experimentation_agent,
                 resource_preparation_agent,
                 writeup_agent,
@@ -214,14 +248,35 @@ Approach: Comprehensive documentation of all experimental artifacts without sele
                     description="A specialist agent for numeric sanity checks and counterexample search on math claims.",
                     additional_authorized_imports=essential_imports,
                 )
-                self.managed_agents.extend(
-                    [
-                        math_proposer_agent,
-                        math_prover_agent,
-                        math_rigorous_verifier_agent,
-                        math_empirical_verifier_agent,
-                    ]
-                )
+                math_agents = [
+                    math_proposer_agent,
+                    math_prover_agent,
+                    math_rigorous_verifier_agent,
+                    math_empirical_verifier_agent,
+                ]
+
+                if self.pipeline_mode.strip().lower() == "full_research":
+                    math_literature_agent = MathLiteratureAgent(
+                        model=model,
+                        workspace_dir=workspace_dir,
+                        name="math_literature_agent",
+                        description="A specialist agent for mining DL/statistical learning theory literature into reusable lemma libraries.",
+                        additional_authorized_imports=essential_imports,
+                    )
+                    proof_transcription_agent = ProofTranscriptionAgent(
+                        model=model,
+                        workspace_dir=workspace_dir,
+                        name="proof_transcription_agent",
+                        description="A specialist agent for converting proof artifacts into publication-quality LaTeX theory sections.",
+                        additional_authorized_imports=essential_imports,
+                    )
+                    math_agents.extend(
+                        [
+                            math_literature_agent,
+                            proof_transcription_agent,
+                        ]
+                    )
+                self.managed_agents.extend(math_agents)
 
         # Build dynamic agent list for prompt
         available_agents = [agent.name for agent in self.managed_agents]
@@ -269,7 +324,10 @@ Approach: Comprehensive documentation of all experimental artifacts without sele
 
         # Generate complete system prompt using template
         system_prompt = get_manager_system_prompt(
-            tools=tools, managed_agents=self.managed_agents
+            tools=tools,
+            managed_agents=self.managed_agents,
+            pipeline_mode=self.pipeline_mode,
+            followup_max_iterations=self.followup_max_iterations,
         )
 
         super().__init__(
@@ -296,6 +354,15 @@ Approach: Comprehensive documentation of all experimental artifacts without sele
 
     def _paper_required_artifacts(self) -> list[str]:
         required = ["final_paper.tex"]
+        if self.pipeline_mode.strip().lower() == "full_research":
+            required.extend(
+                [
+                    "paper_workspace/literature_review.pdf",
+                    "paper_workspace/research_plan.pdf",
+                    "paper_workspace/results_assessment.pdf",
+                    "paper_workspace/followup_decision.json",
+                ]
+            )
         if self.require_experiment_plan:
             required.append("experiments_to_run_later.md")
         if self.require_pdf:
@@ -326,7 +393,10 @@ Approach: Comprehensive documentation of all experimental artifacts without sele
         """
         workspace = self.workspace_dir or "."
 
-        if self.enforce_paper_artifacts:
+        should_enforce_paper_artifacts = self.enforce_paper_artifacts or (
+            self.pipeline_mode.strip().lower() == "full_research"
+        )
+        if should_enforce_paper_artifacts:
             summary = validate_result_artifacts(
                 result=final_answer,
                 workspace_dir=workspace,

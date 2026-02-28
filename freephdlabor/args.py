@@ -158,4 +158,19 @@ Examples:
         help="Minimum reviewer overall_score required by the strict review gate (used with --enforce-editorial-artifacts).",
     )
 
+    parser.add_argument(
+        "--pipeline-mode",
+        type=str,
+        choices=["default", "full_research", "quick"],
+        default="default",
+        help="Workflow mode for manager orchestration. Use 'full_research' for the full 8-step literature/planning/execution/writeup pipeline.",
+    )
+
+    parser.add_argument(
+        "--followup-max-iterations",
+        type=int,
+        default=3,
+        help="Maximum number of Step 6 <-> 6.2 follow-up loops in full_research mode.",
+    )
+
     return parser.parse_args()

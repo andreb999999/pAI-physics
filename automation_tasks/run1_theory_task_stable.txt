@@ -1,0 +1,25 @@
+Theory run for Muon implicit regularization.
+
+Goal:
+1) Formalize the conjecture that Muon on L is equivalent to GD on L + lambda * R.
+2) Build a claim graph with assumptions, definitions, lemmas, and main theorem(s).
+3) Draft proofs for core claims and run symbolic/numerical verification where possible.
+4) Save outputs in the workspace (working_idea.json, math_workspace/claim_graph.json, proofs, checks).
+
+Conjecture:
+- Muon update: W_{t+1} = W_t - eta * sign(grad L(W_t))
+- We seek R(W) such that Muon dynamics are equivalent (fixed points/trajectory limits/optimizers) to GD on L + lambda * R.
+- Start with linear or matrix-factorization setting; if nonlinear case is too hard, keep it as conjectural extension.
+
+Required claim graph content:
+- Assumptions: SVD/sign properties, smoothness/convergence conditions.
+- Definitions: Muon update, Muon flow, candidate regularizer, equivalence notion.
+- Lemmas: sign-function properties, projection interpretation, flow dynamics, fixed-point characterization.
+- Theorems: at least one main linear-case theorem plus optional continuous-time theorem.
+
+Execution constraints:
+- No external-network tools (no ArXiv/web search).
+- No VLM tools.
+- If any tool fails, continue with available tools and still produce best-effort formal outputs.
+- Prioritize finishing claim graph + proofs + verification artifacts.
+- Do not delegate to sub-agents (do not call ideation_agent, math_proposer_agent, math_prover_agent, or other *_agent callables). Use available math tools directly in this manager run.

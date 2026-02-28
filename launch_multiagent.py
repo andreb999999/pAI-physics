@@ -277,6 +277,7 @@ def main():
 
     print(f"📁 Active workspace: {results_base_dir}")
     print(f"📝 Task: {task[:100]}{'...' if len(task) > 100 else ''}")
+    print(f"🧭 Pipeline mode: {args.pipeline_mode}")
     if args.enable_math_agents:
         print("Math agent workflow enabled (claim graph + prover/verifier loop)")
 
@@ -414,6 +415,8 @@ def main():
             enable_math_agents=args.enable_math_agents,
             enforce_editorial_artifacts=enforce_editorial_artifacts,
             min_review_score=args.min_review_score,
+            pipeline_mode=args.pipeline_mode,
+            followup_max_iterations=args.followup_max_iterations,
         )
         
         print("\n" + "=" * 50)

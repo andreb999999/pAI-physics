@@ -100,10 +100,9 @@ class VLMDocumentAnalysisTool(Tool):
             working_dir: Working directory for workspace-aware file access
         """
         super().__init__()
-        # Use GPT-4o for proven VLM performance on research tasks
-        # GPT-4o: Mature vision model with established performance
-        # GPT-5 shows poor object detection (mAP50:95 1.5 vs competitors' 13.3)
-        self.vlm_model = "gpt-4o-2024-05-13"  # Proven GPT-4o for reliable scientific analysis
+        # Default to a configurable VLM model to avoid hard dependency on one provider.
+        # This allows runs to proceed even when a specific provider quota is exhausted.
+        self.vlm_model = os.getenv("FREEPHDLABOR_VLM_MODEL", "claude-sonnet-4-5")
         # Convert to absolute path to prevent nested directory issues
         self.working_dir = os.path.abspath(working_dir) if working_dir else None
         
