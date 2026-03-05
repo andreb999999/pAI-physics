@@ -1,55 +1,51 @@
-"""MathProposerAgent: builds structured mathematical claim graphs."""
+"""
+MathProposerAgent — LangGraph node module.
 
-import os
-from typing import Optional
+Builds structured mathematical claim graphs.
+"""
 
-from .base_research_agent import BaseResearchAgent
+from __future__ import annotations
+
+from typing import Any, Callable, List, Optional
+
+from ..agents.base_agent import create_specialist_agent
 from ..prompts.math_proposer_instructions import get_math_proposer_system_prompt
 from ..toolkits.math.claim_graph_tool import MathClaimGraphTool
 from ..toolkits.math.proof_workspace_tool import MathProofWorkspaceTool
-from ..toolkits.general_tools.file_editing.file_editing_tools import (
-    SeeFile,
-    CreateFileWithContent,
-    ModifyFile,
-    ListDir,
-    SearchKeyword,
-    DeleteFileOrFolder,
+from ..toolkits.filesystem.file_editing.file_editing_tools import (
+    CreateFileWithContent, DeleteFileOrFolder, ListDir, ModifyFile, SearchKeyword, SeeFile,
 )
 
 
-class MathProposerAgent(BaseResearchAgent):
-    def __init__(self, model, workspace_dir: Optional[str] = None, **kwargs):
-        if workspace_dir:
-            workspace_dir = os.path.abspath(workspace_dir)
-
-        tools = [
-            MathClaimGraphTool(
-                working_dir=workspace_dir,
-                allow_accepted_transition=False,
-            ),
-            MathProofWorkspaceTool(working_dir=workspace_dir),
+def get_tools(workspace_dir: Optional[str]) -> list:
+    tools = [
+        MathClaimGraphTool(working_dir=workspace_dir, allow_accepted_transition=False),
+        MathProofWorkspaceTool(working_dir=workspace_dir),
+    ]
+    if workspace_dir:
+        tools += [
+            SeeFile(working_dir=workspace_dir),
+            CreateFileWithContent(working_dir=workspace_dir),
+            ModifyFile(working_dir=workspace_dir),
+            ListDir(working_dir=workspace_dir),
+            SearchKeyword(working_dir=workspace_dir),
+            DeleteFileOrFolder(working_dir=workspace_dir),
         ]
+    return tools
 
-        if workspace_dir:
-            tools.extend(
-                [
-                    SeeFile(working_dir=workspace_dir),
-                    CreateFileWithContent(working_dir=workspace_dir),
-                    ModifyFile(working_dir=workspace_dir),
-                    ListDir(working_dir=workspace_dir),
-                    SearchKeyword(working_dir=workspace_dir),
-                    DeleteFileOrFolder(working_dir=workspace_dir),
-                ]
-            )
 
-        system_prompt = get_math_proposer_system_prompt(tools=tools, managed_agents=None)
-
-        super().__init__(
-            model=model,
-            agent_name="math_proposer_agent",
-            workspace_dir=workspace_dir,
-            tools=tools,
-            **kwargs,
-        )
-        self.prompt_templates["system_prompt"] = system_prompt
-        self.resume_memory()
+def build_node(
+    model: Any,
+    workspace_dir: Optional[str],
+    authorized_imports: Optional[List[str]] = None,
+    **cfg: Any,
+) -> Callable:
+    tools = get_tools(workspace_dir)
+    system_prompt = get_math_proposer_system_prompt(tools=tools, managed_agents=None)
+    return create_specialist_agent(
+        model=model,
+        tools=tools,
+        system_prompt=system_prompt,
+        agent_name="math_proposer_agent",
+        workspace_dir=workspace_dir,
+    )

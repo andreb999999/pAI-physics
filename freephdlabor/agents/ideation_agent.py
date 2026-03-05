@@ -1,115 +1,70 @@
 """
-IdeationAgent implementation using smolagents framework.
-Based on ai_scientist/generate_ideas.py functionality.
-Follows tool-centric design philosophy where tools are executors, not prompt generators.
+IdeationAgent — LangGraph node module.
+
+Exports:
+    get_tools(workspace_dir, model_id)  -> list[BaseTool]
+    build_node(model, workspace_dir, authorized_imports, **cfg)  -> callable
 """
 
-import json
+from __future__ import annotations
+
 import os
-from typing import List, Dict, Optional, Any
-from .base_research_agent import BaseResearchAgent
+from typing import Any, Callable, List, Optional
 
-from ..toolkits.paper_search_tool import PaperSearchTool
-from ..toolkits.general_tools.fetch_arxiv_papers.fetch_arxiv_papers_tools import FetchArxivPapersTool
-# OpenDeepSearch depends on crawl4ai; make this optional so local/PDF-only runs still work.
-try:
-    from ..toolkits.general_tools.open_deep_search.ods_tool import OpenDeepSearchTool
-except (ImportError, ModuleNotFoundError):  # pragma: no cover - optional dependency fallback
-    OpenDeepSearchTool = None
-from ..toolkits.writeup.vlm_document_analysis_tool import VLMDocumentAnalysisTool
-from ..toolkits.generate_idea_tool import GenerateIdeaTool
-from ..toolkits.check_idea_novelty_tool import CheckIdeaNoveltyTool
-from ..toolkits.refine_idea_tool import RefineIdeaTool
-from ..toolkits.general_tools.file_editing.file_editing_tools import (
-    SeeFile, CreateFileWithContent, ModifyFile, ListDir, SearchKeyword, DeleteFileOrFolder
-)
+from ..agents.base_agent import create_specialist_agent
 from ..prompts.ideation_instructions import get_ideation_system_prompt
+from ..toolkits.filesystem.file_editing.file_editing_tools import (
+    CreateFileWithContent, DeleteFileOrFolder, ListDir, ModifyFile, SearchKeyword, SeeFile,
+)
+from ..toolkits.ideation.generate_idea_tool import GenerateIdeaTool
+from ..toolkits.ideation.refine_idea_tool import RefineIdeaTool
+from ..toolkits.search.fetch_arxiv_papers.fetch_arxiv_papers_tools import FetchArxivPapersTool
+from ..toolkits.writeup.vlm_document_analysis_tool import VLMDocumentAnalysisTool
+from ..toolkits.code_execution_tool import PythonCodeExecutionTool
+
+try:
+    from ..toolkits.search.open_deep_search.ods_tool import OpenDeepSearchTool
+except (ImportError, ModuleNotFoundError):
+    OpenDeepSearchTool = None
 
 
-class IdeationAgent(BaseResearchAgent):
-    """
-    An agent specialized in research idea generation, refinement, and novelty checking.
-    
-    Design Philosophy:
-    - Pure tool orchestrator - no duplicate methods like generate_ideas()
-    - Tools are executors that call LLM and return results, not prompts
-    - Agent orchestrates through natural language conversation
-    - Single responsibility: each tool has one clear purpose
-    
-    Workflow Process:
-    1. Literature search using OpenDeepSearchTool and FetchArxivPapersTool
-    2. Idea generation using GenerateIdeaTool based on literature gaps
-    3. Idea refinement using RefineIdeaTool for feasibility and novelty
-    4. Document analysis using TextInspectorTool for deeper understanding
-    5. Return structured, validated research ideas ready for experimentation
-    """
-    
-    def __init__(self, model, workspace_dir=None, **kwargs):
-        """
-        Initialize the IdeationAgent.
-        
-        Args:
-            model: The LLM model to use for the agent
-            workspace_dir: Optional workspace directory for file operations
-            **kwargs: Additional arguments passed to BaseResearchAgent
-        """
-        # Convert workspace_dir to absolute path immediately to prevent nested directory issues
-        if workspace_dir:
-            workspace_dir = os.path.abspath(workspace_dir)
-            
-        # Legacy compatibility: set agent_folder for any code that might reference it
-        if workspace_dir:
-            self.agent_folder = os.path.join(workspace_dir, "ideation_agent")
-        
-        # Initialize tools - these are the primary executors
-        # NOTE: Tools get raw model for efficiency, agents use LoggingLiteLLMModel for decision tracking
-        from ..toolkits.model_utils import get_raw_model
-        raw_model = get_raw_model(model)
-        
-        tools = [
-            # comment out for now, could be modified to work later
-            # PaperSearchTool(),
-            # CheckIdeaNoveltyTool(model=raw_model),  # Pass raw model for efficiency
-            FetchArxivPapersTool(working_dir=workspace_dir),  # Pass workspace_dir for proper file organization
-            GenerateIdeaTool(model=raw_model),  # Tools use raw model for efficiency
-            RefineIdeaTool(model=raw_model),  # Tools use raw model for efficiency
-            VLMDocumentAnalysisTool(model=raw_model, working_dir=workspace_dir),  # Superior PDF analysis with visual understanding
+def get_tools(workspace_dir: Optional[str], model_id: str) -> list:
+    tools = [
+        FetchArxivPapersTool(working_dir=workspace_dir),
+        GenerateIdeaTool(model=model_id),
+        RefineIdeaTool(model=model_id),
+        VLMDocumentAnalysisTool(model=model_id, working_dir=workspace_dir),
+    ]
+    if OpenDeepSearchTool is not None:
+        tools.insert(0, OpenDeepSearchTool(model_name=model_id))
+    else:
+        print("⚠️ OpenDeepSearchTool disabled for IdeationAgent: crawl4ai not installed.")
+    if workspace_dir:
+        tools += [
+            SeeFile(working_dir=workspace_dir),
+            CreateFileWithContent(working_dir=workspace_dir),
+            ModifyFile(working_dir=workspace_dir),
+            ListDir(working_dir=workspace_dir),
+            SearchKeyword(working_dir=workspace_dir),
+            DeleteFileOrFolder(working_dir=workspace_dir),
         ]
+    return tools
 
-        if OpenDeepSearchTool is not None:
-            tools.insert(0, OpenDeepSearchTool(model_name=model.model_id))
-        else:
-            print("⚠️ OpenDeepSearchTool disabled: optional dependency 'crawl4ai' is not installed.")
-        
-        # Add file editing tools if workspace_dir is provided
-        if workspace_dir:
-            file_editing_tools = [
-                SeeFile(working_dir=workspace_dir),
-                CreateFileWithContent(working_dir=workspace_dir),
-                ModifyFile(working_dir=workspace_dir),
-                ListDir(working_dir=workspace_dir),
-                SearchKeyword(working_dir=workspace_dir),
-                DeleteFileOrFolder(working_dir=workspace_dir),
-            ]
-            tools.extend(file_editing_tools)
-        
-        # Generate complete system prompt using template
-        system_prompt = get_ideation_system_prompt(
-            tools=tools,
-            managed_agents=None  # IdeationAgent typically doesn't manage other agents
-        )
 
-        # Initialize BaseResearchAgent with specialized tools
-        super().__init__(
-            model=model,  # Pass original model, BaseResearchAgent will handle logging
-            agent_name="ideation_agent",
-            workspace_dir=workspace_dir,
-            tools=tools,
-            **kwargs
-        )
-
-        # Replace the system prompt template with our custom one for complete control
-        self.prompt_templates["system_prompt"] = system_prompt 
-        
-        # Resume memory if possible
-        self.resume_memory()
+def build_node(
+    model: Any,
+    workspace_dir: Optional[str],
+    authorized_imports: Optional[List[str]] = None,
+    **cfg: Any,
+) -> Callable:
+    from ..toolkits.model_utils import get_raw_model
+    model_id = get_raw_model(model)
+    tools = get_tools(workspace_dir, model_id)
+    system_prompt = get_ideation_system_prompt(tools=tools, managed_agents=None)
+    return create_specialist_agent(
+        model=model,
+        tools=tools,
+        system_prompt=system_prompt,
+        agent_name="ideation_agent",
+        workspace_dir=workspace_dir,
+    )

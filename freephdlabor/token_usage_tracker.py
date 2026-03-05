@@ -245,35 +245,9 @@ def get_run_token_totals() -> Optional[Dict[str, int]]:
 
 def patch_smolagents_monitoring() -> None:
     """
-    Monkey-patch smolagents Monitor.update_metrics to display run-wide totals
-    from this tracker. Falls back to original per-step accumulation if tracker
-    isn't initialized.
+    No-op after LangGraph migration.
+    Token tracking is now done via LangChain callbacks (ResearchLLMLogger)
+    and the existing record_token_usage() calls in tool internals.
+    Kept for import compatibility during the transition period.
     """
-    from smolagents.monitoring import Monitor, Text
-
-    if getattr(Monitor, "_freephdlabor_run_token_patch", False):
-        return
-
-    original_update_metrics = Monitor.update_metrics
-
-    def _patched_update_metrics(self, step_log):
-        totals = get_run_token_totals()
-        if totals is None:
-            # Fallback to default behavior when tracker is unavailable
-            return original_update_metrics(self, step_log)
-
-        step_duration = step_log.timing.duration if step_log.timing.duration is not None else 0.0
-        self.step_durations.append(step_duration)
-        # Keep Monitor state fields consistent for any downstream consumers.
-        self.total_input_token_count = totals["input_tokens"]
-        self.total_output_token_count = totals["output_tokens"]
-        console_outputs = f"[Step {len(self.step_durations)}: Duration {step_duration:.2f} seconds"
-        console_outputs += (
-            f"| Input tokens: {totals['input_tokens']:,} | Output tokens: {totals['output_tokens']:,}"
-        )
-
-        console_outputs += "]"
-        self.logger.log(Text(console_outputs, style="dim"), level=1)
-
-    Monitor.update_metrics = _patched_update_metrics
-    Monitor._freephdlabor_run_token_patch = True
+    pass

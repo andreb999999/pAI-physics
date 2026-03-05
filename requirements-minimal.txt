@@ -1,4 +1,8 @@
-smolagents==1.24.0
+langgraph>=0.4.0
+langchain-core>=0.3.0
+langchain-community>=0.3.0
+langchain-openai>=0.3.0
+langchain-anthropic>=0.3.0
 litellm==1.81.15
 pyyaml==6.0.3
 python-dotenv==1.2.1

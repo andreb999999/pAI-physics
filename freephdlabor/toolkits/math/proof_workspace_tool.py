@@ -8,14 +8,24 @@ import json
 import os
 import re
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Type
 
-from smolagents import Tool
+from langchain_core.tools import BaseTool
+from pydantic import BaseModel, Field, ConfigDict
 
 
-class MathProofWorkspaceTool(Tool):
-    name = "math_proof_workspace_tool"
-    description = """
+class MathProofWorkspaceToolInput(BaseModel):
+    action: str = Field(description="Action name")
+    claim_id: Optional[str] = Field(default=None, description="Claim id for proof/check operations")
+    content: Optional[str] = Field(default=None, description="Proof or note content")
+    check_payload_json: Optional[str] = Field(default=None, description="JSON object payload for append_check")
+    workspace_subdir: Optional[str] = Field(default=None, description="Workspace subdir root (default: math_workspace)")
+
+
+class MathProofWorkspaceTool(BaseTool):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    name: str = "math_proof_workspace_tool"
+    description: str = """
     Manage math proof artifacts under math_workspace/.
 
     Files managed:
@@ -32,42 +42,14 @@ class MathProofWorkspaceTool(Tool):
     - append_check
     - list_checks
     """
-
-    inputs = {
-        "action": {
-            "type": "string",
-            "description": "Action name",
-        },
-        "claim_id": {
-            "type": "string",
-            "description": "Claim id for proof/check operations",
-            "nullable": True,
-        },
-        "content": {
-            "type": "string",
-            "description": "Proof or note content",
-            "nullable": True,
-        },
-        "check_payload_json": {
-            "type": "string",
-            "description": "JSON object payload for append_check",
-            "nullable": True,
-        },
-        "workspace_subdir": {
-            "type": "string",
-            "description": "Workspace subdir root (default: math_workspace)",
-            "nullable": True,
-        },
-    }
-
-    output_type = "string"
+    args_schema: Type[BaseModel] = MathProofWorkspaceToolInput
+    working_dir: Optional[str] = None
     _CLAIM_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
-    def __init__(self, working_dir: Optional[str] = None):
-        super().__init__()
-        self.working_dir = os.path.abspath(working_dir) if working_dir else None
+    def __init__(self, working_dir: Optional[str] = None, **kwargs: Any):
+        super().__init__(working_dir=os.path.abspath(working_dir) if working_dir else None, **kwargs)
 
-    def forward(
+    def _run(
         self,
         action: str,
         claim_id: Optional[str] = None,
@@ -248,6 +230,9 @@ class MathProofWorkspaceTool(Tool):
 
         except Exception as e:
             return self._error(f"math proof workspace tool failed: {e}")
+
+    async def _arun(self, **kwargs: Any) -> str:
+        raise NotImplementedError
 
     def _build_template(self, workspace_dir: str, claim_id: str) -> str:
         statement = ""

@@ -1,20 +1,31 @@
-from smolagents.memory import TaskStep
-from smolagents.models import ChatMessage, MessageRole
+"""
+UserInstructionStep — LangGraph equivalent of the old smolagents TaskStep subclass.
 
-class UserInstructionStep(TaskStep):
+Used by callback_tools.py to package a live-steering instruction from the user
+socket into a form that can be injected into ResearchState.messages.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import List, Optional
+
+from langchain_core.messages import HumanMessage
+
+
+@dataclass
+class UserInstructionStep:
+    """
+    Represents a live instruction injected by the user via the interrupt socket.
+
+    Attributes:
+        user_instruction: The instruction text typed by the user.
+        is_new_task:       True → treat as a brand-new task; False → modify current task.
+    """
+
     user_instruction: str
-    user_images: list["PIL.Image.Image"] | None = None
+    is_new_task: bool = False
 
-    def __init__(self, user_instruction: str, user_images: list["PIL.Image.Image"] | None = None, **kwargs):
-        # Initialize parent with a dummy task or skip if TaskStep allows it
-        super().__init__(task=user_instruction, task_images = user_images, **kwargs)
-        self.user_instruction = user_instruction
-        self.user_images = user_images
-
-    def to_messages(self, summary_mode: bool = False) -> list[ChatMessage]:
-        content = [{"type": "text", "text": f"Additional instruction from the user:\n{self.user_instruction}"}]
-        if self.user_images:
-            content.extend([{"type": "image", "image": image} for image in self.user_images])
-
-        return [ChatMessage(role=MessageRole.USER, content=content)]
-  
+    def to_messages(self) -> List[HumanMessage]:
+        prefix = "New task from user" if self.is_new_task else "Additional instruction from the user"
+        return [HumanMessage(content=f"{prefix}:\n{self.user_instruction}")]

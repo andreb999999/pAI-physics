@@ -10,9 +10,10 @@ import os
 import random
 import re
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Type
 
-from smolagents import Tool
+from langchain_core.tools import BaseTool
+from pydantic import BaseModel, Field, ConfigDict
 
 try:
     import numpy as np
@@ -20,9 +21,29 @@ except Exception:  # pragma: no cover - optional dependency fallback
     np = None
 
 
-class MathNumericalClaimVerifierTool(Tool):
-    name = "math_numerical_claim_verifier_tool"
-    description = """
+class MathNumericalClaimVerifierToolInput(BaseModel):
+    lhs_expression: str = Field(description="Left-hand scalar expression (Python/math syntax). Required for expression mode.")
+    rhs_expression: str = Field(description="Right-hand scalar expression. Required for expression mode.")
+    variable_ranges_json: Optional[str] = Field(default=None, description="JSON object mapping variable to [min,max] or constant")
+    num_trials: Optional[int] = Field(default=None, description="Number of random trials (default: 64)")
+    tolerance: Optional[float] = Field(default=None, description="Absolute/relative tolerance (default: 1e-6)")
+    claim_id: Optional[str] = Field(default=None, description="Optional claim id for logging report")
+    save_report: Optional[bool] = Field(default=None, description="If true and claim_id provided, append report to checks/<claim_id>.jsonl")
+    workspace_subdir: Optional[str] = Field(default=None, description="Workspace subdir root (default: math_workspace)")
+    verification_mode: Optional[str] = Field(default=None, description="expression|matrix|convergence|bound (default: expression)")
+    matrix_lhs_json: Optional[str] = Field(default=None, description="JSON-encoded matrix/tensor for matrix mode")
+    matrix_rhs_json: Optional[str] = Field(default=None, description="Optional JSON-encoded matrix/tensor target for matrix mode")
+    matrix_norm: Optional[str] = Field(default=None, description="Norm type for matrix mode: spectral|fro|nuclear|inf|max")
+    convergence_values_json: Optional[str] = Field(default=None, description="JSON array of nonnegative values over iterations for convergence mode")
+    expected_rate: Optional[str] = Field(default=None, description="Expected asymptotic rate, e.g. O(1/T), O(1/sqrt(T)), O(log(T)/T)")
+    bound_observed_json: Optional[str] = Field(default=None, description="JSON array of observed values for bound mode")
+    bound_reference_json: Optional[str] = Field(default=None, description="JSON array (or single-value array) of reference bounds for bound mode")
+
+
+class MathNumericalClaimVerifierTool(BaseTool):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    name: str = "math_numerical_claim_verifier_tool"
+    description: str = """
     Numerically test claims in multiple modes:
     - expression: scalar equalities/inequalities by random substitution
     - matrix: matrix/tensor norm-based checks
@@ -31,89 +52,8 @@ class MathNumericalClaimVerifierTool(Tool):
 
     This tool is a falsification/sanity check, not formal proof.
     """
-
-    inputs = {
-        "lhs_expression": {
-            "type": "string",
-            "description": "Left-hand scalar expression (Python/math syntax). Required for expression mode.",
-        },
-        "rhs_expression": {
-            "type": "string",
-            "description": "Right-hand scalar expression. Required for expression mode.",
-        },
-        "variable_ranges_json": {
-            "type": "string",
-            "description": "JSON object mapping variable to [min,max] or constant",
-            "nullable": True,
-        },
-        "num_trials": {
-            "type": "integer",
-            "description": "Number of random trials (default: 64)",
-            "nullable": True,
-        },
-        "tolerance": {
-            "type": "number",
-            "description": "Absolute/relative tolerance (default: 1e-6)",
-            "nullable": True,
-        },
-        "claim_id": {
-            "type": "string",
-            "description": "Optional claim id for logging report",
-            "nullable": True,
-        },
-        "save_report": {
-            "type": "boolean",
-            "description": "If true and claim_id provided, append report to checks/<claim_id>.jsonl",
-            "nullable": True,
-        },
-        "workspace_subdir": {
-            "type": "string",
-            "description": "Workspace subdir root (default: math_workspace)",
-            "nullable": True,
-        },
-        "verification_mode": {
-            "type": "string",
-            "description": "expression|matrix|convergence|bound (default: expression)",
-            "nullable": True,
-        },
-        "matrix_lhs_json": {
-            "type": "string",
-            "description": "JSON-encoded matrix/tensor for matrix mode",
-            "nullable": True,
-        },
-        "matrix_rhs_json": {
-            "type": "string",
-            "description": "Optional JSON-encoded matrix/tensor target for matrix mode",
-            "nullable": True,
-        },
-        "matrix_norm": {
-            "type": "string",
-            "description": "Norm type for matrix mode: spectral|fro|nuclear|inf|max",
-            "nullable": True,
-        },
-        "convergence_values_json": {
-            "type": "string",
-            "description": "JSON array of nonnegative values over iterations for convergence mode",
-            "nullable": True,
-        },
-        "expected_rate": {
-            "type": "string",
-            "description": "Expected asymptotic rate, e.g. O(1/T), O(1/sqrt(T)), O(log(T)/T)",
-            "nullable": True,
-        },
-        "bound_observed_json": {
-            "type": "string",
-            "description": "JSON array of observed values for bound mode",
-            "nullable": True,
-        },
-        "bound_reference_json": {
-            "type": "string",
-            "description": "JSON array (or single-value array) of reference bounds for bound mode",
-            "nullable": True,
-        },
-    }
-
-    output_type = "string"
+    args_schema: Type[BaseModel] = MathNumericalClaimVerifierToolInput
+    working_dir: Optional[str] = None
 
     _ALLOWED_FUNCS = {
         "abs": abs,
@@ -151,11 +91,10 @@ class MathNumericalClaimVerifierTool(Tool):
     }
     _CLAIM_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
-    def __init__(self, working_dir: Optional[str] = None):
-        super().__init__()
-        self.working_dir = os.path.abspath(working_dir) if working_dir else None
+    def __init__(self, working_dir: Optional[str] = None, **kwargs: Any):
+        super().__init__(working_dir=os.path.abspath(working_dir) if working_dir else None, **kwargs)
 
-    def forward(
+    def _run(
         self,
         lhs_expression: str,
         rhs_expression: str,
@@ -230,6 +169,9 @@ class MathNumericalClaimVerifierTool(Tool):
             return json.dumps(result, indent=2)
         except Exception as e:
             return self._error(f"numerical claim verifier failed: {e}")
+
+    async def _arun(self, **kwargs: Any) -> str:
+        raise NotImplementedError
 
     def _verify_expression(
         self,

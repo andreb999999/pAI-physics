@@ -7,14 +7,23 @@ from __future__ import annotations
 import json
 import os
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Type
 
-from smolagents import Tool
+from langchain_core.tools import BaseTool
+from pydantic import BaseModel, Field, ConfigDict
 
 
-class MathProofRigorCheckerTool(Tool):
-    name = "math_proof_rigor_checker_tool"
-    description = """
+class MathProofRigorCheckerToolInput(BaseModel):
+    claim_id: Optional[str] = Field(default=None, description="Claim id to validate against claim_graph and proof file")
+    proof_text: Optional[str] = Field(default=None, description="Proof text to check (if omitted, loads from proofs/<claim_id>.md)")
+    check_level: Optional[str] = Field(default=None, description="basic or strict (default: strict)")
+    workspace_subdir: Optional[str] = Field(default=None, description="Workspace subdir root (default: math_workspace)")
+
+
+class MathProofRigorCheckerTool(BaseTool):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    name: str = "math_proof_rigor_checker_tool"
+    description: str = """
     Evaluate rigor/completeness of a proof draft with richer heuristics.
 
     Checks include:
@@ -27,31 +36,8 @@ class MathProofRigorCheckerTool(Tool):
     - suspicious logical jump phrases
     - bound constant/symbol coverage for claim symbols
     """
-
-    inputs = {
-        "claim_id": {
-            "type": "string",
-            "description": "Claim id to validate against claim_graph and proof file",
-            "nullable": True,
-        },
-        "proof_text": {
-            "type": "string",
-            "description": "Proof text to check (if omitted, loads from proofs/<claim_id>.md)",
-            "nullable": True,
-        },
-        "check_level": {
-            "type": "string",
-            "description": "basic or strict (default: strict)",
-            "nullable": True,
-        },
-        "workspace_subdir": {
-            "type": "string",
-            "description": "Workspace subdir root (default: math_workspace)",
-            "nullable": True,
-        },
-    }
-
-    output_type = "string"
+    args_schema: Type[BaseModel] = MathProofRigorCheckerToolInput
+    working_dir: Optional[str] = None
 
     _NAMED_RULE_PATTERNS = [
         r"\bhoeffding\b",
@@ -59,8 +45,8 @@ class MathProofRigorCheckerTool(Tool):
         r"\bmcdiarmid\b",
         r"\bjensen\b",
         r"\bcauchy[-\s]?schwarz\b|\bcs\b",
-        r"\byoung['’]s?\b",
-        r"\bholder['’]s?\b",
+        r"\byoung['']s?\b",
+        r"\bholder['']s?\b",
         r"\bmarkov\b",
         r"\bchebyshev\b",
         r"\bunion bound\b",
@@ -97,15 +83,14 @@ class MathProofRigorCheckerTool(Tool):
         "R",
     }
 
-    def __init__(self, working_dir: Optional[str] = None):
-        super().__init__()
-        self.working_dir = os.path.abspath(working_dir) if working_dir else None
+    def __init__(self, working_dir: Optional[str] = None, **kwargs: Any):
+        super().__init__(working_dir=os.path.abspath(working_dir) if working_dir else None, **kwargs)
 
-    def forward(
+    def _run(
         self,
         claim_id: Optional[str] = None,
         proof_text: Optional[str] = None,
-        check_level: str = "strict",
+        check_level: Optional[str] = None,
         workspace_subdir: Optional[str] = "math_workspace",
     ) -> str:
         try:
@@ -157,6 +142,9 @@ class MathProofRigorCheckerTool(Tool):
 
         except Exception as e:
             return self._error(f"proof rigor checker failed: {e}")
+
+    async def _arun(self, **kwargs: Any) -> str:
+        raise NotImplementedError
 
     def _run_checks(
         self,

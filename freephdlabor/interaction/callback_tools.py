@@ -1,29 +1,47 @@
-# socket_user_input.py
+"""
+Live-steering socket and interrupt tools for the LangGraph pipeline.
+
+The socket listener is unchanged: a background thread accepts TCP connections
+and forwards typed lines into a Queue.
+
+The manager node calls check_for_interrupt() at each routing step.  If a user
+interrupt has been received, the instruction is returned as a HumanMessage that
+the manager injects into graph state before continuing.
+"""
+
+from __future__ import annotations
+
 import socket
 import threading
-from queue import Queue, Empty
-from typing import Callable, Iterable
+from queue import Empty, Queue
+from typing import Callable, Iterable, Optional
 
-from smolagents.memory import TaskStep, PlanningStep
+from langchain_core.messages import HumanMessage
+
 from .user_inststep import UserInstructionStep
 
 
-def setup_user_input_socket(host: str = "127.0.0.1", port: int = 5001) -> Queue[str]:
+# ---------------------------------------------------------------------------
+# TCP socket listener (unchanged from smolagents version)
+# ---------------------------------------------------------------------------
+
+def setup_user_input_socket(host: str = "127.0.0.1", port: int = 5001) -> Queue:
     """
-    Start a tiny TCP server that accepts multiple client connections (sequential or concurrent).
-    Anything typed by any connected client is pushed (line-by-line) into the returned Queue[str].
+    Start a tiny TCP server that accepts multiple client connections.
+    Anything typed by any connected client is pushed line-by-line into the
+    returned Queue[str].
     """
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server_socket.bind((host, port))
-    server_socket.listen(5)  # allow a small backlog
+    server_socket.listen(5)
     print(f"[Info] Awaiting user input on {host}:{port}")
     print(f"[Info] Connect from another terminal:  nc {host} {port}")
 
-    input_queue: Queue[str] = Queue()
+    input_queue: Queue = Queue()
     stop_flag = threading.Event()
 
-    def socket_listener(sock: socket.socket, client_addr, queue: Queue[str]):
+    def socket_listener(sock: socket.socket, client_addr, queue: Queue) -> None:
         buf = ""
         try:
             print(f"[Info] Connected: {client_addr}")
@@ -34,22 +52,21 @@ def setup_user_input_socket(host: str = "127.0.0.1", port: int = 5001) -> Queue[
                 buf += data.decode()
                 while "\n" in buf:
                     line, buf = buf.split("\n", 1)
-                    queue.put(line.rstrip("\r"))  # preserve empty lines
-        except Exception as e:
-            print(f"[Warn] Client {client_addr} listener error: {e}")
+                    queue.put(line.rstrip("\r"))
+        except Exception as exc:
+            print(f"[Warn] Client {client_addr} listener error: {exc}")
         finally:
             try:
                 sock.close()
             finally:
                 print(f"[Info] Input connection closed: {client_addr}")
 
-    def accept_loop():
+    def accept_loop() -> None:
         try:
             while not stop_flag.is_set():
                 try:
                     client_socket, client_addr = server_socket.accept()
                 except OSError:
-                    # server_socket likely closed
                     break
                 threading.Thread(
                     target=socket_listener,
@@ -67,28 +84,38 @@ def setup_user_input_socket(host: str = "127.0.0.1", port: int = 5001) -> Queue[
     return input_queue
 
 
-def make_user_input_step_callback(
-    input_queue: Queue[str],
-    interrupt_signals: Iterable[str] | None = None,
-) -> Callable:
+# ---------------------------------------------------------------------------
+# Interrupt checker (called by the manager node each routing step)
+# ---------------------------------------------------------------------------
+
+_INTERRUPT_SIGNALS = frozenset({"interrupt", "stop", "pause"})
+
+
+def make_interrupt_checker(
+    input_queue: Queue,
+    interrupt_signals: Optional[Iterable[str]] = None,
+) -> Callable[[], Optional[HumanMessage]]:
     """
-    Build a step_callback that pauses on interrupt, asks for user input,
-    clarifies if it's a 'modification' or a 'new' task, and appends the
-    corresponding step to the agent's memory before resuming.
+    Return a zero-arg callable that the manager node should call once per step.
+
+    If no interrupt has been received, returns None.
+    If an interrupt signal arrives, blocks reading the user instruction and
+    returns a HumanMessage containing that instruction (to be appended to
+    graph state messages).
     """
-    interrupt_set = set((interrupt_signals or ["interrupt", "stop", "pause"]))
+    signals = frozenset(interrupt_signals or _INTERRUPT_SIGNALS)
     paused = False
 
-    def _try_get_nowait(q: Queue[str]):
+    def _try_get_nowait(q: Queue) -> Optional[str]:
         try:
             return q.get_nowait()
         except Empty:
             return None
 
-    def _read_until_double_enter(q: Queue[str], banner: str) -> str:
+    def _read_until_double_enter(q: Queue, banner: str) -> str:
         print(banner)
         print(">>> Type your instruction. Press Enter twice to finish.\n")
-        lines: list[str] = []
+        lines: list = []
         empty_streak = 0
         while empty_streak < 2:
             line = q.get()
@@ -99,7 +126,6 @@ def make_user_input_step_callback(
             else:
                 empty_streak = 0
             lines.append(line)
-        # Strip the final two empties
         while lines and lines[-1].strip() == "":
             lines.pop()
             if lines and lines[-1].strip() == "":
@@ -107,28 +133,27 @@ def make_user_input_step_callback(
                 break
         return "\n".join(lines).strip()
 
-    def callback(memory_step, agent):
+    def check() -> Optional[HumanMessage]:
         nonlocal paused
 
-        # If not paused, check for an interrupt signal.
         if not paused:
             cmd = _try_get_nowait(input_queue)
-            if cmd and cmd.strip().lower() in (s.lower() for s in interrupt_set):
+            if cmd and cmd.strip().lower() in signals:
                 paused = True
                 print("\n🛑 Interrupt received — pausing for user instruction...")
-        
-        if not paused:
-            return  # No interrupt, carry on.
 
-        # If paused, get user input and clarify intent.
+        if not paused:
+            return None
+
         print("\n" + "=" * 60)
         print("📝 WAITING FOR USER INSTRUCTION")
         print("=" * 60)
 
-        instruction = _read_until_double_enter(input_queue, banner="--- PROVIDE INSTRUCTION (leave empty to cancel) ---")
+        instruction = _read_until_double_enter(
+            input_queue, banner="--- PROVIDE INSTRUCTION (leave empty to cancel) ---"
+        )
 
         if instruction:
-            # Ask for clarification
             print("\nIs this a 'modification' to the current task or a 'new' task? (m/n)")
             choice = ""
             while choice not in ["m", "n"]:
@@ -136,24 +161,27 @@ def make_user_input_step_callback(
                 if choice not in ["m", "n"]:
                     print("Invalid choice. Please enter 'm' for modification or 'n' for new task.")
 
-            try:
-                if choice == "m":
-                    # Create and append a UserInstructionStep for modification
-                    new_step = UserInstructionStep(user_instruction=instruction)
-                    agent.memory.steps.append(new_step)
-                    print("\n✅ User modification appended to memory.")
-                else: # choice == "n"
-                    # Create and append a standard TaskStep for a new task
-                    new_step = TaskStep(task=instruction)
-                    agent.memory.steps.append(new_step)
-                    print("\n✅ New user task appended to memory.")
-            except Exception as e:
-                print(f"\n❌ Failed to add user instruction to memory: {e}")
-        else:
-            print("\nℹ️ No instruction provided. Resuming without change.")
+            is_new_task = choice == "n"
+            step = UserInstructionStep(user_instruction=instruction, is_new_task=is_new_task)
+            msgs = step.to_messages()
+            paused = False
+            print("✅ Resuming...\n")
+            return msgs[0] if msgs else None
 
         paused = False
-        print("✅ Resuming...\n")
-        return
+        print("ℹ️ No instruction provided. Resuming without change.\n")
+        return None
 
-    return callback
+    return check
+
+
+# ---------------------------------------------------------------------------
+# Backwards-compatible shim (used by runner.py during transition)
+# ---------------------------------------------------------------------------
+
+def make_user_input_step_callback(input_queue: Queue, interrupt_signals=None):
+    """
+    Compatibility shim: returns an interrupt-checker callable.
+    The manager node calls this each step to check for live-steering input.
+    """
+    return make_interrupt_checker(input_queue=input_queue, interrupt_signals=interrupt_signals)

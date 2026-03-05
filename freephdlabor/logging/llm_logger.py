@@ -1,330 +1,149 @@
 """
-LLM Logging Infrastructure for Multi-Agent System
+LLM Logging Infrastructure for the LangGraph research pipeline.
 
-This module provides a logging wrapper for LiteLLMModel that captures complete
-agent LLM call context for debugging and prompt improvement analysis.
+Provides a LangChain BaseCallbackHandler that logs all LLM calls made by any
+agent node to a workspace-scoped JSONL file for debugging and prompt analysis.
+
+Usage:
+    handler = create_agent_logging_handler(workspace_dir=workspace_dir)
+    # Pass via graph config: graph.invoke(state, config={"callbacks": [handler]})
+    # Or per-agent: model.invoke(messages, config={"callbacks": [handler]})
 """
 
+from __future__ import annotations
+
 import json
-import uuid
 import os
 import time
+import uuid
 from datetime import datetime
-from typing import Dict, Any, List, Optional
-from smolagents.models import ChatMessage
+from typing import Any, Dict, List, Optional, Union
+
+from langchain_core.callbacks import BaseCallbackHandler
+from langchain_core.messages import BaseMessage
+from langchain_core.outputs import LLMResult
 
 
-class LoggingLiteLLMModel:
+class ResearchLLMLogger(BaseCallbackHandler):
     """
-    A wrapper around LiteLLMModel that logs all agent LLM calls with complete context.
-    
-    This wrapper intercepts generate() calls to capture:
-    - Complete input messages (including system prompts and agent instructions)
-    - Agent context (which agent made the call)
-    - Response content and metadata
-    - Token usage and timing information
-    
-    The logs are designed to be easily analyzable by AI assistants for prompt
-    engineering improvements and multi-agent coordination debugging.
+    LangChain callback handler that logs every LLM call to a workspace JSONL file.
+
+    Captures:
+    - Input messages (serialized)
+    - Response content + token usage
+    - Timing information
+    - Rate-limit retry events (via on_retry)
     """
-    
-    def __init__(self, base_model, agent_context: Dict[str, str], log_file_path: str):
-        """
-        Initialize the logging wrapper.
-        
-        Args:
-            base_model: The LiteLLMModel instance to wrap
-            agent_context: Dict with 'agent_type' and 'agent_name' keys
-            log_file_path: Path to the JSONL log file
-        """
-        self.model = base_model
-        self.agent_context = agent_context
+
+    def __init__(self, log_file_path: str, agent_name: str = "unknown"):
+        super().__init__()
         self.log_file_path = log_file_path
-        
-        # Ensure log directory exists
+        self.agent_name = agent_name
+        self._call_start: Dict[str, float] = {}
+        self._call_inputs: Dict[str, Any] = {}
         os.makedirs(os.path.dirname(log_file_path), exist_ok=True)
-    
-    def generate(self, messages: List[ChatMessage], **kwargs) -> ChatMessage:
-        """
-        Wrap the base model's generate() method with logging.
-        
-        Args:
-            messages: List of ChatMessage objects
-            **kwargs: Additional parameters passed to the model
-            
-        Returns:
-            ChatMessage response from the base model
-        """
-        call_id = str(uuid.uuid4())
-        start_time = time.time()
-        timestamp = datetime.now().isoformat()
-        
-        # Create log entry with input data
-        log_entry = {
-            "call_id": call_id,
-            "timestamp": timestamp,
-            "agent_type": self.agent_context.get("agent_type", "unknown"),
-            "agent_name": self.agent_context.get("agent_name", "unknown"),
-            "workspace_run": self._get_workspace_run_id(),
-            "input": {
-                "messages": self._serialize_messages(messages),
-                "parameters": kwargs
-            }
+
+    # ------------------------------------------------------------------
+    # Callback hooks
+    # ------------------------------------------------------------------
+
+    def on_chat_model_start(
+        self,
+        serialized: Dict[str, Any],
+        messages: List[List[BaseMessage]],
+        *,
+        run_id: uuid.UUID,
+        **kwargs: Any,
+    ) -> None:
+        call_id = str(run_id)
+        self._call_start[call_id] = time.time()
+        self._call_inputs[call_id] = {
+            "model": serialized.get("name", "unknown"),
+            "messages": [
+                [{"role": m.__class__.__name__, "content": str(m.content)} for m in batch]
+                for batch in messages
+            ],
         }
-        
-        # Quota-aware retry logic for rate limiting
-        max_retries = 5  # Balanced retry coverage without excessive delays
-        base_delay = 9  # seconds, as suggested by Gemini API
-        response = None
-        
+
+    def on_llm_end(
+        self,
+        response: LLMResult,
+        *,
+        run_id: uuid.UUID,
+        **kwargs: Any,
+    ) -> None:
+        call_id = str(run_id)
+        duration_ms = int((time.time() - self._call_start.pop(call_id, time.time())) * 1000)
+        inputs = self._call_inputs.pop(call_id, {})
+
+        generations = []
+        for batch in response.generations:
+            for gen in batch:
+                generations.append(getattr(gen, "text", str(gen)))
+
+        token_usage = {}
+        if response.llm_output and "token_usage" in response.llm_output:
+            token_usage = response.llm_output["token_usage"]
+
+        entry = {
+            "call_id": call_id,
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "agent_name": self.agent_name,
+            "status": "success",
+            "input": inputs,
+            "output": {
+                "generations": generations,
+                "token_usage": token_usage,
+                "duration_ms": duration_ms,
+            },
+        }
+        self._write(entry)
+
+    def on_llm_error(
+        self,
+        error: Union[Exception, KeyboardInterrupt],
+        *,
+        run_id: uuid.UUID,
+        **kwargs: Any,
+    ) -> None:
+        call_id = str(run_id)
+        duration_ms = int((time.time() - self._call_start.pop(call_id, time.time())) * 1000)
+        inputs = self._call_inputs.pop(call_id, {})
+
+        entry = {
+            "call_id": call_id,
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "agent_name": self.agent_name,
+            "status": "error",
+            "input": inputs,
+            "output": {"error": str(error), "duration_ms": duration_ms},
+        }
+        self._write(entry)
+
+    # ------------------------------------------------------------------
+    # Internal
+    # ------------------------------------------------------------------
+
+    def _write(self, entry: Dict[str, Any]) -> None:
         try:
-            for attempt in range(max_retries + 1):
-                try:
-                    # Call the actual model
-                    response = self.model.generate(messages, **kwargs)
-                    
-                    # Calculate timing
-                    end_time = time.time()
-                    duration_ms = int((end_time - start_time) * 1000)
-                    
-                    # Add response data to log entry
-                    log_entry["output"] = {
-                        "content": response.content if response.content else "",
-                        "token_usage": self._extract_token_usage(response),
-                        "duration_ms": duration_ms
-                    }
-                    log_entry["status"] = "success"
-                    if attempt > 0:
-                        log_entry["retry_attempt"] = attempt
-                    
-                    break  # Success, exit retry loop
-                    
-                except Exception as e:
-                    # Check if this is a quota/rate limit error (429)
-                    is_quota_error = (
-                        "429" in str(e) or 
-                        "RateLimitError" in str(e) or
-                        "RESOURCE_EXHAUSTED" in str(e) or
-                        "quota" in str(e).lower()
-                    )
-                    
-                    # Calculate timing for this attempt
-                    end_time = time.time()
-                    duration_ms = int((end_time - start_time) * 1000)
-                    
-                    if is_quota_error and attempt < max_retries:
-                        # Calculate exponential backoff delay
-                        delay = base_delay * (2 ** attempt)
-                        
-                        # Log the retry attempt
-                        retry_entry = log_entry.copy()
-                        retry_entry["output"] = {
-                            "error": f"Quota limit hit, retrying in {delay}s (attempt {attempt + 1}/{max_retries + 1}): {str(e)}",
-                            "duration_ms": duration_ms
-                        }
-                        retry_entry["status"] = "quota_retry"
-                        retry_entry["retry_attempt"] = attempt
-                        retry_entry["retry_delay_seconds"] = delay
-                        self._write_log_entry(retry_entry)
-                        
-                        # Wait before retrying
-                        time.sleep(delay)
-                        continue
-                    else:
-                        # Final failure or non-quota error
-                        log_entry["output"] = {
-                            "error": str(e),
-                            "duration_ms": duration_ms
-                        }
-                        log_entry["status"] = "error"
-                        if attempt > 0:
-                            log_entry["final_retry_attempt"] = attempt
-                        
-                        # Re-raise the exception
-                        raise
-        
-        finally:
-            # Write log entry (if not already written during retry)
-            if log_entry.get("status") != "quota_retry":
-                self._write_log_entry(log_entry)
-        
-        return response
-    
-    def _serialize_messages(self, messages) -> List[Dict[str, Any]]:
-        """
-        Convert ChatMessage objects or dict messages to serializable dictionaries.
-        
-        Args:
-            messages: List of ChatMessage objects or dict objects with 'role'/'content' keys
-            
-        Returns:
-            List of dictionaries representing the messages
-        """
-        serialized = []
-        for msg in messages:
-            # Handle both ChatMessage objects and dict format
-            if hasattr(msg, 'role') and hasattr(msg, 'content'):
-                # ChatMessage object
-                msg_dict = {
-                    "role": msg.role,
-                    "content": msg.content
-                }
-                # Include tool calls if present
-                if hasattr(msg, 'tool_calls') and msg.tool_calls:
-                    msg_dict["tool_calls"] = [
-                        {
-                            "id": tc.id if hasattr(tc, 'id') else None,
-                            "type": tc.type if hasattr(tc, 'type') else None,
-                            "function": {
-                                "name": tc.function.name if hasattr(tc, 'function') and hasattr(tc.function, 'name') else None,
-                                "arguments": tc.function.arguments if hasattr(tc, 'function') and hasattr(tc.function, 'arguments') else None
-                            } if hasattr(tc, 'function') else None
-                        }
-                        for tc in msg.tool_calls
-                    ]
-            elif isinstance(msg, dict) and 'role' in msg and 'content' in msg:
-                # Dict format from tools
-                msg_dict = {
-                    "role": msg["role"],
-                    "content": msg["content"]
-                }
-                # Include tool calls if present in dict
-                if 'tool_calls' in msg and msg['tool_calls']:
-                    msg_dict["tool_calls"] = msg['tool_calls']
-            else:
-                # Fallback for unknown format
-                msg_dict = {
-                    "role": "unknown",
-                    "content": str(msg)
-                }
-            
-            serialized.append(msg_dict)
-        
-        return serialized
-    
-    def _extract_token_usage(self, response: ChatMessage) -> Optional[Dict[str, int]]:
-        """
-        Extract token usage information from the response.
-        
-        Args:
-            response: ChatMessage response from the model
-            
-        Returns:
-            Dictionary with token usage info or None
-        """
-        def _safe_int(v) -> int:
-            try:
-                if v is None:
-                    return 0
-                return int(v)
-            except Exception:
-                return 0
-
-        def _extract(usage_obj) -> Optional[Dict[str, int]]:
-            if not usage_obj:
-                return None
-
-            def _get(*keys):
-                for key in keys:
-                    if isinstance(usage_obj, dict) and key in usage_obj:
-                        value = _safe_int(usage_obj.get(key))
-                        if value:
-                            return value
-                    if hasattr(usage_obj, key):
-                        value = _safe_int(getattr(usage_obj, key))
-                        if value:
-                            return value
-                return 0
-
-            prompt_tokens = _get("prompt_tokens", "input_tokens")
-            completion_tokens = _get("completion_tokens", "output_tokens")
-            total_tokens = _get("total_tokens")
-            if total_tokens == 0:
-                total_tokens = prompt_tokens + completion_tokens
-
-            if prompt_tokens == 0 and completion_tokens == 0 and total_tokens == 0:
-                return None
-
-            return {
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "total_tokens": total_tokens,
-            }
-
-        usage = _extract(getattr(response, "token_usage", None))
-        if usage:
-            return usage
-
-        usage = _extract(getattr(response, "usage", None))
-        if usage:
-            return usage
-
-        raw = getattr(response, "raw", None)
-        usage = _extract(getattr(raw, "usage", None))
-        if usage:
-            return usage
-
-        return None
-    
-    def _get_workspace_run_id(self) -> str:
-        """
-        Extract the workspace run ID from the log file path.
-        
-        Returns:
-            Workspace run identifier (e.g., "20250715_103000_adaptive_lr_cnn")
-        """
-        try:
-            # Extract from path like: .../results/20250715_103000_adaptive_lr_cnn/agent_llm_calls.jsonl
-            path_parts = os.path.normpath(self.log_file_path).split(os.sep)
-            for part in path_parts:
-                if part.startswith("202") and "_" in part:  # Look for timestamp pattern
-                    return part
-        except:
-            pass
-        return "unknown_run"
-    
-    def _write_log_entry(self, log_entry: Dict[str, Any]) -> None:
-        """
-        Write a log entry to the JSONL file.
-        
-        Args:
-            log_entry: Dictionary containing the log data
-        """
-        try:
-            with open(self.log_file_path, 'a', encoding='utf-8') as f:
-                f.write(json.dumps(log_entry, ensure_ascii=False) + '\n')
-        except Exception as e:
-            # Don't let logging failures break the system
-            print(f"Warning: Failed to write LLM log entry: {e}")
-    
-    # Forward other attributes to the base model
-    def __getattr__(self, name):
-        """Forward attribute access to the base model."""
-        return getattr(self.model, name)
+            with open(self.log_file_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, ensure_ascii=False, default=str) + "\n")
+        except Exception as exc:
+            print(f"Warning: Failed to write LLM log entry: {exc}")
 
 
-def create_agent_logging_model(base_model, agent_type: str, agent_name: str, workspace_dir: str):
+# ---------------------------------------------------------------------------
+# Factory helper (called by create_specialist_agent and manager node)
+# ---------------------------------------------------------------------------
+
+def create_agent_logging_handler(
+    workspace_dir: str,
+    agent_name: str = "unknown",
+) -> ResearchLLMLogger:
     """
-    Convenience function to create a logging model wrapper for an agent.
-    
-    Args:
-        base_model: The LiteLLMModel instance to wrap
-        agent_type: Type of agent (e.g., "ManagerAgent", "IdeationAgent")
-        agent_name: Name of the agent instance (e.g., "manager_agent", "ideation_agent")
-        workspace_dir: Workspace directory path
-        
-    Returns:
-        LoggingLiteLLMModel instance configured for the agent
+    Return a callback handler that logs to <workspace_dir>/agent_llm_calls.jsonl.
+    Pass it in the LangChain/LangGraph config dict:
+        config={"callbacks": [handler]}
     """
-    agent_context = {
-        "agent_type": agent_type,
-        "agent_name": agent_name
-    }
-    
-    log_file_path = os.path.abspath(os.path.join(workspace_dir, "agent_llm_calls.jsonl"))
-    
-    return LoggingLiteLLMModel(
-        base_model=base_model,
-        agent_context=agent_context,
-        log_file_path=log_file_path
-    )
+    log_path = os.path.abspath(os.path.join(workspace_dir, "agent_llm_calls.jsonl"))
+    return ResearchLLMLogger(log_file_path=log_path, agent_name=agent_name)

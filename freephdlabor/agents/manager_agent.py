@@ -1,453 +1,361 @@
 """
-ManagerAgent implementation using smolagents framework.
-Orchestrates IdeationAgent and other agents in the multi-agent system.
+ManagerAgent — LangGraph router node module.
+
+Replaces the smolagents CodeAgent + managed_agents pattern with a LangGraph
+router node that uses an LLM to decide which specialist to invoke next.
+
+Routing protocol
+----------------
+The manager LLM ends every response with a JSON block:
+
+    ROUTING_DECISION:
+    {"next_agent": "<agent_name>", "agent_task": "<task for that agent>"}
+
+or, to finish:
+
+    ROUTING_DECISION:
+    {"next_agent": "FINISH", "summary": "<completion summary>"}
+
+The node wrapper parses this block, sets ``current_agent`` / ``finished`` in
+state, and the graph's conditional edges route accordingly.
 """
 
+from __future__ import annotations
+
+import json
 import os
-from typing import List
-from .base_research_agent import BaseResearchAgent
-from ..result_validation import validate_result_artifacts
-from ..math_acceptance_validation import validate_math_acceptance
-from ..paper_traceability_validation import validate_claim_traceability
-from ..review_verdict_validation import validate_review_verdict
-from ..paper_quality_validation import validate_paper_quality
+import re
+from typing import Any, Callable, List, Optional
 
-from .reviewer_agent import ReviewerAgent
-from .ideation_agent import IdeationAgent
-from .literature_review_agent import LiteratureReviewAgent
-from .research_planner_agent import ResearchPlannerAgent
-from .results_analysis_agent import ResultsAnalysisAgent
-from .experimentation_agent import ExperimentationAgent
-from .resource_preparation_agent import ResourcePreparationAgent
-from .writeup_agent import WriteupAgent
-from .proofreading_agent import ProofreadingAgent
-from .math_literature_agent import MathLiteratureAgent
-from .math_proposer_agent import MathProposerAgent
-from .math_prover_agent import MathProverAgent
-from .math_rigorous_verifier_agent import MathRigorousVerifierAgent
-from .math_empirical_verifier_agent import MathEmpiricalVerifierAgent
-from .proof_transcription_agent import ProofTranscriptionAgent
-from ..toolkits.general_tools.file_editing.file_editing_tools import (
-    SeeFile,
-    CreateFileWithContent,
-    ModifyFile,
-    ListDir,
-    SearchKeyword,
-    DeleteFileOrFolder,
-)
-from ..toolkits.general_tools.text_inspector.text_inspector_tool import TextInspectorTool
-from ..toolkits.writeup.vlm_document_analysis_tool import VLMDocumentAnalysisTool
-from ..toolkits.math.claim_graph_tool import MathClaimGraphTool
+from langchain_core.messages import HumanMessage
+from langgraph.prebuilt import create_react_agent
+
 from ..prompts.manager_instructions import get_manager_system_prompt
+from ..supervision import (
+    validate_claim_traceability,
+    validate_math_acceptance,
+    validate_paper_quality,
+    validate_result_artifacts,
+    validate_review_verdict,
+)
+from ..toolkits.filesystem.file_editing.file_editing_tools import (
+    CreateFileWithContent, DeleteFileOrFolder, ListDir, ModifyFile, SearchKeyword, SeeFile,
+)
+from ..toolkits.writeup.vlm_document_analysis_tool import VLMDocumentAnalysisTool
+
+try:
+    from ..toolkits.search.text_inspector.text_inspector_tool import TextInspectorTool
+    _TEXT_INSPECTOR_AVAILABLE = True
+except (ImportError, ModuleNotFoundError):
+    _TEXT_INSPECTOR_AVAILABLE = False
+
+try:
+    from ..toolkits.math.claim_graph_tool import MathClaimGraphTool
+    _MATH_TOOLS_AVAILABLE = True
+except (ImportError, ModuleNotFoundError):
+    _MATH_TOOLS_AVAILABLE = False
 
 
-class ManagerAgent(BaseResearchAgent):
+# ---------------------------------------------------------------------------
+# Routing helpers
+# ---------------------------------------------------------------------------
+
+_ROUTING_RE = re.compile(
+    r"ROUTING_DECISION\s*:\s*(\{.*?\})",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def _parse_routing_decision(text: str) -> dict:
+    """Extract the ROUTING_DECISION JSON from the manager's last message."""
+    m = _ROUTING_RE.search(text)
+    if m:
+        try:
+            return json.loads(m.group(1))
+        except json.JSONDecodeError:
+            pass
+    # Fallback: look for any JSON object with next_agent key
+    for match in re.finditer(r'\{[^{}]*"next_agent"[^{}]*\}', text, re.DOTALL):
+        try:
+            return json.loads(match.group(0))
+        except json.JSONDecodeError:
+            continue
+    # Default: no routing found, treat as finish
+    return {"next_agent": "FINISH", "summary": text}
+
+
+def _build_context_message(state: dict) -> str:
+    """Format agent outputs and iteration info for the manager prompt."""
+    lines = [f"Task: {state.get('task', '')}\n"]
+
+    agent_outputs = state.get("agent_outputs", {})
+    if agent_outputs:
+        lines.append("=== Previous agent outputs ===")
+        for agent_name, output in agent_outputs.items():
+            lines.append(f"\n--- {agent_name} ---\n{output}")
+        lines.append("")
+
+    interrupt = state.get("interrupt_instruction")
+    if interrupt:
+        lines.append(f"=== LIVE STEERING INSTRUCTION ===\n{interrupt}\n")
+
+    validation = state.get("validation_results", {})
+    if validation:
+        lines.append("=== Validation results ===")
+        for gate, result in validation.items():
+            status = "PASS" if result.get("is_valid") else "FAIL"
+            errors = "; ".join(result.get("errors", []))
+            lines.append(f"  {gate}: {status}" + (f" — {errors}" if errors else ""))
+        lines.append("")
+
+    iteration = state.get("iteration_count", 0)
+    max_steps = state.get("manager_max_steps", 50)
+    lines.append(f"Iteration: {iteration}/{max_steps}")
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Validation gate
+# ---------------------------------------------------------------------------
+
+def _run_validation_gates(state: dict) -> dict:
     """
-    A manager agent that orchestrates other agents in the AI scientist system.
-    This agent decides which specialist agent to use to accomplish a task.
-
-    Workflow Intelligence:
-    - Automatically delegates idea generation to IdeationAgent
-    - Delegates experiment execution to ExperimentationAgent
-    - Delegates paper writing to WriteupAgent
-    - Handles failures gracefully without generating synthetic results
-    - Manages workspace coordination between agents
+    Run all quality gates.  Returns a ``validation_results`` dict mapping
+    gate name -> {is_valid, errors}.  Also returns ``gate_passed`` bool.
     """
+    workspace = state.get("workspace_dir") or "."
+    results: dict[str, dict] = {}
+    all_valid = True
 
-    def __init__(
-        self, model, interpreter, workspace_dir=None, managed_agents=None, **kwargs
-    ):
-        """
-        Initialize the ManagerAgent.
+    enforce_paper = state.get("enforce_paper_artifacts", False)
+    pipeline_mode = str(state.get("pipeline_mode", "default")).strip().lower()
+    should_enforce = enforce_paper or (pipeline_mode == "full_research")
 
-        Args:
-            model: The LLM model to use for the agent.
-            interpreter: Code interpreter for the agent.
-            workspace_dir: Optional workspace directory for agent coordination.
-            managed_agents: Optional list of pre-initialized agents to manage.
-                          If None, will create default agents internally.
-            **kwargs: Additional arguments passed to BaseResearchAgent.
-        """
-        # Store the interpreter for later use (BaseResearchAgent will handle workspace executor)
-        self.interpreter = interpreter
-        self.require_pdf = bool(kwargs.pop("require_pdf", False))
-        self.enforce_paper_artifacts = bool(kwargs.pop("enforce_paper_artifacts", False))
-        self.require_experiment_plan = bool(kwargs.pop("require_experiment_plan", False))
-        self.enable_math_agents = bool(kwargs.pop("enable_math_agents", False))
-        self.pipeline_mode = str(kwargs.pop("pipeline_mode", "default"))
-        self.followup_max_iterations = int(kwargs.pop("followup_max_iterations", 3))
-        self.enforce_editorial_artifacts = bool(
-            kwargs.pop("enforce_editorial_artifacts", False)
+    if should_enforce:
+        required = _build_required_artifacts(state)
+        summary = validate_result_artifacts(
+            result="",
+            workspace_dir=workspace,
+            required_artifacts=required,
         )
-        self.min_review_score = int(kwargs.pop("min_review_score", 8))
-        existing_final_answer_checks = kwargs.pop("final_answer_checks", [])
+        ok = not summary.get("missing_required_artifacts")
+        results["artifact_gate"] = {
+            "is_valid": ok,
+            "errors": [
+                "Missing: " + ", ".join(summary.get("missing_required_artifacts", []))
+            ] if not ok else [],
+        }
+        all_valid = all_valid and ok
 
-        # Create inter-agent messages folder (specific to ManagerAgent)
-        if workspace_dir:
-            os.makedirs(
-                os.path.join(workspace_dir, "inter_agent_messages"), exist_ok=True
-            )
+    if state.get("math_enabled", False):
+        math_summary = validate_math_acceptance(workspace_dir=workspace)
+        if math_summary.get("graph_present"):
+            ok = math_summary.get("is_valid", True)
+            results["math_acceptance"] = {
+                "is_valid": ok,
+                "errors": math_summary.get("errors", []),
+            }
+            all_valid = all_valid and ok
 
-        # Use provided managed agents or create them if not provided
-        if managed_agents is not None:
-            # Use pre-initialized agents (recommended approach)
-            self.managed_agents = managed_agents
-        else:
-            # Fallback: Create agents internally (legacy behavior)
-            # Essential imports for tool-centric agents (shared across all agents)
-            essential_imports = kwargs.get("additional_authorized_imports", [])
+        if state.get("enforce_editorial_artifacts", False):
+            tr = validate_claim_traceability(workspace_dir=workspace)
+            ok = tr.get("is_valid", True)
+            results["claim_traceability"] = {
+                "is_valid": ok,
+                "errors": tr.get("errors", []),
+            }
+            all_valid = all_valid and ok
 
-            # Create managed agents for delegation - they will initialize their own file editing tools
-            # Note: Managed agents will get their own logging wrappers in their constructors
-            from ..prompts.ideation_instructions import get_ideation_system_prompt
-            ideation_agent = IdeationAgent(
-                model=model,  # Pass original model, they'll wrap it themselves
-                workspace_dir=workspace_dir,
-                name="ideation_agent",
-                description=f"""A specialist agent for generating, refining, and evaluating research ideas.
+    if state.get("enforce_editorial_artifacts", False):
+        min_score = state.get("min_review_score", 8)
+        rv = validate_review_verdict(workspace_dir=workspace, min_review_score=min_score)
+        ok = rv.get("is_valid", True)
+        results["review_verdict"] = {
+            "is_valid": ok,
+            "errors": rv.get("errors", []),
+        }
+        all_valid = all_valid and ok
 
---- SYSTEM INSTRUCTIONS ---
-{get_ideation_system_prompt()}
---- END SYSTEM INSTRUCTIONS ---""",
-                additional_authorized_imports=essential_imports,
-            )
+        pq = validate_paper_quality(workspace_dir=workspace)
+        ok = pq.get("is_valid", True)
+        results["paper_quality"] = {
+            "is_valid": ok,
+            "errors": pq.get("errors", []),
+        }
+        all_valid = all_valid and ok
 
-            literature_review_agent = LiteratureReviewAgent(
-                model=model,
-                workspace_dir=workspace_dir,
-                name="literature_review_agent",
-                description="A specialist agent for deep structured literature review with citations and PDF output.",
-                additional_authorized_imports=essential_imports,
-            )
+    return {"validation_results": results, "gate_passed": all_valid}
 
-            research_planner_agent = ResearchPlannerAgent(
-                model=model,
-                workspace_dir=workspace_dir,
-                name="research_planner_agent",
-                description="A specialist agent for creating theory+experiment research plans from literature review artifacts.",
-                additional_authorized_imports=essential_imports,
-            )
 
-            results_analysis_agent = ResultsAnalysisAgent(
-                model=model,
-                workspace_dir=workspace_dir,
-                name="results_analysis_agent",
-                description="A specialist agent for mini literature follow-up and follow-up decision after subproject execution.",
-                additional_authorized_imports=essential_imports,
-            )
+def _build_required_artifacts(state: dict) -> list[str]:
+    pipeline_mode = str(state.get("pipeline_mode", "default")).strip().lower()
+    required = ["final_paper.tex"]
+    if pipeline_mode == "full_research":
+        required.extend([
+            "paper_workspace/literature_review.pdf",
+            "paper_workspace/research_plan.pdf",
+            "paper_workspace/results_assessment.pdf",
+            "paper_workspace/followup_decision.json",
+        ])
+    if state.get("require_experiment_plan", False):
+        required.append("experiments_to_run_later.md")
+    if state.get("require_pdf", False):
+        required.append("final_paper.pdf")
+    if state.get("enforce_editorial_artifacts", False):
+        required.extend([
+            "paper_workspace/author_style_guide.md",
+            "paper_workspace/intro_skeleton.tex",
+            "paper_workspace/style_macros.tex",
+            "paper_workspace/reader_contract.json",
+            "paper_workspace/editorial_contract.md",
+            "paper_workspace/theorem_map.json",
+            "paper_workspace/revision_log.md",
+            "paper_workspace/copyedit_report.md",
+            "paper_workspace/review_report.md",
+            "paper_workspace/review_verdict.json",
+        ])
+        if state.get("math_enabled", False):
+            required.append("paper_workspace/claim_traceability.json")
+    return required
 
-            from ..prompts.experimentation_instructions import get_experimentation_system_prompt
-            experimentation_agent = ExperimentationAgent(
-                model=model,  # Pass original model, they'll wrap it themselves
-                workspace_dir=workspace_dir,
-                name="experimentation_agent",
-                description=f"""A specialist agent for running experiments and analyzing results using RunExperimentTool.
 
---- SYSTEM INSTRUCTIONS ---
-{get_experimentation_system_prompt()}
---- END SYSTEM INSTRUCTIONS ---""",
-                additional_authorized_imports=essential_imports,
-            )
+# ---------------------------------------------------------------------------
+# Tool builder
+# ---------------------------------------------------------------------------
 
-            from ..prompts.writeup_instructions import get_writeup_system_prompt
-            writeup_agent = WriteupAgent(
-                model=model,  # Pass original model, they'll wrap it themselves
-                workspace_dir=workspace_dir,
-                name="writeup_agent",
-                description=f"""A specialist agent for academic paper writing that works with pre-organized resources from ResourcePreparationAgent.
+def get_tools(workspace_dir: Optional[str], model_id: str, enable_math_agents: bool = False) -> list:
+    tools = [VLMDocumentAnalysisTool(model=model_id, working_dir=workspace_dir)]
 
---- SYSTEM INSTRUCTIONS ---
-{get_writeup_system_prompt(tools=[], managed_agents=None)}
---- END SYSTEM INSTRUCTIONS ---""",
-                additional_authorized_imports=essential_imports,
-            )
+    if enable_math_agents and _MATH_TOOLS_AVAILABLE:
+        tools.append(MathClaimGraphTool(
+            working_dir=workspace_dir,
+            allow_accepted_transition=True,
+        ))
 
-            from ..prompts.resource_preparation_instructions import get_resource_preparation_system_prompt
-            resource_preparation_agent = ResourcePreparationAgent(
-                model=model,  # Pass original model, they'll wrap it themselves
-                workspace_dir=workspace_dir,
-                name="resource_preparation_agent",
-                description=f"""A comprehensive resource organization agent that prepares complete experimental documentation for WriteupAgent.
+    enable_text_inspector = os.getenv(
+        "FREEPHDLABOR_ENABLE_MANAGER_TEXT_INSPECTOR", "1"
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    if enable_text_inspector and _TEXT_INSPECTOR_AVAILABLE:
+        try:
+            tools.append(TextInspectorTool(model=model_id, working_dir=workspace_dir))
+        except Exception as e:
+            print(f"TextInspectorTool disabled: {e}")
 
-Key Functions: Locates experiment results folders, creates paper_workspace/ workspace, links experiment data using symlinks/copies, generates complete file structure analysis with descriptions of EVERY file found, creates comprehensive bibliography based on full experimental understanding.
+    if workspace_dir:
+        tools += [
+            SeeFile(working_dir=workspace_dir),
+            CreateFileWithContent(working_dir=workspace_dir),
+            ModifyFile(working_dir=workspace_dir),
+            ListDir(working_dir=workspace_dir),
+            SearchKeyword(working_dir=workspace_dir),
+            DeleteFileOrFolder(working_dir=workspace_dir),
+        ]
+    return tools
 
-Key Tools: ExperimentLinkerTool, CitationSearchTool, VLMDocumentAnalysisTool, file editing tools.
 
-Approach: Comprehensive documentation of all experimental artifacts without selectivity. Creates complete file tree structure, reads actual content of every file (VLM for images), and provides complete resource inventory. WriteupAgent can then selectively choose what to use from the comprehensive documentation.
+# ---------------------------------------------------------------------------
+# Node factory
+# ---------------------------------------------------------------------------
 
---- SYSTEM INSTRUCTIONS ---
-{get_resource_preparation_system_prompt()}
---- END SYSTEM INSTRUCTIONS ---""",
-                additional_authorized_imports=essential_imports,
-            )
+def build_node(
+    model: Any,
+    workspace_dir: Optional[str],
+    pipeline_mode: str = "default",
+    available_agents: Optional[List[str]] = None,
+    enable_math_agents: bool = False,
+    followup_max_iterations: int = 3,
+    authorized_imports: Optional[List[str]] = None,
+    **cfg: Any,
+) -> Callable:
+    from ..toolkits.model_utils import get_raw_model
+    model_id = get_raw_model(model)
 
-            from ..prompts.reviewer_instructions import get_reviewer_system_prompt
-            reviewer_agent = ReviewerAgent(
-                model=model,  # Pass original model, they'll wrap it themselves
-                workspace_dir=workspace_dir,
-                name="reviewer_agent",
-                description=f"""A specialist agent for peer-reviewing AI research paper.
+    tools = get_tools(workspace_dir, model_id, enable_math_agents=enable_math_agents)
+    system_prompt = get_manager_system_prompt(
+        tools=tools,
+        managed_agents=None,
+        pipeline_mode=pipeline_mode,
+        followup_max_iterations=followup_max_iterations,
+    )
 
---- SYSTEM INSTRUCTIONS ---
-{get_reviewer_system_prompt()}
---- END SYSTEM INSTRUCTIONS ---""",
-                additional_authorized_imports=essential_imports,
-            )
+    # Append routing protocol to system prompt
+    agent_list = ", ".join(available_agents or [])
+    routing_addendum = f"""
 
-            from ..prompts.proofreading_instructions import get_proofreading_system_prompt
-            proofreading_agent = ProofreadingAgent(
-                model=model,  # Pass original model, they'll wrap it themselves
-                workspace_dir=workspace_dir,
-                name="proofreading_agent",
-                description=f"""A specialist agent for copy-editing, concision improvements, and final LaTeX quality assurance.
+ROUTING OUTPUT (mandatory — append to every response)
+------------------------------------------------------
+Always end your response with exactly this block (no extra text after it):
 
---- SYSTEM INSTRUCTIONS ---
-{get_proofreading_system_prompt(tools=[], managed_agents=None)}
---- END SYSTEM INSTRUCTIONS ---""",
-                additional_authorized_imports=essential_imports,
-            )
+ROUTING_DECISION:
+{{"next_agent": "<one of: {agent_list}, FINISH>", "agent_task": "<full task description for that agent>"}}
 
-            self.managed_agents = [
-                ideation_agent,
-                literature_review_agent,
-                research_planner_agent,
-                results_analysis_agent,
-                experimentation_agent,
-                resource_preparation_agent,
-                writeup_agent,
-                proofreading_agent,
-                reviewer_agent,
-            ]
+When finishing:
+ROUTING_DECISION:
+{{"next_agent": "FINISH", "summary": "<brief completion summary>"}}
+"""
+    full_prompt = system_prompt + routing_addendum
 
-            if self.enable_math_agents:
-                math_proposer_agent = MathProposerAgent(
-                    model=model,
-                    workspace_dir=workspace_dir,
-                    name="math_proposer_agent",
-                    description="A specialist agent for constructing mathematical claim graphs (claims, assumptions, dependencies).",
-                    additional_authorized_imports=essential_imports,
+    react_agent = create_react_agent(
+        model=model,
+        tools=tools,
+        prompt=full_prompt,
+    )
+
+    if workspace_dir:
+        os.makedirs(os.path.join(workspace_dir, "inter_agent_messages"), exist_ok=True)
+
+    def manager_node(state: dict) -> dict:
+        context = _build_context_message(state)
+
+        result = react_agent.invoke({
+            "messages": [HumanMessage(content=context)],
+        })
+
+        last_msg = result["messages"][-1] if result.get("messages") else None
+        last_content = last_msg.content if last_msg and hasattr(last_msg, "content") else ""
+
+        routing = _parse_routing_decision(last_content)
+        next_agent = routing.get("next_agent", "FINISH")
+        agent_task = routing.get("agent_task", routing.get("summary", ""))
+
+        new_iteration = state.get("iteration_count", 0) + 1
+
+        # If manager wants to finish, run validation gates first
+        if next_agent == "FINISH":
+            val = _run_validation_gates(state)
+            if not val["gate_passed"]:
+                # Validation failed — inject error into state and re-run manager
+                error_msg = "VALIDATION FAILED:\n" + "\n".join(
+                    f"  {gate}: {'; '.join(r['errors'])}"
+                    for gate, r in val["validation_results"].items()
+                    if not r["is_valid"]
                 )
-                math_prover_agent = MathProverAgent(
-                    model=model,
-                    workspace_dir=workspace_dir,
-                    name="math_prover_agent",
-                    description="A specialist agent for writing structured proof drafts tied to claim graph items.",
-                    additional_authorized_imports=essential_imports,
-                )
-                math_rigorous_verifier_agent = MathRigorousVerifierAgent(
-                    model=model,
-                    workspace_dir=workspace_dir,
-                    name="math_rigorous_verifier_agent",
-                    description="A specialist agent for auditing proof rigor and symbolic completeness.",
-                    additional_authorized_imports=essential_imports,
-                )
-                math_empirical_verifier_agent = MathEmpiricalVerifierAgent(
-                    model=model,
-                    workspace_dir=workspace_dir,
-                    name="math_empirical_verifier_agent",
-                    description="A specialist agent for numeric sanity checks and counterexample search on math claims.",
-                    additional_authorized_imports=essential_imports,
-                )
-                math_agents = [
-                    math_proposer_agent,
-                    math_prover_agent,
-                    math_rigorous_verifier_agent,
-                    math_empirical_verifier_agent,
-                ]
+                return {
+                    "validation_results": val["validation_results"],
+                    "current_agent": None,
+                    "agent_task": error_msg,
+                    "finished": False,
+                    "iteration_count": new_iteration,
+                    # inject a synthetic message so manager sees the failure
+                    "messages": [HumanMessage(content=f"[SYSTEM] {error_msg}")],
+                }
+            return {
+                "validation_results": val["validation_results"],
+                "current_agent": "FINISH",
+                "agent_task": agent_task,
+                "finished": True,
+                "iteration_count": new_iteration,
+            }
 
-                if self.pipeline_mode.strip().lower() == "full_research":
-                    math_literature_agent = MathLiteratureAgent(
-                        model=model,
-                        workspace_dir=workspace_dir,
-                        name="math_literature_agent",
-                        description="A specialist agent for mining DL/statistical learning theory literature into reusable lemma libraries.",
-                        additional_authorized_imports=essential_imports,
-                    )
-                    proof_transcription_agent = ProofTranscriptionAgent(
-                        model=model,
-                        workspace_dir=workspace_dir,
-                        name="proof_transcription_agent",
-                        description="A specialist agent for converting proof artifacts into publication-quality LaTeX theory sections.",
-                        additional_authorized_imports=essential_imports,
-                    )
-                    math_agents.extend(
-                        [
-                            math_literature_agent,
-                            proof_transcription_agent,
-                        ]
-                    )
-                self.managed_agents.extend(math_agents)
+        return {
+            "current_agent": next_agent,
+            "agent_task": agent_task,
+            "finished": False,
+            "iteration_count": new_iteration,
+            # Clear interrupt once processed
+            "interrupt_instruction": None,
+        }
 
-        # Build dynamic agent list for prompt
-        available_agents = [agent.name for agent in self.managed_agents]
-
-        # Initialize file editing tools for ManagerAgent
-        from ..toolkits.model_utils import get_raw_model
-        raw_model = get_raw_model(model)
-        file_editing_tools = []
-        enable_manager_text_inspector = os.getenv(
-            "FREEPHDLABOR_ENABLE_MANAGER_TEXT_INSPECTOR", "1"
-        ).strip().lower() in {"1", "true", "yes", "on"}
-        # Keep at least one robust PDF/doc analysis tool available in manager.
-        document_tools = [VLMDocumentAnalysisTool(model=raw_model, working_dir=workspace_dir)]
-        if self.enable_math_agents:
-            # Manager-only acceptance gate: only manager can transition claims to accepted.
-            document_tools.append(
-                MathClaimGraphTool(
-                    working_dir=workspace_dir,
-                    allow_accepted_transition=True,
-                )
-            )
-        if enable_manager_text_inspector:
-            # Always available in manager for PDF/long-doc ingestion when deps exist.
-            try:
-                document_tools.append(
-                    TextInspectorTool(model=raw_model, working_dir=workspace_dir)
-                )
-            except Exception as e:
-                print(
-                    "⚠️ TextInspectorTool disabled: optional document dependencies "
-                    f"are missing or misconfigured ({e})."
-                )
-
-        if workspace_dir:
-            file_editing_tools = [
-                SeeFile(working_dir=workspace_dir),
-                CreateFileWithContent(working_dir=workspace_dir),
-                ModifyFile(working_dir=workspace_dir),
-                ListDir(working_dir=workspace_dir),
-                SearchKeyword(working_dir=workspace_dir),
-                DeleteFileOrFolder(working_dir=workspace_dir),
-            ]
-
-        tools: List = [*document_tools, *file_editing_tools]
-
-        # Generate complete system prompt using template
-        system_prompt = get_manager_system_prompt(
-            tools=tools,
-            managed_agents=self.managed_agents,
-            pipeline_mode=self.pipeline_mode,
-            followup_max_iterations=self.followup_max_iterations,
-        )
-
-        super().__init__(
-            model=model,  # Pass original model, BaseResearchAgent will handle logging
-            agent_name="manager_agent",
-            workspace_dir=workspace_dir,
-            tools=tools,
-            managed_agents=self.managed_agents,
-            final_answer_checks=[
-                *existing_final_answer_checks,
-                self._validate_manager_success_criteria,
-            ],
-            **kwargs
-        )
-
-        # Set system prompt after initialization (correct smolagents pattern)
-        self.prompt_templates["system_prompt"] = system_prompt
-
-    # The run method is inherited from the parent CodeAgent and is what should be called
-    # to execute a task. It uses the LLM to reason and create a plan.
-    
-        # Resume memory if possible
-        self.resume_memory()
-
-    def _paper_required_artifacts(self) -> list[str]:
-        required = ["final_paper.tex"]
-        if self.pipeline_mode.strip().lower() == "full_research":
-            required.extend(
-                [
-                    "paper_workspace/literature_review.pdf",
-                    "paper_workspace/research_plan.pdf",
-                    "paper_workspace/results_assessment.pdf",
-                    "paper_workspace/followup_decision.json",
-                ]
-            )
-        if self.require_experiment_plan:
-            required.append("experiments_to_run_later.md")
-        if self.require_pdf:
-            required.append("final_paper.pdf")
-        if self.enforce_editorial_artifacts:
-            required.extend(
-                [
-                    "paper_workspace/author_style_guide.md",
-                    "paper_workspace/intro_skeleton.tex",
-                    "paper_workspace/style_macros.tex",
-                    "paper_workspace/reader_contract.json",
-                    "paper_workspace/editorial_contract.md",
-                    "paper_workspace/theorem_map.json",
-                    "paper_workspace/revision_log.md",
-                    "paper_workspace/copyedit_report.md",
-                    "paper_workspace/review_report.md",
-                    "paper_workspace/review_verdict.json",
-                ]
-            )
-            if self.enable_math_agents:
-                required.append("paper_workspace/claim_traceability.json")
-        return required
-
-    def _validate_manager_success_criteria(self, final_answer, memory, agent=None):
-        """
-        Ensure manager does not terminate with false artifact claims
-        or invalid theorem-acceptance state.
-        """
-        workspace = self.workspace_dir or "."
-
-        should_enforce_paper_artifacts = self.enforce_paper_artifacts or (
-            self.pipeline_mode.strip().lower() == "full_research"
-        )
-        if should_enforce_paper_artifacts:
-            summary = validate_result_artifacts(
-                result=final_answer,
-                workspace_dir=workspace,
-                required_artifacts=self._paper_required_artifacts(),
-            )
-
-            if summary["missing_required_artifacts"]:
-                raise ValueError(
-                    "TERMINATION_BLOCKED: Missing required paper artifacts: "
-                    + ", ".join(summary["missing_required_artifacts"])
-                )
-
-            # If the model reports artifacts, force truthful reporting.
-            if summary["artifacts"] and summary["missing_artifacts"]:
-                raise ValueError(
-                    "TERMINATION_BLOCKED: Final answer lists artifacts that do not exist: "
-                    + ", ".join(summary["missing_artifacts"])
-                    + ". Create them or remove them from the artifacts list."
-                )
-
-        if self.enable_math_agents:
-            math_summary = validate_math_acceptance(workspace_dir=workspace)
-            if math_summary["graph_present"] and not math_summary["is_valid"]:
-                raise ValueError(
-                    "TERMINATION_BLOCKED: Math claim acceptance audit failed: "
-                    + "; ".join(math_summary["errors"])
-                )
-            if self.enforce_editorial_artifacts:
-                traceability_summary = validate_claim_traceability(workspace_dir=workspace)
-                if not traceability_summary["is_valid"]:
-                    raise ValueError(
-                        "TERMINATION_BLOCKED: Claim traceability audit failed: "
-                        + "; ".join(traceability_summary["errors"])
-                    )
-
-        if self.enforce_editorial_artifacts:
-            review_summary = validate_review_verdict(
-                workspace_dir=workspace,
-                min_review_score=self.min_review_score,
-            )
-            if not review_summary["is_valid"]:
-                raise ValueError(
-                    "TERMINATION_BLOCKED: Review verdict gate failed: "
-                    + "; ".join(review_summary["errors"])
-                )
-
-            quality_summary = validate_paper_quality(workspace_dir=workspace)
-            if not quality_summary["is_valid"]:
-                raise ValueError(
-                    "TERMINATION_BLOCKED: Paper quality gate failed: "
-                    + "; ".join(quality_summary["errors"])
-                )
-
-        return True
+    manager_node.__name__ = "manager"
+    return manager_node
