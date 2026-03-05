@@ -20,13 +20,13 @@ Examples:
   python launch_multiagent.py --resume results/freephdlabor_20250929_143022/ --task "Continue writing the conclusion section"
         """
     )
-    
+
     parser.add_argument(
         "--model",
         type=str,
         choices=AVAILABLE_MODELS,
-        default="gpt-5",
-        help="LLM model to use for all agents"
+        default=None,
+        help="LLM model to use for all agents (default: gpt-5, overrides .llm_config.yaml)"
     )
 
     parser.add_argument(
@@ -35,7 +35,7 @@ Examples:
         default="python",
         help="Python interpreter path for experiment execution"
     )
-    
+
     parser.add_argument(
         "--debug",
         action="store_true",
@@ -56,22 +56,21 @@ Examples:
         action="store_false",
         help="Do not redirect stdout/stderr to log files"
     )
-    
-    # GPT-5 specific parameters
+
     parser.add_argument(
         "--reasoning-effort",
         type=str,
         choices=["none", "minimal", "low", "medium", "high", "xhigh"],
-        default="high",
-        help="GPT-5 reasoning effort level (controls thinking depth)"
+        default=None,
+        help="GPT-5 reasoning effort level (default: high, overrides .llm_config.yaml)"
     )
-    
+
     parser.add_argument(
         "--verbosity",
         type=str,
-        choices=["low", "medium", "high"], 
-        default="medium",
-        help="GPT-5 verbosity level (controls response detail)"
+        choices=["low", "medium", "high"],
+        default=None,
+        help="GPT-5 verbosity level (default: medium, overrides .llm_config.yaml)"
     )
 
     parser.add_argument(
@@ -111,19 +110,19 @@ Examples:
     parser.add_argument(
         "--task",
         type=str,
-        help="The research task description to be carried out by the multiagent system. Can be used with --resume to tell the system to continue working on a previous task."
+        help="The research task description. Can be used with --resume to continue a previous task."
     )
 
     parser.add_argument(
         "--require-pdf",
         action="store_true",
-        help="For paper-writing runs, require final_paper.pdf before the manager can terminate successfully."
+        help="Require final_paper.pdf before the manager can terminate successfully."
     )
 
     parser.add_argument(
         "--enforce-paper-artifacts",
         action="store_true",
-        help="Enforce paper artifact checks (always final_paper.tex; optionally final_paper.pdf with --require-pdf and experiments_to_run_later.md with --require-experiment-plan)."
+        help="Enforce paper artifact checks (final_paper.tex; optionally final_paper.pdf and experiments_to_run_later.md)."
     )
 
     parser.add_argument(
@@ -148,14 +147,14 @@ Examples:
     parser.add_argument(
         "--enforce-editorial-artifacts",
         action="store_true",
-        help="When paper artifact enforcement is enabled, also require editorial workflow artifacts (author_style_guide.md, intro_skeleton.tex, style_macros.tex, reader_contract.json, editorial_contract.md, theorem_map.json, revision_log.md, copyedit_report.md, review_report.md, review_verdict.json, and claim_traceability.json in math mode).",
+        help="Require editorial workflow artifacts (style guide, intro skeleton, review verdict, etc.).",
     )
 
     parser.add_argument(
         "--min-review-score",
         type=int,
         default=8,
-        help="Minimum reviewer overall_score required by the strict review gate (used with --enforce-editorial-artifacts).",
+        help="Minimum reviewer overall_score required by the strict review gate.",
     )
 
     parser.add_argument(
@@ -163,14 +162,14 @@ Examples:
         type=str,
         choices=["default", "full_research", "quick"],
         default="default",
-        help="Workflow mode for manager orchestration. Use 'full_research' for the full 8-step literature/planning/execution/writeup pipeline.",
+        help="Workflow mode. Use 'full_research' for the full 8-step literature/plan/execution/writeup pipeline.",
     )
 
     parser.add_argument(
         "--followup-max-iterations",
         type=int,
         default=3,
-        help="Maximum number of Step 6 <-> 6.2 follow-up loops in full_research mode.",
+        help="Maximum Step 6 <-> 6.2 follow-up loops in full_research mode.",
     )
 
     return parser.parse_args()

@@ -11,9 +11,12 @@ import openai
 MAX_NUM_TOKENS = 4096
 
 AVAILABLE_LLMS = [
+    "claude-opus-4-6",
+    "claude-sonnet-4-6",
     "claude-3-5-sonnet-20240620",
     "claude-3-5-sonnet-20241022",
     "claude-3-7-sonnet-20250219",
+    "gpt-5.3-codex",
     "gpt-4o-mini-2024-07-18",
     "gpt-4o-mini",
     "gpt-4o-2024-05-13",
@@ -460,7 +463,10 @@ def encode_image_to_base64(image_data: Union[str, bytes, List[bytes]]) -> str:
         raise TypeError(f"Unsupported image data type: {type(image_data)}")
 
 
-@backoff.on_exception(backoff.expo, (openai.RateLimitError, openai.APITimeoutError))
+@backoff.on_exception(
+    backoff.expo,
+    (openai.RateLimitError, openai.APITimeoutError, anthropic.RateLimitError),
+)
 def get_response_from_vlm(
     prompt: str,
     images: List[str],
@@ -477,7 +483,7 @@ def get_response_from_vlm(
     Args:
         prompt: Text prompt for the VLM
         images: List of image file paths
-        client: OpenAI client instance
+        client: Model client instance (OpenAI or Anthropic)
         model: Model name (should be vision-capable like gpt-4o)
         system_message: System message for the conversation
         print_debug: Whether to print debug information
@@ -516,8 +522,8 @@ def get_response_from_vlm(
         messages.append({"role": "system", "content": system_message})
     messages.extend(new_msg_history)
     
-    # Make API call (currently only supports OpenAI-compatible VLMs)
-    if "gpt-4o" in model or "gpt-4-vision" in model:
+    # Make API call
+    if "gpt-4o" in model or "gpt-4-vision" in model or "gpt-5" in model or "codex" in model:
         response = client.chat.completions.create(
             model=model,
             messages=messages,
@@ -531,9 +537,42 @@ def get_response_from_vlm(
         
         # Update message history
         new_msg_history = new_msg_history + [{"role": "assistant", "content": content_response}]
-        
+    elif model in {"claude-opus-4-6", "claude-sonnet-4-6"}:
+        anthropic_content = [{"type": "text", "text": prompt}]
+        for image_path in images:
+            try:
+                base64_image = encode_image_to_base64(image_path)
+                anthropic_content.append(
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/jpeg",
+                            "data": base64_image,
+                        },
+                    }
+                )
+            except Exception as e:
+                print(f"Warning: Failed to encode image {image_path}: {e}")
+                continue
+
+        response = client.messages.create(
+            model=model,
+            system=system_message,
+            messages=[{"role": "user", "content": anthropic_content}],
+            max_tokens=MAX_NUM_TOKENS,
+        )
+        _record_response_token_usage(response, model, "vlm")
+        content_blocks = getattr(response, "content", [])
+        text_blocks = [block.text for block in content_blocks if getattr(block, "type", None) == "text"]
+        content_response = "\n".join(text_blocks).strip()
+
+        # Keep message history format consistent with OpenAI branch.
+        new_msg_history = new_msg_history + [{"role": "assistant", "content": content_response}]
     else:
-        raise ValueError(f"VLM model {model} not supported. Currently only supports GPT-4 Vision models.")
+        raise ValueError(
+            f"VLM model {model} not supported. Supported VLMs: GPT-4o/GPT-5/Codex and Claude 4.6 models."
+        )
     
     if print_debug:
         print()
@@ -557,9 +596,12 @@ def create_vlm_client(model: str = "gpt-4o-2024-05-13"):
     Returns:
         Tuple of (client, model_name)
     """
-    if "gpt-4o" in model or "gpt-4-vision" in model:
+    if "gpt-4o" in model or "gpt-4-vision" in model or "gpt-5" in model or "codex" in model:
         print(f"Using OpenAI VLM API with model {model}.")
         return openai.OpenAI(), model
+    elif model in {"claude-opus-4-6", "claude-sonnet-4-6"}:
+        print(f"Using Anthropic VLM API with model {model}.")
+        return anthropic.Anthropic(), model
     else:
         # Default to GPT-4o if unsupported model
         print(f"Model {model} not supported for VLM. Defaulting to gpt-4o-2024-05-13.")
@@ -578,6 +620,9 @@ def create_client(model):
         client_model = model.split("/")[-1]
         print(f"Using Vertex AI with model {client_model}.")
         return anthropic.AnthropicVertex(), client_model
+    elif "codex" in model:
+        print(f"Using OpenAI API with model {model}.")
+        return openai.OpenAI(), model
     elif 'gpt' in model:
         print(f"Using OpenAI API with model {model}.")
         return openai.OpenAI(), model

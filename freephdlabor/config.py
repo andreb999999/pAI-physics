@@ -9,9 +9,9 @@ def filter_model_params(original_func):
     def wrapper(*args, **kwargs):
         model = kwargs.get('model', args[0] if args else '')
 
-        # GPT-5 specific filtering
-        if isinstance(model, str) and model.startswith('gpt-5'):
-            # Remove unsupported GPT-5 parameters
+        # GPT-5/Codex specific filtering
+        if isinstance(model, str) and (model.startswith('gpt-5') or "codex" in model):
+            # Remove unsupported GPT-5/Codex parameters
             unsupported_params = {
                 'stop', 'temperature', 'top_p', 'presence_penalty',
                 'frequency_penalty', 'logprobs', 'top_logprobs',

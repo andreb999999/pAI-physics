@@ -14,6 +14,10 @@ AVAILABLE_VLMS = [
     "gpt-5",
     "gpt-5-mini",
     "gpt-5-nano",
+    "gpt-5.3-codex",
+    # Claude 4.6 models (multimodal support)
+    "claude-opus-4-6",
+    "claude-sonnet-4-6",
     # GPT-4o models
     "gpt-4o-2024-05-13",
     "gpt-4o-2024-08-06",

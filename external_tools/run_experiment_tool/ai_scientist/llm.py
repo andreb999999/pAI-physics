@@ -11,12 +11,15 @@ import openai
 MAX_NUM_TOKENS = 4096
 
 AVAILABLE_LLMS = [
+    "claude-opus-4-6",
+    "claude-sonnet-4-6",
     "claude-3-5-sonnet-20240620",
     "claude-3-5-sonnet-20241022",
     # OpenAI GPT-5 models (latest)
     "gpt-5",
     "gpt-5-mini",
     "gpt-5-nano",
+    "gpt-5.3-codex",
     # OpenAI models
     "gpt-4o-mini",
     "gpt-4o-mini-2024-07-18",
@@ -430,6 +433,9 @@ def create_client(model) -> tuple[Any, str]:
         client_model = model.split("/")[-1]
         print(f"Using Vertex AI with model {client_model}.")
         return anthropic.AnthropicVertex(), client_model
+    elif "codex" in model:
+        print(f"Using OpenAI API with model {model}.")
+        return openai.OpenAI(), model
     elif "gpt" in model:
         print(f"Using OpenAI API with model {model}.")
         return openai.OpenAI(), model

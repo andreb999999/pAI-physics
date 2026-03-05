@@ -1,17 +1,26 @@
 """
 AI research toolkits using smolagents framework.
+
+Toolkit groups:
+  ideation/       - Idea generation, refinement, novelty checking, paper search
+  experimentation/ - Experiment execution and idea standardization
+  search/         - arXiv, web search, text inspection, visual QA
+  filesystem/     - File editing, knowledge-base / repo management
+  communication/  - User-facing tools (talk_to_user)
+  writeup/        - LaTeX writing, citation, plotting, document analysis
+  math/           - Claim graph, proof workspace, numerical verification
 """
 
-from .paper_search_tool import PaperSearchTool
-from .generate_idea_tool import GenerateIdeaTool
-from .check_idea_novelty_tool import CheckIdeaNoveltyTool
-from .refine_idea_tool import RefineIdeaTool
-from .run_experiment_tool import RunExperimentTool
+from .ideation.paper_search_tool import PaperSearchTool
+from .ideation.generate_idea_tool import GenerateIdeaTool
+from .ideation.check_idea_novelty_tool import CheckIdeaNoveltyTool
+from .ideation.refine_idea_tool import RefineIdeaTool
+from .experimentation.run_experiment_tool import RunExperimentTool
 from .model_utils import get_raw_model
 
 __all__ = [
     "PaperSearchTool",
-    "GenerateIdeaTool", 
+    "GenerateIdeaTool",
     "CheckIdeaNoveltyTool",
     "RefineIdeaTool",
     "RunExperimentTool",

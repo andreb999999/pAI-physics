@@ -6,7 +6,7 @@ import os
 from typing import Optional
 from .base_research_agent import BaseResearchAgent
 from ..prompts.proofreading_instructions import get_proofreading_system_prompt
-from ..toolkits.general_tools.file_editing.file_editing_tools import (
+from ..toolkits.filesystem.file_editing.file_editing_tools import (
     SeeFile, ModifyFile, ListDir
 )
 from ..toolkits.writeup.latex_compiler_tool import LaTeXCompilerTool

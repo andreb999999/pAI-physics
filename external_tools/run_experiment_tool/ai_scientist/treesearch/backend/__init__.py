@@ -48,6 +48,11 @@ def query(
         system_message = None
         model_kwargs["reasoning_effort"] = "high"
         model_kwargs.pop("temperature", None)  # o1 doesn't support temperature
+    elif model.startswith("gpt-5.3-codex") or "codex" in model:
+        # Codex models use reasoning-style parameters and don't support temperature.
+        reasoning_effort = os.environ.get('RUN_EXPERIMENT_REASONING_EFFORT', 'high')
+        model_kwargs["reasoning_effort"] = reasoning_effort
+        model_kwargs.pop("temperature", None)
     elif model.startswith("gpt-5"):
         # GPT-5 models: Support system messages but not temperature
         # Just set reasoning_effort and remove unsupported params

@@ -11,74 +11,64 @@ This tool provides comprehensive academic search capabilities including:
 Combines functionality from fetch_arxiv_papers and web search for academic sources.
 """
 
+from __future__ import annotations
 import json
 import os
 import re
 import time
 import requests
 import xml.etree.ElementTree as ET
-from typing import List, Dict, Any, Optional
-from smolagents import Tool
+from typing import List, Dict, Any, Optional, Type
+from langchain_core.tools import BaseTool
+from pydantic import BaseModel, Field, ConfigDict
 
 
-class CitationSearchTool(Tool):
-    name = "citation_search_tool"
-    description = """
+class CitationSearchToolInput(BaseModel):
+    search_query: str = Field(description="Search query for papers (keywords, title, author, or topic)")
+    max_results: Optional[int] = Field(default=None, description="Maximum number of papers to return (default: 10)")
+    search_source: Optional[str] = Field(default=None, description="Search database (default: 'both'):\n• 'arxiv': Search only arXiv preprints (faster, ML/CS focused, may miss published papers)\n• 'semantic_scholar': Search only Semantic Scholar (broader coverage, includes journals/conferences)\n• 'both': Search both databases for comprehensive results (recommended for literature reviews)")
+
+
+class CitationSearchTool(BaseTool):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    name: str = "citation_search_tool"
+    description: str = """
     Search for academic papers and generate properly formatted citations for LaTeX papers.
-    
+
     This tool is essential for:
     - Finding relevant papers for your literature review
     - Generating BibTeX entries for LaTeX documents
     - Discovering related work in your research area
     - Validating and formatting academic citations
     - Building comprehensive bibliographies
-    
+
     Use this tool when:
     - You need to cite papers in your LaTeX writeup
     - You want to find related work on a specific topic
     - You need properly formatted BibTeX entries
     - You're building a literature review section
     - You want to discover recent papers in your field
-    
+
     The tool searches both arXiv and Semantic Scholar to provide comprehensive coverage
     of academic literature, with focus on computer science and machine learning papers.
-    
+
     Input: Search query or paper title/author
     Output: Structured citations with BibTeX entries and metadata
     """
-    
-    inputs = {
-        "search_query": {
-            "type": "string", 
-            "description": "Search query for papers (keywords, title, author, or topic)"
-        },
-        "max_results": {
-            "type": "integer",
-            "description": "Maximum number of papers to return (default: 10)",
-            "nullable": True
-        },
-        "search_source": {
-            "type": "string",
-            "description": "Search database (default: 'both'):\n" +
-                          "• 'arxiv': Search only arXiv preprints (faster, ML/CS focused, may miss published papers)\n" +
-                          "• 'semantic_scholar': Search only Semantic Scholar (broader coverage, includes journals/conferences)\n" +
-                          "• 'both': Search both databases for comprehensive results (recommended for literature reviews)",
-            "nullable": True
-        }
-    }
-    
-    outputs = {
-        "citations": {
-            "type": "string",
-            "description": "Structured citations with BibTeX entries and metadata"
-        }
-    }
-    
-    output_type = "string"
+    args_schema: Type[BaseModel] = CitationSearchToolInput
+    arxiv_base_url: str = "http://export.arxiv.org/api/query?"
+    semantic_scholar_base_url: str = "https://api.semanticscholar.org/graph/v1/paper/search"
+    semantic_scholar_max_retries: int = 3
+    semantic_scholar_base_delay: float = 2.0
+    semantic_scholar_cooldown: float = 60.0
+    semantic_scholar_timeout: int = 30
+    _semantic_scholar_cooldown_until: float = 0.0
+    _cache_ttl_seconds: int = 1800
+    _cache_max_entries: int = 256
+    _cache: Dict[str, Dict[str, Any]] = {}
 
-    def __init__(self):
-        """Initialize CitationSearchTool."""
-        super().__init__()
+    def __init__(self, **kwargs: Any):
+        super().__init__(**kwargs)
         self.arxiv_base_url = "http://export.arxiv.org/api/query?"
         self.semantic_scholar_base_url = "https://api.semanticscholar.org/graph/v1/paper/search"
         self.semantic_scholar_max_retries = self._safe_int_env(
@@ -100,7 +90,7 @@ class CitationSearchTool(Tool):
         self._cache_max_entries = self._safe_int_env(
             "FREEPHDLABOR_CITATION_CACHE_MAX_ENTRIES", 256
         )
-        self._cache: Dict[str, Dict[str, Any]] = {}
+        self._cache = {}
 
     @staticmethod
     def _safe_int_env(name: str, default: int) -> int:
@@ -147,19 +137,23 @@ class CitationSearchTool(Tool):
             oldest_key = min(self._cache.items(), key=lambda item: item[1]["created_at"])[0]
             self._cache.pop(oldest_key, None)
         self._cache[key] = {"value": value, "created_at": time.time()}
-        
-    def forward(self, search_query: str, max_results: int = 10, search_source: str = "both") -> str:
+
+    def _run(self, search_query: str, max_results: Optional[int] = None, search_source: Optional[str] = None) -> str:
         """
         Search for academic papers and generate citations.
-        
+
         Args:
             search_query: Search query for papers
             max_results: Maximum number of papers to return
             search_source: Source to search ('arxiv', 'semantic_scholar', or 'both')
-            
+
         Returns:
             JSON string containing structured citations
         """
+        if max_results is None:
+            max_results = 10
+        if search_source is None:
+            search_source = "both"
         try:
             cache_key = f"{search_source}|{max_results}|{search_query.strip().lower()}"
             cached = self._cache_get(cache_key)
@@ -171,7 +165,7 @@ class CitationSearchTool(Tool):
             # Deterministic mode for explicit arXiv IDs: prioritize exact arXiv lookup
             # and skip Semantic Scholar when source='both' to avoid retry loops/noisy matches.
             deterministic_arxiv_lookup = arxiv_id is not None and search_source in ["arxiv", "both"]
-            
+
             if search_source in ["arxiv", "both"]:
                 arxiv_results = self._search_arxiv(
                     arxiv_id if deterministic_arxiv_lookup else search_query,
@@ -189,20 +183,20 @@ class CitationSearchTool(Tool):
                     max(1, max_results // 2) if search_source == "both" else max_results,
                 )
                 citations.extend(ss_results)
-            
+
             # Remove duplicates based on title similarity
             citations = self._deduplicate_citations(citations)
-            
+
             # Limit to max_results
             citations = citations[:max_results]
-            
+
             # Generate BibTeX entries
             bibtex_entries = []
             for citation in citations:
                 bibtex = self._generate_bibtex(citation)
                 if bibtex:
                     bibtex_entries.append(bibtex)
-            
+
             result = {
                 "search_query": search_query,
                 "search_source": search_source,
@@ -214,11 +208,11 @@ class CitationSearchTool(Tool):
                     "citation_keys": [self._extract_citation_key(bibtex) for bibtex in bibtex_entries if bibtex]
                 }
             }
-            
+
             result_json = json.dumps(result, indent=2)
             self._cache_put(cache_key, result_json)
             return result_json
-            
+
         except Exception as e:
             error_result = {
                 "error": f"Citation search failed: {str(e)}",
@@ -227,7 +221,10 @@ class CitationSearchTool(Tool):
                 "bibtex_entries": []
             }
             return json.dumps(error_result, indent=2)
-    
+
+    async def _arun(self, **kwargs: Any) -> str:
+        raise NotImplementedError
+
     def _search_arxiv(self, query: str, max_results: int) -> List[Dict[str, Any]]:
         """Search arXiv for papers."""
         try:
@@ -242,20 +239,20 @@ class CitationSearchTool(Tool):
                     f"&start=0&max_results={max_results}"
                     "&sortBy=submittedDate&sortOrder=descending"
                 )
-            
+
             headers = {
                 "User-Agent": "Academic-Citation-Tool/1.0 (research-tool)"
             }
-            
+
             response = requests.get(url, headers=headers, timeout=30)
             response.raise_for_status()
-            
+
             return self._parse_arxiv_response(response.text)
-            
+
         except Exception as e:
             print(f"Warning: arXiv search failed: {e}")
             return []
-    
+
     def _search_semantic_scholar(self, query: str, max_results: int) -> List[Dict[str, Any]]:
         """Search Semantic Scholar for papers with capped retries and cooldown."""
         try:
@@ -270,11 +267,11 @@ class CitationSearchTool(Tool):
                 "limit": max_results,
                 "fields": "title,authors,year,abstract,citationCount,venue,externalIds,url"
             }
-            
+
             headers = {
                 "User-Agent": "Academic-Citation-Tool/1.0 (research-tool; contact@example.com)"
             }
-            
+
             # Add small delay between requests to reduce burstiness.
             time.sleep(self.semantic_scholar_base_delay)
 
@@ -312,7 +309,7 @@ class CitationSearchTool(Tool):
                 return []
 
             return []
-            
+
         except requests.exceptions.HTTPError as e:
             if e.response is not None and e.response.status_code == 429:
                 self._semantic_scholar_cooldown_until = time.time() + self.semantic_scholar_cooldown
@@ -324,13 +321,13 @@ class CitationSearchTool(Tool):
         except Exception as e:
             print(f"Warning: Semantic Scholar search failed: {e}")
             return []
-    
+
     def _parse_arxiv_response(self, response_text: str) -> List[Dict[str, Any]]:
         """Parse arXiv API response XML."""
         try:
             root = ET.fromstring(response_text)
             papers = []
-            
+
             for entry in root.findall("{http://www.w3.org/2005/Atom}entry"):
                 paper = {
                     "source": "arxiv",
@@ -343,48 +340,48 @@ class CitationSearchTool(Tool):
                     "citation_count": 0,
                     "venue": "arXiv preprint"
                 }
-                
+
                 # Title
                 title_elem = entry.find("{http://www.w3.org/2005/Atom}title")
                 if title_elem is not None:
                     paper["title"] = title_elem.text.strip()
-                
+
                 # Authors
                 for author in entry.findall("{http://www.w3.org/2005/Atom}author"):
                     name_elem = author.find("{http://www.w3.org/2005/Atom}name")
                     if name_elem is not None:
                         paper["authors"].append(name_elem.text.strip())
-                
+
                 # Published date
                 published_elem = entry.find("{http://www.w3.org/2005/Atom}published")
                 if published_elem is not None:
                     paper["year"] = published_elem.text[:4]
-                
+
                 # Abstract
                 summary_elem = entry.find("{http://www.w3.org/2005/Atom}summary")
                 if summary_elem is not None:
                     paper["abstract"] = summary_elem.text.strip()
-                
+
                 # URL and arXiv ID
                 id_elem = entry.find("{http://www.w3.org/2005/Atom}id")
                 if id_elem is not None:
                     paper["url"] = id_elem.text
                     paper["arxiv_id"] = id_elem.text.split("/")[-1]
-                
+
                 if paper["title"]:
                     papers.append(paper)
-            
+
             return papers
-            
+
         except Exception as e:
             print(f"Warning: Failed to parse arXiv response: {e}")
             return []
-    
+
     def _parse_semantic_scholar_response(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Parse Semantic Scholar API response."""
         try:
             papers = []
-            
+
             for item in data.get("data", []):
                 paper = {
                     "source": "semantic_scholar",
@@ -397,56 +394,56 @@ class CitationSearchTool(Tool):
                     "citation_count": item.get("citationCount", 0),
                     "venue": item.get("venue", "")
                 }
-                
+
                 # Extract arXiv ID if present
                 external_ids = item.get("externalIds", {})
                 if external_ids and "ArXiv" in external_ids:
                     paper["arxiv_id"] = external_ids["ArXiv"]
-                
+
                 if paper["title"]:
                     papers.append(paper)
-            
+
             return papers
-            
+
         except Exception as e:
             print(f"Warning: Failed to parse Semantic Scholar response: {e}")
             return []
-    
+
     def _deduplicate_citations(self, citations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Remove duplicate citations based on title similarity."""
         if not citations:
             return citations
-        
+
         unique_citations = []
         seen_titles = set()
-        
+
         for citation in citations:
             title = citation.get("title", "").lower().strip()
             # Simple deduplication - normalize title and check if similar exists
             normalized_title = re.sub(r'[^\w\s]', '', title).replace(' ', '')
-            
+
             if normalized_title not in seen_titles and len(normalized_title) > 10:
                 seen_titles.add(normalized_title)
                 unique_citations.append(citation)
-        
+
         return unique_citations
-    
+
     def _generate_bibtex(self, citation: Dict[str, Any]) -> Optional[str]:
         """Generate BibTeX entry for a citation."""
         try:
             title = citation.get("title", "").strip()
             if not title:
                 return None
-            
+
             # Generate citation key
             first_author = citation.get("authors", ["Unknown"])[0] if citation.get("authors") else "Unknown"
             first_author_last = first_author.split()[-1] if " " in first_author else first_author
             year = citation.get("year", "")
-            
+
             # Clean author name for key
             clean_author = re.sub(r'[^\w]', '', first_author_last.lower())
             citation_key = f"{clean_author}{year}"
-            
+
             # Choose entry type
             if citation.get("arxiv_id"):
                 entry_type = "misc"
@@ -460,42 +457,42 @@ class CitationSearchTool(Tool):
             else:
                 entry_type = "misc"
                 note_field = ""
-            
+
             # Format authors
             authors = citation.get("authors", [])
             if authors:
                 author_str = " and ".join(authors)
             else:
                 author_str = "Unknown"
-            
+
             # Build BibTeX entry
             bibtex_lines = [f"@{entry_type}{{{citation_key},"]
             bibtex_lines.append(f'  title = {{{title}}},')
             bibtex_lines.append(f'  author = {{{author_str}}},')
-            
+
             if year:
                 bibtex_lines.append(f'  year = {{{year}}},')
-            
+
             if citation.get("venue"):
                 if entry_type == "inproceedings":
                     bibtex_lines.append(f'  booktitle = {{{citation["venue"]}}},')
                 elif entry_type == "article":
                     bibtex_lines.append(f'  journal = {{{citation["venue"]}}},')
-            
+
             if note_field:
                 bibtex_lines.append(f'  note = {{{note_field}}},')
-            
+
             if citation.get("url"):
                 bibtex_lines.append(f'  url = {{{citation["url"]}}},')
-            
+
             bibtex_lines.append("}")
-            
+
             return "\n".join(bibtex_lines)
-            
+
         except Exception as e:
             print(f"Warning: Failed to generate BibTeX for citation: {e}")
             return None
-    
+
     def _extract_citation_key(self, bibtex: str) -> Optional[str]:
         """Extract citation key from BibTeX entry."""
         try:

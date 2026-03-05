@@ -57,6 +57,18 @@ class TokenTracker:
                 "cached": 0.55 / 1000000,  # $0.55 per 1M tokens
                 "completion": 4.4 / 1000000,  # $4.40 per 1M tokens
             },
+            "gpt-5.3-codex": {
+                "prompt": 2.0 / 1000000,  # $2.00 per 1M tokens
+                "completion": 10.0 / 1000000,  # $10.00 per 1M tokens
+            },
+            "claude-opus-4-6": {
+                "prompt": 5.0 / 1000000,  # $5.00 per 1M tokens
+                "completion": 25.0 / 1000000,  # $25.00 per 1M tokens
+            },
+            "claude-sonnet-4-6": {
+                "prompt": 3.0 / 1000000,  # $3.00 per 1M tokens
+                "completion": 15.0 / 1000000,  # $15.00 per 1M tokens
+            },
         }
 
     def add_tokens(
