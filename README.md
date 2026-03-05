@@ -89,6 +89,32 @@ flowchart TD
 - `quick`
   - Reduced-depth loops for faster iteration while still enforcing truthfulness and core quality gates.
 
+## Code Architecture
+
+| Module | Purpose |
+|---|---|
+| `launch_multiagent.py` | Thin entry point — imports and calls `freephdlabor/runner.py` |
+| `freephdlabor/runner.py` | All run logic: workspace setup, model config, artifact gating, agent execution |
+| `freephdlabor/prereqs.py` | LaTeX binary detection (`pdflatex`, `bibtex`) and fix instructions |
+| `freephdlabor/args.py` | CLI argument definitions |
+| `freephdlabor/config.py` | LLM parameter normalisation across providers |
+| `freephdlabor/supervision/` | All quality-gate validation: result, review verdict, paper quality, math acceptance, claim traceability |
+| `freephdlabor/agents/` | All agent classes (Manager, Ideation, Writeup, Math pipeline, etc.) |
+| `freephdlabor/toolkits/` | Tool implementations (see Toolkit Groups below) |
+| `freephdlabor/prompts/` | System prompt templates for each agent |
+
+### Toolkit Groups
+
+| Directory | Contains |
+|---|---|
+| `toolkits/search/` | arXiv, OpenDeepSearch, web browser, text inspector, visual QA |
+| `toolkits/filesystem/` | File editing tools, knowledge-base / repo management |
+| `toolkits/ideation/` | Idea generation, refinement, novelty checking, paper search |
+| `toolkits/experimentation/` | Experiment runner, idea standardisation |
+| `toolkits/communication/` | `talk_to_user` tool |
+| `toolkits/writeup/` | LaTeX generation, compiler, citation search, plotting |
+| `toolkits/math/` | Claim graph, proof workspace, numerical verifier |
+
 ## Artifact Contracts
 
 ### Full-Research Step Contracts
@@ -232,6 +258,14 @@ python launch_multiagent.py \
 python launch_multiagent.py \
   --task "Produce a fast exploratory pass of this topic." \
   --pipeline-mode quick
+```
+
+### HPC / SLURM
+
+For cluster submission use the SLURM launcher at `scripts/launch_multiagent_slurm.sh`.
+
+```bash
+./scripts/launch_multiagent_slurm.sh
 ```
 
 ## CLI Reference
@@ -380,6 +414,19 @@ python launch_multiagent.py \
   --resume /absolute/path/to/results/freephdlabor_<timestamp> \
   --task "Read inputs/*.pdf, inputs/*.md, and inputs/*.txt, then produce context_summary.md. Do not run experiments."
 ```
+
+## Running Tests
+
+A test suite covering deterministic components lives in `tests/`:
+
+```bash
+pytest tests/
+```
+
+Test modules:
+- `tests/test_validation.py` — result validation, review verdict, paper quality, math acceptance
+- `tests/test_config.py` — LLM config loading, provider-specific parameter filtering
+- `tests/test_prereqs.py` — LaTeX binary resolution
 
 ## Troubleshooting
 
