@@ -1,4 +1,4 @@
-# Mathematical Deep Learning Research with phdlabor-1
+# Mathematical Deep Learning Research with consortium
 
 A primer for using this multi-agent system to turn vague mathematical deep learning
 intuitions into rigorous theory papers.
@@ -210,7 +210,7 @@ Everything is already installed in the `researchlab` conda environment.
 
 ```bash
 conda activate researchlab
-cd phdlabor-1
+cd consortium
 ```
 
 ### Basic Math Research Run
@@ -218,7 +218,6 @@ cd phdlabor-1
 ```bash
 python launch_multiagent.py \
   --enable-math-agents \
-  --enable-planning \
   --reasoning-effort high \
   --no-log-to-files \
   --task "YOUR IDEA HERE"
@@ -228,8 +227,7 @@ python launch_multiagent.py \
 
 | Flag | What it does |
 |------|-------------|
-| `--enable-math-agents` | Activates the 4 math agents (Proposer, Prover, RigorousVerifier, EmpiricalVerifier) |
-| `--enable-planning` | Agents create systematic plans and replan every N steps |
+| `--enable-math-agents` | Activates the math pipeline (MathLiterature, Proposer, Prover, RigorousVerifier, EmpiricalVerifier, ProofTranscription) |
 | `--reasoning-effort high` | Maximum thinking depth for GPT-5 (use `high` for math) |
 | `--no-log-to-files` | Print output to terminal instead of log files |
 | `--enforce-paper-artifacts` | Require `final_paper.tex` before termination |
@@ -243,7 +241,6 @@ python launch_multiagent.py \
 ```bash
 python launch_multiagent.py \
   --enable-math-agents \
-  --enable-planning \
   --enforce-paper-artifacts \
   --enforce-editorial-artifacts \
   --require-pdf \
@@ -268,7 +265,6 @@ cp reference_paper.pdf results/my_project/inputs/
 
 python launch_multiagent.py \
   --enable-math-agents \
-  --enable-planning \
   --resume results/my_project \
   --task "Read inputs/*.md and inputs/*.pdf. Use them as context to formalize
   the mathematical ideas described there. Build a claim graph and prove the
@@ -330,10 +326,10 @@ It does **not** restart the run.
 
 ## Inspecting Outputs
 
-After a run, the workspace (in `results/freephdlabor_<timestamp>/`) contains:
+After a run, the workspace (in `results/consortium_<timestamp>/`) contains:
 
 ```
-results/freephdlabor_YYYYMMDD_HHMMSS/
+results/consortium_YYYYMMDD_HHMMSS/
   math_workspace/
     claim_graph.json          <-- the full claim DAG
     proofs/
@@ -427,7 +423,6 @@ conda activate researchlab
 # Simple math research run
 python launch_multiagent.py \
   --enable-math-agents \
-  --enable-planning \
   --reasoning-effort high \
   --no-log-to-files \
   --task "YOUR IDEA"
@@ -435,13 +430,12 @@ python launch_multiagent.py \
 # Resume from a previous run
 python launch_multiagent.py \
   --enable-math-agents \
-  --resume results/freephdlabor_YYYYMMDD_HHMMSS/ \
+  --resume results/consortium_YYYYMMDD_HHMMSS/ \
   --task "Continue proving the remaining lemmas"
 
 # Full quality pipeline with paper output
 python launch_multiagent.py \
   --enable-math-agents \
-  --enable-planning \
   --enforce-paper-artifacts \
   --require-pdf \
   --reasoning-effort high \

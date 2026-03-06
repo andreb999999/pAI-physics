@@ -1,5 +1,5 @@
 """
-Tests for freephdlabor/config.py — load_llm_config and filter_model_params.
+Tests for consortium/config.py — load_llm_config and filter_model_params.
 """
 
 import os
@@ -7,7 +7,7 @@ import tempfile
 import pytest
 import yaml
 
-from freephdlabor.config import load_llm_config, filter_model_params
+from consortium.config import load_llm_config, filter_model_params
 
 
 # ---------------------------------------------------------------------------

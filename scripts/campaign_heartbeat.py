@@ -28,26 +28,26 @@ import json
 import os
 import sys
 
-# Ensure freephdlabor is importable from repo root
+# Ensure consortium is importable from repo root
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(_HERE))
 
-from freephdlabor.campaign.spec import load_spec
-from freephdlabor.campaign.status import (
+from consortium.campaign.spec import load_spec
+from consortium.campaign.status import (
     COMPLETED, FAILED, IN_PROGRESS, PENDING,
     check_stage_artifacts, init_status, is_pid_alive,
     read_status, write_status,
 )
-from freephdlabor.campaign.runner import launch_stage
-from freephdlabor.campaign.memory import distill_stage_memory
-from freephdlabor.campaign.notify import (
+from consortium.campaign.runner import launch_stage
+from consortium.campaign.memory import distill_stage_memory
+from consortium.campaign.notify import (
     notify, notify_campaign_complete, notify_heartbeat,
     notify_stage_complete, notify_stage_failed, notify_stage_launched,
 )
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Campaign heartbeat for freephdlabor.")
+    p = argparse.ArgumentParser(description="Campaign heartbeat for consortium.")
     p.add_argument("--campaign", required=True, help="Path to campaign.yaml")
     p.add_argument(
         "--campaign-dir",
@@ -174,7 +174,7 @@ def run_heartbeat(
             os.path.join(spec.workspace_root, stage.id)
         # Runner writes the actual workspace; read it back from the proc's args if needed.
         # For now, update status with the workspace the runner chose.
-        from freephdlabor.campaign.runner import build_stage_workspace
+        from consortium.campaign.runner import build_stage_workspace
         workspace = build_stage_workspace(stage, spec, status)
         status.mark_in_progress(sid, workspace, proc.pid)
         write_status(campaign_dir, status)

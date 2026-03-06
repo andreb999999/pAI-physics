@@ -44,7 +44,7 @@ def check_playwright_chromium() -> str | None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Validate freephdlabor runtime dependencies and optional capabilities."
+        description="Validate consortium runtime dependencies and optional capabilities."
     )
     parser.add_argument(
         "--with-docs",
@@ -103,7 +103,7 @@ def _resolve_latex_binary(
 
 
 def _latex_install_hint() -> str:
-    env_name = os.getenv("CONDA_DEFAULT_ENV", "freephdlabor")
+    env_name = os.getenv("CONDA_DEFAULT_ENV", "consortium")
     return (
         "Install/repair options:\n"
         f"  - Conda route: ./scripts/bootstrap.sh {env_name} latex\n"
@@ -111,15 +111,15 @@ def _latex_install_hint() -> str:
         "  - macOS MacTeX route: brew install --cask mactex\n"
         f"    and set persistent env vars:\n"
         f"    conda env config vars set -n {env_name} "
-        "FREEPHDLABOR_PDFLATEX_PATH=/Library/TeX/texbin/pdflatex "
-        "FREEPHDLABOR_BIBTEX_PATH=/Library/TeX/texbin/bibtex"
+        "CONSORTIUM_PDFLATEX_PATH=/Library/TeX/texbin/pdflatex "
+        "CONSORTIUM_BIBTEX_PATH=/Library/TeX/texbin/bibtex"
     )
 
 
 def check_latex_toolchain() -> str | None:
     pdflatex, pdflatex_err = _resolve_latex_binary(
         tool_name="pdflatex",
-        env_var="FREEPHDLABOR_PDFLATEX_PATH",
+        env_var="CONSORTIUM_PDFLATEX_PATH",
         extra_candidates=["/Library/TeX/texbin/pdflatex"],
     )
     if pdflatex_err:
@@ -127,7 +127,7 @@ def check_latex_toolchain() -> str | None:
 
     _bibtex, bibtex_err = _resolve_latex_binary(
         tool_name="bibtex",
-        env_var="FREEPHDLABOR_BIBTEX_PATH",
+        env_var="CONSORTIUM_BIBTEX_PATH",
         extra_candidates=["/Library/TeX/texbin/bibtex"],
     )
     if bibtex_err:
@@ -266,7 +266,7 @@ def main() -> int:
     if not llm_cfg.exists():
         warnings.append(".llm_config.yaml not found at repo root.")
 
-    print("=== freephdlabor preflight ===")
+    print("=== consortium preflight ===")
     if errors:
         print("ERRORS:")
         for e in errors:

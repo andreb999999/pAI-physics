@@ -1,12 +1,12 @@
 """
-Entry point for the freephdlabor multi-agent research system.
+Entry point for the consortium multi-agent research system.
 
-All run logic lives in freephdlabor/runner.py.
-All LaTeX prereq logic lives in freephdlabor/prereqs.py.
+All run logic lives in consortium/runner.py.
+All LaTeX prereq logic lives in consortium/prereqs.py.
 """
 
 import sys
-from freephdlabor.runner import main
+from consortium.runner import main
 
 if __name__ == "__main__":
     sys.exit(main())

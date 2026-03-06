@@ -3,7 +3,7 @@
 # =============================================================================
 # SLURM CONFIGURATION - Modify these for your cluster setup
 # =============================================================================
-#SBATCH --job-name=freephdlabor_run    # Job name (customize this)
+#SBATCH --job-name=consortium_run    # Job name (customize this)
 #SBATCH --partition=gpu_h200              # SLURM partition (customize to your cluster)
 #SBATCH --nodes=1                         # Number of nodes
 #SBATCH --ntasks-per-node=1               # Tasks per node
@@ -37,7 +37,7 @@ module load miniconda
 echo "Activating conda environment..."
 source ~/.bashrc
 conda deactivate
-conda activate freephdlabor  # Change to your conda environment name
+conda activate consortium  # Change to your conda environment name
 
 # Verify Python environment
 echo "Python version: $(python --version)"

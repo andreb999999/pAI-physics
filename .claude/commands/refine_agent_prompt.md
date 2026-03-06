@@ -12,7 +12,7 @@ The arguments may or may not contain the following:
 - If a results_dir is provided, skip to Step 2 with that directory
 - Otherwise, run the multi-agent system:
 ```bash
-eval "$(conda shell.bash hook)" && conda activate freephdlabor && export $(cat .env | grep -v '^#' | xargs) && python launch_multiagent.py --model o4-mini-2025-04-16 2>&1 | tee logs/output_$(date +%Y%m%d_%H%M%S).log
+eval "$(conda shell.bash hook)" && conda activate consortium && export $(cat .env | grep -v '^#' | xargs) && python launch_multiagent.py --model o4-mini-2025-04-16 2>&1 | tee logs/output_$(date +%Y%m%d_%H%M%S).log
 ```
 
 ### Step 2: Analyze Results
@@ -27,7 +27,7 @@ eval "$(conda shell.bash hook)" && conda activate freephdlabor && export $(cat .
 
 ### Step 3: Improve Instructions
 Based on identified issues, modify the corresponding instruction files:
-- For specific agent: `freephdlabor/prompts/{agent_name}_instructions.py`
+- For specific agent: `consortium/prompts/{agent_name}_instructions.py`
 - For all agents: Review and update all instruction files as needed
 
 **Important constraints**:
@@ -50,5 +50,5 @@ Provide a summary of:
 4. Recommendations for further optimization
 
 ## Key Files
-- **Agent Instructions**: `freephdlabor/prompts/{agent_name}_instructions.py`
+- **Agent Instructions**: `consortium/prompts/{agent_name}_instructions.py`
 - **Results**: `results/{YYYYMMDD_HHMMSS_idea_name}/agent_llm_calls.jsonl`

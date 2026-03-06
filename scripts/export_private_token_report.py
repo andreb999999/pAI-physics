@@ -21,14 +21,14 @@ def project_root() -> str:
 
 
 def default_ledger_path() -> str:
-    env = os.getenv("FREEPHDLABOR_PRIVATE_TOKEN_LEDGER")
+    env = os.getenv("CONSORTIUM_PRIVATE_TOKEN_LEDGER")
     if env:
         return os.path.abspath(env)
     return os.path.join(project_root(), ".local", "private_token_usage", "api_token_calls.jsonl")
 
 
 def default_output_path() -> str:
-    env = os.getenv("FREEPHDLABOR_PRIVATE_TOKEN_TEXT")
+    env = os.getenv("CONSORTIUM_PRIVATE_TOKEN_TEXT")
     if env:
         # Keep report separate from raw append log.
         base, _ = os.path.splitext(os.path.abspath(env))
@@ -131,7 +131,7 @@ def build_report(rows: List[Dict[str, Any]], since_days: int | None, max_calls: 
         return lines
 
     lines: List[str] = []
-    lines.append("freephdlabor Private Token Usage Report")
+    lines.append("consortium Private Token Usage Report")
     lines.append("====================================")
     lines.append(f"Generated (UTC): {now.isoformat()}")
     lines.append(f"Window: last {since_days} day(s)" if since_days is not None else "Window: all recorded calls")

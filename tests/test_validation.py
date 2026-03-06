@@ -1,5 +1,5 @@
 """
-Tests for freephdlabor/supervision/result_validation.py and related validators.
+Tests for consortium/supervision/result_validation.py and related validators.
 """
 
 import json
@@ -7,15 +7,15 @@ import os
 import tempfile
 import pytest
 
-from freephdlabor.supervision.result_validation import (
+from consortium.supervision.result_validation import (
     parse_result_payload,
     artifact_exists,
     validate_result_artifacts,
     sanitize_result_payload,
 )
-from freephdlabor.supervision.review_verdict_validation import validate_review_verdict
-from freephdlabor.supervision.paper_quality_validation import validate_paper_quality
-from freephdlabor.supervision.math_acceptance_validation import validate_math_acceptance
+from consortium.supervision.review_verdict_validation import validate_review_verdict
+from consortium.supervision.paper_quality_validation import validate_paper_quality
+from consortium.supervision.math_acceptance_validation import validate_math_acceptance
 
 
 # ---------------------------------------------------------------------------

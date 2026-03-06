@@ -1,6 +1,6 @@
-# OpenClaw Use Guide: Deploying the freephdlabor Research Pipeline
+# OpenClaw Use Guide: Deploying the consortium Research Pipeline
 
-This guide covers everything you need to run `freephdlabor` as an autonomous, multi-stage research pipeline under OpenClaw's control.
+This guide covers everything you need to run `consortium` as an autonomous, multi-stage research pipeline under OpenClaw's control.
 
 OpenClaw interacts with this system via two surfaces:
 
@@ -118,8 +118,6 @@ stages:
                                           # Relative to repo root.
 
     args:                                 # Extra CLI flags passed to launch_multiagent.py.
-      - "--pipeline-mode"
-      - "full_research"
       - "--enable-math-agents"
 
     success_artifacts:                    # What must exist in the workspace for this
@@ -141,9 +139,7 @@ stages:
     context_from: theory                  # Resume the theory workspace so this stage can
                                           # read its artifacts directly, AND prepend the
                                           # theory memory summary to the task prompt.
-    args:
-      - "--pipeline-mode"
-      - "full_research"
+    args: []
     success_artifacts:
       required:
         - experiment_results.json
@@ -161,8 +157,6 @@ stages:
       - experiments    # First listed context_from is the workspace that gets resumed.
       - theory         # Additional entries only contribute their memory summaries.
     args:
-      - "--pipeline-mode"
-      - "full_research"
       - "--require-pdf"
     success_artifacts:
       required:
@@ -172,6 +166,8 @@ stages:
         - analysis_connection.md
         - artifacts_index.md
 ```
+
+Older campaign files may still include `--pipeline-mode` entries in `args`; current launcher behavior accepts them but ignores them.
 
 ### `depends_on` vs `context_from`
 
@@ -312,7 +308,7 @@ The heartbeat script does not loop internally — OpenClaw calls it and acts on 
 ### cron
 
 ```cron
-*/30 * * * * cd /path/to/phdlabor-1 && conda run -n researchlab \
+*/30 * * * * cd /path/to/consortium && conda run -n researchlab \
   python scripts/campaign_heartbeat.py --campaign campaign.yaml >> \
   results/muon_campaign/logs/heartbeat.log 2>&1
 ```
@@ -551,7 +547,7 @@ Both Slack and Telegram can be active simultaneously. Notification failures are 
 Useful for long-running stages when you want progress pings. Every heartbeat tick while a stage is running sends a message like:
 
 ```
-[freephdlabor] theory: in_progress (PID 48123) | experiments: pending | paper: pending
+[consortium] theory: in_progress (PID 48123) | experiments: pending | paper: pending
 ```
 
 For quiet operation (only alerts on events), keep `on_heartbeat: false`.
@@ -654,9 +650,7 @@ Add a new entry at the bottom of `stages:`. It can depend on any prior stages an
       - paper
     context_from:
       - paper
-    args:
-      - "--pipeline-mode"
-      - "default"
+    args: []
     success_artifacts:
       required:
         - rebuttal_response.md

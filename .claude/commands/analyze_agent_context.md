@@ -12,12 +12,12 @@ The arguments should contain:
 - If a results_dir is provided, skip to Step 2 with that directory
 - Otherwise, run the multi-agent system:
 ```bash
-eval "$(conda shell.bash hook)" && conda activate freephdlabor && export $(cat .env | grep -v '^#' | xargs) && python launch_multiagent.py --model o4-mini-2025-04-16 2>&1 | tee logs/output_$(date +%Y%m%d_%H%M%S).log
+eval "$(conda shell.bash hook)" && conda activate consortium && export $(cat .env | grep -v '^#' | xargs) && python launch_multiagent.py --model o4-mini-2025-04-16 2>&1 | tee logs/output_$(date +%Y%m%d_%H%M%S).log
 ```
 
 ### Step 2: Load Agent Instructions and Context
-- Read the current instructions for the specified agent: `freephdlabor/prompts/{agent_name}_instructions.py`
-- Review the agent's available tools in: `freephdlabor/agents/{agent_name}_agent.py`
+- Read the current instructions for the specified agent: `consortium/prompts/{agent_name}_instructions.py`
+- Review the agent's available tools in: `consortium/agents/{agent_name}_agent.py`
 - Understand the agent's role within the multi-agent system
 
 ### Step 3: Analyze Agent Task Reception Points
@@ -94,6 +94,6 @@ Structure your analysis as:
 - **Instruction Enhancement Plan**: Specific changes to agent instructions based on findings
 
 ## Key Files
-- **Agent Instructions**: `freephdlabor/prompts/{agent_name}_instructions.py`
-- **Agent Implementation**: `freephdlabor/agents/{agent_name}_agent.py`
-- **Related Tools**: `freephdlabor/toolkits/` (various tool implementations)
+- **Agent Instructions**: `consortium/prompts/{agent_name}_instructions.py`
+- **Agent Implementation**: `consortium/agents/{agent_name}_agent.py`
+- **Related Tools**: `consortium/toolkits/` (various tool implementations)

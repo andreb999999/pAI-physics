@@ -2,7 +2,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ENV_NAME="${1:-freephdlabor}"
+ENV_NAME="${1:-consortium}"
 PROFILE_RAW="${2:-full}"
 PROFILE="${PROFILE_RAW// /}"
 

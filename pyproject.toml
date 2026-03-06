@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.backends.legacy:build"
 
 [project]
-name = "freephdlabor"
+name = "consortium"
 version = "0.1.0"
 description = "Local multi-agent research-to-paper system powered by LangGraph"
 readme = "README.md"
@@ -34,27 +34,27 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# pip install freephdlabor[observability]
+# pip install consortium[observability]
 observability = [
     "langsmith>=0.1.0",
     "wandb",
 ]
 
-# pip install freephdlabor[docs]
+# pip install consortium[docs]
 docs = [
     "pypandoc",
     "python-docx",
     "pillow",
 ]
 
-# pip install freephdlabor[web]
+# pip install consortium[web]
 web = [
     "playwright",
     "crawl4ai",
     "jina",
 ]
 
-# pip install freephdlabor[experiment]
+# pip install consortium[experiment]
 experiment = [
     "torch",
     "transformers",
@@ -65,14 +65,14 @@ experiment = [
     "wandb",
 ]
 
-# pip install freephdlabor[all]  — everything except vllm / gpu extras
+# pip install consortium[all]  — everything except vllm / gpu extras
 all = [
-    "freephdlabor[observability,docs,web,experiment]",
+    "consortium[observability,docs,web,experiment]",
 ]
 
 [project.scripts]
-freephdlabor = "freephdlabor.runner:main"
+consortium = "consortium.runner:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["freephdlabor*"]
+include = ["consortium*"]

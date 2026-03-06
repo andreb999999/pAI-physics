@@ -1,4 +1,4 @@
-# freephdlabor Campaign Definition
+# consortium Campaign Definition
 # Run: python scripts/campaign_heartbeat.py --campaign campaign.yaml --init
 # Then have OpenClaw (or a cron job) call:
 #        python scripts/campaign_heartbeat.py --campaign campaign.yaml

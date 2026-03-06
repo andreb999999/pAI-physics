@@ -1,4 +1,4 @@
-name: freephdlabor
+name: consortium
 channels:
   - conda-forge
   - defaults
