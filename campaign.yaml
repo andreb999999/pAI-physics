@@ -1,0 +1,85 @@
+# freephdlabor Campaign Definition
+# Run: python scripts/campaign_heartbeat.py --campaign campaign.yaml --init
+# Then have OpenClaw (or a cron job) call:
+#        python scripts/campaign_heartbeat.py --campaign campaign.yaml
+# every heartbeat_interval_minutes.
+
+name: "Muon Implicit Regularization"
+
+# All stage workspaces live under this directory.
+# Stage 2 and 3 will --resume the workspace of their upstream dependency
+# so they can see its artifacts directly.
+workspace_root: "results/muon_campaign"
+
+# How often (minutes) to tick the heartbeat.
+heartbeat_interval_minutes: 30
+
+# --- Notifications (all optional) ---
+notification:
+  # Set SLACK_WEBHOOK_URL in .env to enable Slack alerts.
+  slack_webhook: "${SLACK_WEBHOOK_URL}"
+  # Set TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID in .env for Telegram.
+  # telegram_bot_token: "${TELEGRAM_BOT_TOKEN}"
+  # telegram_chat_id: "${TELEGRAM_CHAT_ID}"
+  on_stage_complete: true
+  on_failure: true
+  on_heartbeat: false   # set true for verbose progress pings
+
+# --- Stages ---
+stages:
+
+  - id: theory
+    task_file: automation_tasks/run1_theory_task_stable.txt
+    args:
+      - "--pipeline-mode"
+      - "full_research"
+      - "--enable-math-agents"
+    success_artifacts:
+      required:
+        - math_workspace/claim_graph.json
+      optional:
+        - math_workspace/proofs/
+        - math_workspace/checks/
+    # Directories to include in cross-run memory distillation
+    memory_dirs:
+      - math_workspace/
+
+  - id: experiments
+    task_file: automation_tasks/run2_experiment_task_stable.txt
+    depends_on: theory
+    # context_from tells runner.py to resume the theory workspace so
+    # experiment agents can see math_workspace/ artifacts directly,
+    # and to prepend the theory memory summary to the task prompt.
+    context_from: theory
+    args:
+      - "--pipeline-mode"
+      - "full_research"
+    success_artifacts:
+      required:
+        - experiment_results.json
+        - experiment_analysis.md
+      optional:
+        - fairness_protocol.json
+        - experiment_plan.md
+
+  - id: paper
+    task_file: automation_tasks/run3_paper_task_stable.txt
+    depends_on:
+      - theory
+      - experiments
+    # Resume the experiments workspace (which was itself resumed from theory,
+    # so it has both math_workspace/ and experiment artifacts).
+    context_from:
+      - experiments
+      - theory
+    args:
+      - "--pipeline-mode"
+      - "full_research"
+      - "--require-pdf"
+    success_artifacts:
+      required:
+        - final_paper.tex
+        - final_paper.pdf
+      optional:
+        - analysis_connection.md
+        - artifacts_index.md

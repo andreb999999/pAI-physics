@@ -37,6 +37,8 @@ MODEL_CONTEXT_LIMITS: dict[str, int] = {
     "o4-mini-2025-04-16": 128_000,
     "gemini-2.5-pro": 1_000_000,
     "gemini-2.5-flash": 1_000_000,
+    "gemini-3.0-pro": 2_000_000,
+    "gpt-5.2": 256_000,
     "deepseek-chat": 64_000,
     "deepseek-coder": 64_000,
     "grok-4-0709": 128_000,
@@ -45,6 +47,14 @@ MODEL_CONTEXT_LIMITS: dict[str, int] = {
 
 def get_context_limit(model_id: str) -> int:
     return MODEL_CONTEXT_LIMITS.get(model_id, 128_000)
+
+
+def _unwrap_model(model: Any) -> Any:
+    """Unwrap BudgetedLiteLLMModel to get the underlying BaseChatModel."""
+    from ..budget import BudgetedLiteLLMModel
+    if isinstance(model, BudgetedLiteLLMModel):
+        return model.model
+    return model
 
 
 def create_specialist_agent(
@@ -64,7 +74,7 @@ def create_specialist_agent(
         os.makedirs(os.path.join(workspace_dir, agent_name), exist_ok=True)
 
     react_agent = create_react_agent(
-        model=model,
+        model=_unwrap_model(model),
         tools=tools,
         prompt=system_prompt,
     )

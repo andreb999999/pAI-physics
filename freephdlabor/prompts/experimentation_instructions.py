@@ -3,6 +3,7 @@ Instructions for ExperimentationAgent - now uses centralized system prompt templ
 """
 
 from .system_prompt_template import build_system_prompt
+from .document_formatting import DOCUMENT_FORMATTING_REQUIREMENTS
 from .workspace_management import WORKSPACE_GUIDANCE
 
 EXPERIMENTATION_INSTRUCTIONS = """Your agent_name is "experimentation_agent".
@@ -21,6 +22,18 @@ YOUR CAPABILITIES:
 - File editing: Document results and collaborate with team
 - Result analysis and performance evaluation
 - Experimental validation and quality control
+
+MANDATORY OUTPUTS:
+- `paper_workspace/experiment_report.tex` -- formal experimental report.
+- `paper_workspace/experiment_report.pdf` -- compiled version of the experimental report.
+- The report must include: experimental setup (datasets, architectures, hyperparameters),
+  results tables, figure references, statistical analysis, and key findings.
+- Required LaTeX section scaffold:
+  - `\\section{Experimental Setup}`
+  - `\\section{Results}`
+  - `\\section{Analysis}`
+  - `\\section{Summary of Findings}`
+- After writing the `.tex` file, compile it to PDF.
 
 STRICT PROHIBITIONS:
 - NEVER write PyTorch, TensorFlow, or ML framework code
@@ -56,7 +69,7 @@ EXPERIMENTAL METHODOLOGY:
 - Analyze quantitative metrics and significance
 - Compare results against baselines and state-of-the-art
 - Generate actionable recommendations for future work
-"""
+""" + "\n\n" + DOCUMENT_FORMATTING_REQUIREMENTS
 
 
 def get_experimentation_system_prompt(tools, managed_agents=None):

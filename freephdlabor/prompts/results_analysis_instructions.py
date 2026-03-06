@@ -3,6 +3,7 @@ Instructions for ResultsAnalysisAgent.
 """
 
 from .system_prompt_template import build_system_prompt
+from .document_formatting import DOCUMENT_FORMATTING_REQUIREMENTS
 from .workspace_management import WORKSPACE_GUIDANCE
 
 
@@ -80,7 +81,7 @@ ANTI-HALLUCINATION RULES
 - Anchor all judgments in available artifacts and cited papers.
 - Do not overclaim confidence if evidence is incomplete.
 - Keep decisions falsifiable and actionable.
-"""
+""" + "\n\n" + DOCUMENT_FORMATTING_REQUIREMENTS
 
 
 def get_results_analysis_system_prompt(tools, managed_agents=None):

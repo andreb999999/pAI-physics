@@ -13,6 +13,8 @@ from ..toolkits.filesystem.file_editing.file_editing_tools import (
     CreateFileWithContent, DeleteFileOrFolder, ListDir, ModifyFile, SearchKeyword, SeeFile,
 )
 from ..toolkits.writeup.citation_search_tool import CitationSearchTool
+from ..toolkits.writeup.latex_compiler_tool import LaTeXCompilerTool
+from ..toolkits.writeup.latex_generator_tool import LaTeXGeneratorTool
 from ..toolkits.writeup.vlm_document_analysis_tool import VLMDocumentAnalysisTool
 from ..toolkits.code_execution_tool import PythonCodeExecutionTool
 
@@ -22,6 +24,8 @@ def get_tools(workspace_dir: Optional[str], model_id: str) -> list:
         ExperimentLinkerTool(working_dir=workspace_dir),
         CitationSearchTool(),
         VLMDocumentAnalysisTool(model=model_id, working_dir=workspace_dir),
+        LaTeXGeneratorTool(model=model_id, working_dir=workspace_dir),
+        LaTeXCompilerTool(working_dir=workspace_dir, model=model_id),
     ]
     if workspace_dir:
         tools += [
@@ -46,6 +50,10 @@ def build_node(
     model_id = get_raw_model(model)
     tools = get_tools(workspace_dir, model_id)
     system_prompt = get_resource_preparation_system_prompt(tools=tools, managed_agents=None)
+    counsel_models = cfg.get("counsel_models")
+    if counsel_models:
+        from ..counsel import create_counsel_node
+        return create_counsel_node(system_prompt, tools, "resource_preparation_agent", workspace_dir, counsel_models)
     return create_specialist_agent(
         model=model,
         tools=tools,

@@ -112,13 +112,18 @@ def make_interrupt_checker(
         except Empty:
             return None
 
-    def _read_until_double_enter(q: Queue, banner: str) -> str:
+    def _read_until_double_enter(q: Queue, banner: str, timeout: float = 300.0) -> str:
         print(banner)
         print(">>> Type your instruction. Press Enter twice to finish.\n")
+        print(f">>> (Auto-cancels after {int(timeout)}s of inactivity)\n")
         lines: list = []
         empty_streak = 0
         while empty_streak < 2:
-            line = q.get()
+            try:
+                line = q.get(timeout=timeout)
+            except Empty:
+                print("[Warn] Instruction timeout — resuming without change.")
+                return ""
             if line is None:
                 line = ""
             if line.strip() == "":
@@ -157,7 +162,12 @@ def make_interrupt_checker(
             print("\nIs this a 'modification' to the current task or a 'new' task? (m/n)")
             choice = ""
             while choice not in ["m", "n"]:
-                choice = input_queue.get().strip().lower()
+                try:
+                    choice = input_queue.get(timeout=60).strip().lower()
+                except Empty:
+                    print("[Warn] Choice timeout — treating as modification.")
+                    choice = "m"
+                    break
                 if choice not in ["m", "n"]:
                     print("Invalid choice. Please enter 'm' for modification or 'n' for new task.")
 

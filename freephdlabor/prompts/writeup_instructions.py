@@ -4,6 +4,7 @@ Provides comprehensive guidance for academic paper writing and publication prepa
 """
 
 from .system_prompt_template import build_system_prompt
+from .document_formatting import DOCUMENT_FORMATTING_REQUIREMENTS
 from .workspace_management import WORKSPACE_GUIDANCE
 
 WRITEUP_INSTRUCTIONS = """Your agent_name is "writeup_agent".
@@ -293,7 +294,7 @@ All LaTeX tools must be used for successful completion:
 - Base content on actual experimental evidence from workspace
 - Include specific numerical results and metrics
 - Reference actual experimental implementations
-- Maintain publication-level technical rigor"""
+- Maintain publication-level technical rigor""" + "\n\n" + DOCUMENT_FORMATTING_REQUIREMENTS
 
 
 def get_writeup_system_prompt(tools, managed_agents=None):

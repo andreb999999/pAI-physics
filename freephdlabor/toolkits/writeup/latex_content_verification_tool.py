@@ -50,10 +50,15 @@ class LaTeXContentVerificationTool(BaseTool):
     """
     args_schema: Type[BaseModel] = LaTeXContentVerificationToolInput
     working_dir: Optional[str] = None
+    _current_document_dir: str = ""
 
     def __init__(self, working_dir: Optional[str] = None, **kwargs: Any):
-        super().__init__(working_dir=os.path.abspath(working_dir) if working_dir else None, **kwargs)
-        self._current_document_dir = self.working_dir or os.getcwd()
+        abs_wd = os.path.abspath(working_dir) if working_dir else None
+        super().__init__(
+            working_dir=abs_wd,
+            _current_document_dir=abs_wd or os.getcwd(),
+            **kwargs,
+        )
 
     def _run(self, latex_file_path: str) -> str:
         """

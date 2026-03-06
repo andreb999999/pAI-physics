@@ -52,6 +52,10 @@ def build_node(
     model_id = get_raw_model(model)
     tools = get_tools(workspace_dir, model_id)
     system_prompt = get_proof_transcription_system_prompt(tools=tools, managed_agents=None)
+    counsel_models = cfg.get("counsel_models")
+    if counsel_models:
+        from ..counsel import create_counsel_node
+        return create_counsel_node(system_prompt, tools, "proof_transcription_agent", workspace_dir, counsel_models)
     return create_specialist_agent(
         model=model,
         tools=tools,

@@ -4,7 +4,7 @@
 main_agents:
   # Model for all main agents (Manager, Ideation, Experimentation, Writeup)
   model: claude-opus-4-6
-  effort: max  # low, medium, high, max (Claude 4.6 only)
+  # effort: max  # disabled — litellm 1.81.15 doesn't support effort param
 
   # GPT-5 specific settings
   reasoning_effort: high
@@ -12,7 +12,7 @@ main_agents:
 
 run_experiment_tool:
   # Models for RunExperimentTool (AI-Scientist-v2 subprocess)
-  code_model: gpt-5.3-codex
+  code_model: gpt-5.2
   feedback_model: claude-sonnet-4-6
   vlm_model: claude-sonnet-4-6
   report_model: claude-opus-4-6
@@ -23,13 +23,16 @@ run_experiment_tool:
 # If usd_limit is set, the system will stop once the running total reaches the limit.
 # IMPORTANT: You must provide accurate per-model prices to enforce the cap.
 budget:
-  usd_limit: 150
+  usd_limit: 600
   hard_stop: true
   fail_closed: true
   pricing:
     gpt-5.2:
       input_per_1k: 0.00175
       output_per_1k: 0.01400
+    gemini-3.0-pro:
+      input_per_1k: 0.00125
+      output_per_1k: 0.01000
     gpt-5.3-codex:
       input_per_1k: 0.00200
       output_per_1k: 0.01000
@@ -42,3 +45,18 @@ budget:
     claude-sonnet-4-5:
       input_per_1k: 0.00300
       output_per_1k: 0.01500
+
+# COUNSEL (multi-model debate at each pipeline stage)
+# WARNING: counsel mode uses ~5-6x the token cost per stage. Raise usd_limit accordingly (600+ recommended).
+counsel:
+  enabled: true           # set true or use --enable-counsel to activate
+  max_debate_rounds: 3
+  synthesis_model: claude-opus-4-6
+  models:
+    - model: claude-opus-4-6
+    - model: claude-sonnet-4-6
+    - model: gpt-5.2
+      reasoning_effort: high
+      verbosity: high
+    - model: gemini-3.0-pro
+      thinking_budget: 65536

@@ -1,0 +1,30 @@
+# LLM APIs
+anthropic
+backoff
+openai
+# Viz
+matplotlib
+pypdf
+pymupdf4llm
+seaborn
+# Common Requirements
+numpy
+transformers==4.44.2
+datasets==2.21.0
+huggingface-hub<1.0.0
+tiktoken
+wandb
+tqdm
+rich
+humanize
+dataclasses-json
+funcy
+black
+genson
+shutup
+python-igraph
+coolname
+jsonschema
+omegaconf
+botocore
+boto3

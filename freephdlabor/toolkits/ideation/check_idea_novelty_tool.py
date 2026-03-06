@@ -1,10 +1,14 @@
 from __future__ import annotations
-from typing import Optional, Type, Any
-from langchain_core.tools import BaseTool
-from pydantic import BaseModel, Field, ConfigDict
-import litellm
 
 import json
+import os
+from typing import Any, Optional, Type
+
+import litellm
+from langchain_core.tools import BaseTool
+from pydantic import BaseModel, ConfigDict, Field
+
+from .paper_search_tool import _search_semantic_scholar
 
 
 class CheckIdeaNoveltyToolInput(BaseModel):
@@ -154,11 +158,48 @@ This JSON will be automatically parsed, so ensure the format is precise.
                             if thought_end != -1:
                                 novelty_justification += f"Round {current_round}: {response_content[thought_start:thought_end].strip()}\n\n"
 
-                        # If undecided and query provided, search for papers
+                        # If undecided and query provided, search Semantic Scholar
                         if decision == "undecided" and query:
-                            # This would ideally call PaperSearchTool, but for now we'll simulate
-                            # In a full implementation, this would integrate with PaperSearchTool
-                            last_query_results = f"Searched for: '{query}' - No significant overlaps found (simulated)"
+                            s2_key = os.environ.get("S2_API_KEY", "")
+                            if s2_key:
+                                try:
+                                    papers = _search_semantic_scholar(
+                                        query=query,
+                                        result_limit=10,
+                                        s2_api_key=s2_key,
+                                    )
+                                    if papers:
+                                        summaries = []
+                                        for p in papers:
+                                            authors = ", ".join(
+                                                a.get("name", "") for a in p.get("authors", [])[:3]
+                                            )
+                                            abstract = (p.get("abstract") or "")[:300]
+                                            summaries.append(
+                                                f"- {p.get('title', 'Unknown')} "
+                                                f"({p.get('year', '?')}) by {authors}\n"
+                                                f"  {abstract}"
+                                            )
+                                        last_query_results = (
+                                            f"Searched for: '{query}'\n\n"
+                                            f"Found {len(papers)} papers:\n\n"
+                                            + "\n\n".join(summaries)
+                                        )
+                                    else:
+                                        last_query_results = (
+                                            f"Searched for: '{query}' — "
+                                            "No papers found on Semantic Scholar."
+                                        )
+                                except Exception as search_err:
+                                    last_query_results = (
+                                        f"Searched for: '{query}' — "
+                                        f"Search failed: {search_err}"
+                                    )
+                            else:
+                                last_query_results = (
+                                    f"Searched for: '{query}' — "
+                                    "S2_API_KEY not set; Semantic Scholar search unavailable."
+                                )
 
                         if decision.startswith("decision made:"):
                             break

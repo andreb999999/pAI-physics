@@ -16,9 +16,12 @@ from dotenv import load_dotenv
 from .args import parse_arguments
 from .config import load_llm_config, filter_model_params
 from .interaction.callback_tools import setup_user_input_socket
+from .interaction.http_steering import add_http_steering
 from .prereqs import check_latex_prereqs
 from .supervision import sanitize_result_payload
-from .token_usage_tracker import initialize_run_token_tracker, patch_smolagents_monitoring
+from .token_usage_tracker import initialize_run_token_tracker
+from .counsel import create_counsel_models, DEFAULT_COUNSEL_MODEL_SPECS
+from .graph import build_pipeline_stages
 from .utils import create_model, build_research_graph, save_agent_memory
 
 load_dotenv(override=True)
@@ -47,6 +50,48 @@ _CONTINUATION_TASK = (
     "files and then plan how to call the relevant agents to further progress the research task "
     "and deliver better research outputs."
 )
+
+_STAGE_ALIASES = {
+    "ideation": "ideation_agent",
+    "ideation_agent": "ideation_agent",
+    "literature": "literature_review_agent",
+    "litreview": "literature_review_agent",
+    "literature_review": "literature_review_agent",
+    "literature_review_agent": "literature_review_agent",
+    "planning": "research_planner_agent",
+    "plan": "research_planner_agent",
+    "research_planner": "research_planner_agent",
+    "research_planner_agent": "research_planner_agent",
+    "experiment": "experimentation_agent",
+    "experimentation": "experimentation_agent",
+    "experimentation_agent": "experimentation_agent",
+    "analysis": "results_analysis_agent",
+    "results_analysis": "results_analysis_agent",
+    "results_analysis_agent": "results_analysis_agent",
+    "math_literature": "math_literature_agent",
+    "math_literature_agent": "math_literature_agent",
+    "math_proposer": "math_proposer_agent",
+    "math_proposer_agent": "math_proposer_agent",
+    "math_prover": "math_prover_agent",
+    "math_prover_agent": "math_prover_agent",
+    "math_rigorous_verifier": "math_rigorous_verifier_agent",
+    "math_rigorous_verifier_agent": "math_rigorous_verifier_agent",
+    "math_empirical_verifier": "math_empirical_verifier_agent",
+    "math_empirical_verifier_agent": "math_empirical_verifier_agent",
+    "proof_transcription": "proof_transcription_agent",
+    "proof_transcription_agent": "proof_transcription_agent",
+    "resources": "resource_preparation_agent",
+    "resource_preparation": "resource_preparation_agent",
+    "resource_preparation_agent": "resource_preparation_agent",
+    "writeup": "writeup_agent",
+    "writeup_agent": "writeup_agent",
+    "proofread": "proofreading_agent",
+    "proofreading": "proofreading_agent",
+    "proofreading_agent": "proofreading_agent",
+    "review": "reviewer_agent",
+    "reviewer": "reviewer_agent",
+    "reviewer_agent": "reviewer_agent",
+}
 
 
 def _setup_optional_tracing():
@@ -83,7 +128,7 @@ def _resolve_model_settings(args, llm_config):
     reasoning_effort = "high"
     verbosity = "medium"
     budget_tokens = None
-    effort = "high"
+    effort = None
 
     if llm_config and "main_agents" in llm_config:
         cfg = llm_config["main_agents"]
@@ -134,9 +179,26 @@ def _build_required_artifacts(args, enforce_paper_artifacts, enforce_editorial_a
     return artifacts
 
 
+def _canonical_stage_name(stage_name: str) -> str:
+    normalized = stage_name.strip().lower().replace("-", "_")
+    return _STAGE_ALIASES.get(normalized, normalized)
+
+
+def _resolve_start_stage_index(stage_name: str, pipeline_stages: list[str]) -> int:
+    canonical = _canonical_stage_name(stage_name)
+    if canonical not in pipeline_stages:
+        valid = ", ".join(pipeline_stages)
+        raise ValueError(
+            f"Unknown --start-from-stage '{stage_name}' (resolved: '{canonical}'). "
+            f"Valid stages for this run: {valid}"
+        )
+    return pipeline_stages.index(canonical)
+
+
 def main():
     args = parse_arguments()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    effective_pipeline_mode = "full_research"
 
     # --- Logging setup ---
     env_log_default = os.getenv("FREEPHDLABOR_LOG_TO_FILES", "1").strip().lower() in {
@@ -160,9 +222,21 @@ def main():
 
     llm_config = load_llm_config()
 
+    if args.pipeline_mode is not None:
+        print(
+            "Warning: --pipeline-mode is deprecated and ignored. "
+            "Running deterministic full pipeline mode."
+        )
+
+    if args.start_from_stage and not args.resume:
+        print("Error: --start-from-stage requires --resume <workspace_dir>.")
+        return 1
+
     # Set up interrupt socket (used by live-steering via state injection)
     input_queue = setup_user_input_socket(args.callback_host, args.callback_port)
     print(f"Interruption port available at {args.callback_host}:{args.callback_port}")
+    # Also start HTTP steering server on port+1 for programmatic clients (e.g. OpenClaw)
+    add_http_steering(input_queue, host=args.callback_host, port=args.callback_port + 1)
 
     model_name, reasoning_effort, verbosity, budget_tokens, effort = _resolve_model_settings(
         args, llm_config
@@ -203,13 +277,30 @@ def main():
     token_file = initialize_run_token_tracker(
         workspace_dir=results_base_dir, run_id=run_id, reset=True,
     )
-    patch_smolagents_monitoring()
     print(f"Token tracker initialized: {token_file}")
 
     print(f"Task: {task[:100]}{'...' if len(task) > 100 else ''}")
-    print(f"Pipeline mode: {args.pipeline_mode}")
+    print("Pipeline mode: full_research (deterministic)")
     if args.enable_math_agents:
         print("Math agent workflow enabled.")
+
+    pipeline_stages = build_pipeline_stages(args.enable_math_agents)
+    try:
+        start_stage_index = (
+            _resolve_start_stage_index(args.start_from_stage, pipeline_stages)
+            if args.start_from_stage
+            else 0
+        )
+    except ValueError as e:
+        print(str(e))
+        return 1
+
+    if args.start_from_stage:
+        resolved_stage = pipeline_stages[start_stage_index]
+        print(
+            f"Stage-based resume requested: start from '{resolved_stage}' "
+            f"(index {start_stage_index})."
+        )
 
     # --- Artifact gate setup ---
     auto_enforce = "final_paper" in task.lower() or "experiments_to_run_later" in task.lower()
@@ -260,6 +351,35 @@ def main():
         "wandb", "tensorboard", "tqdm", "zipfile", "tarfile",
     ])
 
+    # --- Counsel model setup ---
+    counsel_cfg = llm_config.get("counsel", {}) if llm_config else {}
+    # Priority: --enable-counsel flag > --no-counsel flag > config file
+    counsel_enabled = getattr(args, "enable_counsel", False)
+    counsel_disabled = getattr(args, "no_counsel", False)
+    if counsel_disabled:
+        counsel_enabled = False
+    elif not counsel_enabled:
+        counsel_enabled = bool(counsel_cfg.get("enabled", False))
+
+    counsel_models_list = None
+    if counsel_enabled:
+        max_debate_rounds = getattr(args, "counsel_max_debate_rounds", None)
+        if max_debate_rounds is None:
+            max_debate_rounds = int(counsel_cfg.get("max_debate_rounds", 3))
+
+        # Build model specs from config if provided, otherwise use defaults
+        cfg_model_specs = counsel_cfg.get("models")
+        model_specs = cfg_model_specs if cfg_model_specs else None
+
+        print(f"Counsel mode enabled — {len(model_specs or DEFAULT_COUNSEL_MODEL_SPECS)} models, "
+              f"{max_debate_rounds} debate rounds per stage.")
+        counsel_models_list = create_counsel_models(
+            budget_config=budget_config,
+            budget_dir=results_base_dir,
+            model_specs=model_specs,
+        )
+        os.environ["FREEPHDLABOR_COUNSEL_MAX_DEBATE_ROUNDS"] = str(max_debate_rounds)
+
     try:
         graph, checkpointer = build_research_graph(
             model=model,
@@ -271,9 +391,10 @@ def main():
             enable_math_agents=args.enable_math_agents,
             enforce_editorial_artifacts=enforce_editorial_artifacts,
             min_review_score=args.min_review_score,
-            pipeline_mode=args.pipeline_mode,
+            pipeline_mode=effective_pipeline_mode,
             followup_max_iterations=args.followup_max_iterations,
             manager_max_steps=args.manager_max_steps if args.manager_max_steps else 50,
+            counsel_models=counsel_models_list,
         )
 
         # Build initial state
@@ -281,7 +402,7 @@ def main():
             "messages": [],
             "task": task,
             "workspace_dir": results_base_dir,
-            "pipeline_mode": args.pipeline_mode,
+            "pipeline_mode": effective_pipeline_mode,
             "math_enabled": args.enable_math_agents,
             "enforce_paper_artifacts": enforce_paper_artifacts,
             "enforce_editorial_artifacts": enforce_editorial_artifacts,
@@ -290,6 +411,8 @@ def main():
             "min_review_score": args.min_review_score,
             "followup_max_iterations": args.followup_max_iterations,
             "manager_max_steps": args.manager_max_steps if args.manager_max_steps else 50,
+            "pipeline_stages": pipeline_stages,
+            "pipeline_stage_index": start_stage_index,
             "current_agent": None,
             "agent_task": None,
             "agent_outputs": {},
@@ -298,11 +421,21 @@ def main():
             "followup_iteration": 0,
             "validation_results": {},
             "interrupt_instruction": None,
+            "theory_track_status": None,
+            "experiment_track_status": None,
+            "track_decomposition": None,
             "finished": False,
         }
 
-        # Use workspace_dir as thread_id for resumability
-        run_config = {"configurable": {"thread_id": results_base_dir}}
+        # Use workspace_dir as thread_id for default resumability.
+        # For stage-based resume, create a fresh thread in the same workspace so
+        # previous checkpoint state does not override the requested stage index.
+        if args.start_from_stage:
+            canonical_stage = _canonical_stage_name(args.start_from_stage)
+            thread_id = f"{results_base_dir}::stage_resume::{canonical_stage}::{timestamp}"
+        else:
+            thread_id = results_base_dir
+        run_config = {"configurable": {"thread_id": thread_id}}
 
         print(f"\n{'='*50}\nRunning LangGraph research pipeline...\nTask: {task}\n{'='*50}")
 

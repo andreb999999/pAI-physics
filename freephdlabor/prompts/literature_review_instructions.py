@@ -3,6 +3,7 @@ Instructions for LiteratureReviewAgent.
 """
 
 from .system_prompt_template import build_system_prompt
+from .document_formatting import DOCUMENT_FORMATTING_REQUIREMENTS
 from .workspace_management import WORKSPACE_GUIDANCE
 
 
@@ -130,7 +131,7 @@ ANTI-HALLUCINATION RULES
 - Do not invent papers, authors, venues, years, or results.
 - If a detail is uncertain, mark it as uncertain and keep it out of claims.
 - Keep the source table synchronized with cited content.
-"""
+""" + "\n\n" + DOCUMENT_FORMATTING_REQUIREMENTS
 
 
 def get_literature_review_system_prompt(tools, managed_agents=None):

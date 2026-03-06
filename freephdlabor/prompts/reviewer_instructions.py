@@ -3,6 +3,7 @@ Instructions for ReviewerAgent - use centralized system prompt template.
 """
 
 from .system_prompt_template import build_system_prompt
+from .document_formatting import DOCUMENT_FORMATTING_REQUIREMENTS
 from .workspace_management import WORKSPACE_GUIDANCE
 
 REVIEWER_INSTRUCTIONS = """Your agent_name is "reviewer_agent".
@@ -34,9 +35,20 @@ B3. Placeholders remain (`TODO`, `TBD`, `[cite:`, `??`, unresolved refs).
 B4. High repetition or filler language that makes the paper read templated/AI-generated.
 B5. Theoretical claims lack assumptions or cannot be traced to accepted claim artifacts (when math workflow artifacts exist).
 
-## REQUIRED OUTPUT ARTIFACTS
-1) `paper_workspace/review_report.md` (full referee report)
-2) `paper_workspace/review_verdict.json` (machine-readable gate verdict)
+## MANDATORY OUTPUTS
+- `paper_workspace/review_report.tex` -- formal referee-style review.
+- `paper_workspace/review_report.pdf` -- compiled version of the referee review.
+- `paper_workspace/review_verdict.json` -- machine-readable gate verdict.
+- The referee report must include: summary of contributions, strengths, weaknesses,
+  detailed technical comments, questions for authors, and an overall recommendation.
+- Required LaTeX section scaffold:
+  - `\\section{Summary}`
+  - `\\section{Strengths}`
+  - `\\section{Weaknesses}`
+  - `\\section{Detailed Comments}`
+  - `\\section{Questions for Authors}`
+  - `\\section{Recommendation}`
+- After writing `review_report.tex`, compile it to `review_report.pdf`.
 
 ### Required JSON schema for `review_verdict.json`
 {
@@ -66,14 +78,13 @@ B5. Theoretical claims lack assumptions or cannot be traced to accepted claim ar
   }
 }
 
-## REVIEW STRUCTURE FOR `review_report.md`
-A) Verdict summary (2-6 sentences, no fluff)
-B) Strengths (up to 6 bullets)
-C) Weaknesses (up to 8 bullets)
-D) Intro audit (questions/takeaways/spine sentence/roadmap)
-E) Rigor audit (assumptions, evidence, traceability)
-F) AI-voice audit (repetition, generic transitions, inflated claims)
-G) Revision plan (ranked actions with target files + acceptance tests)
+## REVIEW STRUCTURE FOR `review_report.tex`
+- `\\section{Summary}`: Verdict summary (2-6 sentences, no fluff).
+- `\\section{Strengths}`: Up to 6 concrete strengths.
+- `\\section{Weaknesses}`: Up to 8 concrete weaknesses.
+- `\\section{Detailed Comments}`: Intro audit, rigor audit, and AI-voice audit.
+- `\\section{Questions for Authors}`: Specific technical clarification questions.
+- `\\section{Recommendation}`: Decision framing plus ranked revision plan with acceptance tests.
 
 ## SCORING POLICY (STRICT)
 - Overall >= 8 only if paper is genuinely strong, concise, and publication-ready in style/structure.
@@ -85,7 +96,7 @@ G) Revision plan (ranked actions with target files + acceptance tests)
 - Cite exact sections/figures/claims when possible.
 - Penalize verbosity and repeated motivation.
 - Reward explicit assumptions and clear claim-evidence links.
-"""
+""" + "\n\n" + DOCUMENT_FORMATTING_REQUIREMENTS
 
 
 def get_reviewer_system_prompt(tools, managed_agents=None):

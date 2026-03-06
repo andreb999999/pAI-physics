@@ -7,6 +7,8 @@ import litellm
 import json
 import logging
 
+logger = logging.getLogger(__name__)
+
 
 class IdeaStandardizationToolInput(BaseModel):
     idea_json: str = Field(description="Research idea in JSON string format from any agent schema (e.g., ManagerAgent output)")
@@ -40,11 +42,7 @@ class IdeaStandardizationTool(BaseTool):
         model_id = model if isinstance(model, str) else getattr(model, 'model', str(model)) if model else ""
         super().__init__(model_id=model_id, **kwargs)
 
-        # CRITICAL FIX: Ensure API keys are properly configured for litellm
         self._configure_api_keys()
-
-        # Set up logging
-        self.logger = logging.getLogger(__name__)
 
     def _configure_api_keys(self):
         """Configure API keys for litellm from environment variables."""
@@ -90,24 +88,24 @@ class IdeaStandardizationTool(BaseTool):
             if not isinstance(idea_data, dict):
                 raise ValueError(f"Expected dictionary or JSON object, got {type(idea_data)}")
 
-            self.logger.info(f"Converting research idea with keys: {list(idea_data.keys())}")
+            logger.info(f"Converting research idea with keys: {list(idea_data.keys())}")
 
             # Try LLM-based intelligent conversion
             try:
                 standardized = self._llm_based_conversion(idea_data)
-                self.logger.info("LLM-based conversion successful")
+                logger.info("LLM-based conversion successful")
                 return json.dumps([standardized])
 
             except Exception as llm_error:
-                self.logger.warning(f"LLM conversion failed: {llm_error}, using rule-based fallback")
+                logger.warning(f"LLM conversion failed: {llm_error}, using rule-based fallback")
                 # Fallback to rule-based conversion
                 standardized = self._rule_based_conversion(idea_data)
-                self.logger.info("Rule-based fallback conversion completed")
+                logger.info("Rule-based fallback conversion completed")
                 return json.dumps([standardized])
 
         except Exception as e:
-            self.logger.error(f"Idea standardization failed: {e}")
-            self.logger.error(f"Input type: {type(idea_json)}, Input preview: {str(idea_json)[:200]}...")
+            logger.error(f"Idea standardization failed: {e}")
+            logger.error(f"Input type: {type(idea_json)}, Input preview: {str(idea_json)[:200]}...")
             return json.dumps([{
                 "Name": "conversion_failed",
                 "Title": "Research Idea Conversion Failed",

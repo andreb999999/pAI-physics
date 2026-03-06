@@ -108,6 +108,17 @@ Examples:
     )
 
     parser.add_argument(
+        "--start-from-stage",
+        type=str,
+        default=None,
+        help=(
+            "Start the deterministic full pipeline from a specific stage. "
+            "Requires --resume. Accepts canonical stage names (e.g., "
+            "'experimentation_agent') and short aliases (e.g., 'experimentation')."
+        ),
+    )
+
+    parser.add_argument(
         "--task",
         type=str,
         help="The research task description. Can be used with --resume to continue a previous task."
@@ -160,9 +171,11 @@ Examples:
     parser.add_argument(
         "--pipeline-mode",
         type=str,
-        choices=["default", "full_research", "quick"],
-        default="default",
-        help="Workflow mode. Use 'full_research' for the full 8-step literature/plan/execution/writeup pipeline.",
+        default=None,
+        help=(
+            "DEPRECATED: ignored. The pipeline now always runs in deterministic full mode. "
+            "Use --start-from-stage with --resume to begin from a specific stage."
+        ),
     )
 
     parser.add_argument(
@@ -170,6 +183,32 @@ Examples:
         type=int,
         default=3,
         help="Maximum Step 6 <-> 6.2 follow-up loops in full_research mode.",
+    )
+
+    parser.add_argument(
+        "--enable-counsel",
+        dest="enable_counsel",
+        action="store_true",
+        default=False,
+        help="Enable multi-model counsel mode: each pipeline stage runs 4 independent models "
+             "that debate and synthesize a consensus output (overrides counsel.enabled in config).",
+    )
+
+    parser.add_argument(
+        "--no-counsel",
+        dest="no_counsel",
+        action="store_true",
+        default=False,
+        help="Disable counsel mode even if counsel.enabled=true in .llm_config.yaml.",
+    )
+
+    parser.add_argument(
+        "--counsel-max-debate-rounds",
+        dest="counsel_max_debate_rounds",
+        type=int,
+        default=None,
+        help="Number of debate rounds per pipeline stage in counsel mode (default: 3, "
+             "overrides counsel.max_debate_rounds in config).",
     )
 
     return parser.parse_args()

@@ -243,9 +243,9 @@ class BudgetedLiteLLMModel:
 
         return None
 
-    def generate(self, messages, **kwargs):
+    def generate(self, messages, *args, **kwargs):
         self.budget_manager.check_budget()
-        response = self.model.generate(messages, **kwargs)
+        response = self.model.generate(messages, *args, **kwargs)
         usage = self._extract_token_usage(response)
         if not usage:
             # Fail closed after the call if token usage isn't reported

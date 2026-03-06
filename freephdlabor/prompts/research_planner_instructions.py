@@ -3,6 +3,7 @@ Instructions for ResearchPlannerAgent.
 """
 
 from .system_prompt_template import build_system_prompt
+from .document_formatting import DOCUMENT_FORMATTING_REQUIREMENTS
 from .workspace_management import WORKSPACE_GUIDANCE
 
 
@@ -71,7 +72,7 @@ ANTI-HALLUCINATION RULES
 - Do not invent literature support.
 - Do not use vague placeholders where measurable criteria are required.
 - If a required detail is unknown, flag it explicitly as an open decision.
-"""
+""" + "\n\n" + DOCUMENT_FORMATTING_REQUIREMENTS
 
 
 def get_research_planner_system_prompt(tools, managed_agents=None):

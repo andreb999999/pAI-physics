@@ -68,29 +68,13 @@ class CitationSearchTool(BaseTool):
     _cache: Dict[str, Dict[str, Any]] = {}
 
     def __init__(self, **kwargs: Any):
-        super().__init__(**kwargs)
-        self.arxiv_base_url = "http://export.arxiv.org/api/query?"
-        self.semantic_scholar_base_url = "https://api.semanticscholar.org/graph/v1/paper/search"
-        self.semantic_scholar_max_retries = self._safe_int_env(
-            "FREEPHDLABOR_SS_MAX_RETRIES", 3
+        super().__init__(
+            semantic_scholar_max_retries=self._safe_int_env("FREEPHDLABOR_SS_MAX_RETRIES", 3),
+            semantic_scholar_base_delay=self._safe_float_env("FREEPHDLABOR_SS_BASE_DELAY_SEC", 2.0),
+            semantic_scholar_cooldown=self._safe_float_env("FREEPHDLABOR_SS_COOLDOWN_SEC", 60.0),
+            semantic_scholar_timeout=self._safe_int_env("FREEPHDLABOR_SS_TIMEOUT_SEC", 30),
+            **kwargs,
         )
-        self.semantic_scholar_base_delay = self._safe_float_env(
-            "FREEPHDLABOR_SS_BASE_DELAY_SEC", 2.0
-        )
-        self.semantic_scholar_cooldown = self._safe_float_env(
-            "FREEPHDLABOR_SS_COOLDOWN_SEC", 60.0
-        )
-        self.semantic_scholar_timeout = self._safe_int_env(
-            "FREEPHDLABOR_SS_TIMEOUT_SEC", 30
-        )
-        self._semantic_scholar_cooldown_until = 0.0
-        self._cache_ttl_seconds = self._safe_int_env(
-            "FREEPHDLABOR_CITATION_CACHE_TTL_SEC", 1800
-        )
-        self._cache_max_entries = self._safe_int_env(
-            "FREEPHDLABOR_CITATION_CACHE_MAX_ENTRIES", 256
-        )
-        self._cache = {}
 
     @staticmethod
     def _safe_int_env(name: str, default: int) -> int:

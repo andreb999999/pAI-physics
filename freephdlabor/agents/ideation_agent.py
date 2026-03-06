@@ -19,6 +19,8 @@ from ..toolkits.filesystem.file_editing.file_editing_tools import (
 from ..toolkits.ideation.generate_idea_tool import GenerateIdeaTool
 from ..toolkits.ideation.refine_idea_tool import RefineIdeaTool
 from ..toolkits.search.fetch_arxiv_papers.fetch_arxiv_papers_tools import FetchArxivPapersTool
+from ..toolkits.writeup.latex_compiler_tool import LaTeXCompilerTool
+from ..toolkits.writeup.latex_generator_tool import LaTeXGeneratorTool
 from ..toolkits.writeup.vlm_document_analysis_tool import VLMDocumentAnalysisTool
 from ..toolkits.code_execution_tool import PythonCodeExecutionTool
 
@@ -34,6 +36,8 @@ def get_tools(workspace_dir: Optional[str], model_id: str) -> list:
         GenerateIdeaTool(model=model_id),
         RefineIdeaTool(model=model_id),
         VLMDocumentAnalysisTool(model=model_id, working_dir=workspace_dir),
+        LaTeXGeneratorTool(model=model_id, working_dir=workspace_dir),
+        LaTeXCompilerTool(working_dir=workspace_dir, model=model_id),
     ]
     if OpenDeepSearchTool is not None:
         tools.insert(0, OpenDeepSearchTool(model_name=model_id))
@@ -61,6 +65,10 @@ def build_node(
     model_id = get_raw_model(model)
     tools = get_tools(workspace_dir, model_id)
     system_prompt = get_ideation_system_prompt(tools=tools, managed_agents=None)
+    counsel_models = cfg.get("counsel_models")
+    if counsel_models:
+        from ..counsel import create_counsel_node
+        return create_counsel_node(system_prompt, tools, "ideation_agent", workspace_dir, counsel_models)
     return create_specialist_agent(
         model=model,
         tools=tools,

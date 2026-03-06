@@ -12,6 +12,8 @@ from ..toolkits.filesystem.file_editing.file_editing_tools import (
     CreateFileWithContent, DeleteFileOrFolder, ListDir, ModifyFile, SearchKeyword, SeeFile,
 )
 from ..toolkits.ideation.paper_search_tool import PaperSearchTool
+from ..toolkits.writeup.latex_compiler_tool import LaTeXCompilerTool
+from ..toolkits.writeup.latex_generator_tool import LaTeXGeneratorTool
 from ..toolkits.writeup.vlm_document_analysis_tool import VLMDocumentAnalysisTool
 
 
@@ -19,6 +21,8 @@ def get_tools(workspace_dir: Optional[str], model_id: str) -> list:
     tools = [
         VLMDocumentAnalysisTool(model=model_id, working_dir=workspace_dir),
         PaperSearchTool(),
+        LaTeXGeneratorTool(model=model_id, working_dir=workspace_dir),
+        LaTeXCompilerTool(working_dir=workspace_dir, model=model_id),
         SeeFile(working_dir=workspace_dir),
         CreateFileWithContent(working_dir=workspace_dir),
         ModifyFile(working_dir=workspace_dir),
@@ -39,6 +43,10 @@ def build_node(
     model_id = get_raw_model(model)
     tools = get_tools(workspace_dir, model_id)
     system_prompt = get_reviewer_system_prompt(tools=tools, managed_agents=None)
+    counsel_models = cfg.get("counsel_models")
+    if counsel_models:
+        from ..counsel import create_counsel_node
+        return create_counsel_node(system_prompt, tools, "reviewer_agent", workspace_dir, counsel_models)
     return create_specialist_agent(
         model=model,
         tools=tools,

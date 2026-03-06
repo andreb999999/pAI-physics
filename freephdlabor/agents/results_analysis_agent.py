@@ -61,6 +61,10 @@ def build_node(
     model_id = get_raw_model(model)
     tools = get_tools(workspace_dir, model_id)
     system_prompt = get_results_analysis_system_prompt(tools=tools, managed_agents=None)
+    counsel_models = cfg.get("counsel_models")
+    if counsel_models:
+        from ..counsel import create_counsel_node
+        return create_counsel_node(system_prompt, tools, "results_analysis_agent", workspace_dir, counsel_models)
     return create_specialist_agent(
         model=model,
         tools=tools,

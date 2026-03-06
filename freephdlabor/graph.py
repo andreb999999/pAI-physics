@@ -51,32 +51,48 @@ from .agents import (
 from .state import ResearchState
 
 # ---------------------------------------------------------------------------
-# Specialist roster
+# Deterministic stage roster
 # ---------------------------------------------------------------------------
 
-BASE_SPECIALISTS = [
+PIPELINE_STAGES = [
     "ideation_agent",
     "literature_review_agent",
     "research_planner_agent",
-    "results_analysis_agent",
     "experimentation_agent",
+    "results_analysis_agent",
     "resource_preparation_agent",
     "writeup_agent",
     "proofreading_agent",
     "reviewer_agent",
 ]
 
-MATH_SPECIALISTS_CORE = [
+MATH_PIPELINE_STAGES = [
+    "math_literature_agent",
     "math_proposer_agent",
     "math_prover_agent",
     "math_rigorous_verifier_agent",
     "math_empirical_verifier_agent",
-]
-
-MATH_SPECIALISTS_FULL_RESEARCH = [
-    "math_literature_agent",
     "proof_transcription_agent",
 ]
+
+
+def build_pipeline_stages(enable_math_agents: bool) -> list[str]:
+    """
+    Return deterministic stage order for the run.
+
+    When math agents are enabled, insert the full math pipeline immediately
+    after results analysis and before resource preparation/writeup.
+    """
+    stages = list(PIPELINE_STAGES)
+    if not enable_math_agents:
+        return stages
+
+    insertion_idx = stages.index("results_analysis_agent") + 1
+    return (
+        stages[:insertion_idx]
+        + list(MATH_PIPELINE_STAGES)
+        + stages[insertion_idx:]
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -111,6 +127,7 @@ def build_research_graph(
     manager_max_steps: int = 50,
     authorized_imports: Optional[List[str]] = None,
     checkpointer=None,
+    counsel_models: Optional[List[Any]] = None,
 ):
     """
     Build and compile the full LangGraph research pipeline.
@@ -129,52 +146,52 @@ def build_research_graph(
         manager_max_steps:        Max total manager iterations
         authorized_imports:       Authorized Python import list for code tools
         checkpointer:             LangGraph checkpointer (SqliteSaver etc.)
+        counsel_models:           List of ChatLiteLLM instances for counsel mode.
+                                  When provided, specialist nodes run multi-model debate
+                                  instead of a single-model ReAct agent.
 
     Returns:
         Compiled LangGraph CompiledGraph.
     """
-    # Determine active specialist list
-    specialists = list(BASE_SPECIALISTS)
-    if enable_math_agents:
-        specialists += MATH_SPECIALISTS_CORE
-        if str(pipeline_mode).strip().lower() == "full_research":
-            specialists += MATH_SPECIALISTS_FULL_RESEARCH
+    # Deterministic stage order used by manager for fixed routing.
+    specialists = build_pipeline_stages(enable_math_agents)
 
-    # Build manager node (needs specialist list for routing prompt)
+    # Build manager node with deterministic stage list.
     manager_node = build_manager_node(
         model=model,
         workspace_dir=workspace_dir,
         pipeline_mode=pipeline_mode,
-        available_agents=specialists,
+        pipeline_stages=specialists,
         enable_math_agents=enable_math_agents,
         followup_max_iterations=followup_max_iterations,
         authorized_imports=authorized_imports,
     )
 
+    # When counsel_models are provided, each build_node() will return a counsel node
+    # instead of a single-model ReAct agent (handled inside each specialist module).
+    counsel_kwargs = {"counsel_models": counsel_models} if counsel_models else {}
+
     # Build specialist nodes
     specialist_nodes: dict[str, Any] = {
-        "ideation_agent": build_ideation_node(model, workspace_dir, authorized_imports),
-        "literature_review_agent": build_literature_review_node(model, workspace_dir, authorized_imports),
-        "research_planner_agent": build_research_planner_node(model, workspace_dir, authorized_imports),
-        "results_analysis_agent": build_results_analysis_node(model, workspace_dir, authorized_imports),
-        "experimentation_agent": build_experimentation_node(model, workspace_dir, authorized_imports),
-        "resource_preparation_agent": build_resource_preparation_node(model, workspace_dir, authorized_imports),
-        "writeup_agent": build_writeup_node(model, workspace_dir, authorized_imports),
-        "proofreading_agent": build_proofreading_node(model, workspace_dir, authorized_imports),
-        "reviewer_agent": build_reviewer_node(model, workspace_dir, authorized_imports),
+        "ideation_agent": build_ideation_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+        "literature_review_agent": build_literature_review_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+        "research_planner_agent": build_research_planner_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+        "results_analysis_agent": build_results_analysis_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+        "experimentation_agent": build_experimentation_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+        "resource_preparation_agent": build_resource_preparation_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+        "writeup_agent": build_writeup_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+        "proofreading_agent": build_proofreading_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+        "reviewer_agent": build_reviewer_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
     }
     if enable_math_agents:
         specialist_nodes.update({
-            "math_proposer_agent": build_math_proposer_node(model, workspace_dir, authorized_imports),
-            "math_prover_agent": build_math_prover_node(model, workspace_dir, authorized_imports),
-            "math_rigorous_verifier_agent": build_math_rigorous_verifier_node(model, workspace_dir, authorized_imports),
-            "math_empirical_verifier_agent": build_math_empirical_verifier_node(model, workspace_dir, authorized_imports),
+            "math_literature_agent": build_math_literature_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+            "math_proposer_agent": build_math_proposer_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+            "math_prover_agent": build_math_prover_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+            "math_rigorous_verifier_agent": build_math_rigorous_verifier_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+            "math_empirical_verifier_agent": build_math_empirical_verifier_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+            "proof_transcription_agent": build_proof_transcription_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
         })
-        if str(pipeline_mode).strip().lower() == "full_research":
-            specialist_nodes.update({
-                "math_literature_agent": build_math_literature_node(model, workspace_dir, authorized_imports),
-                "proof_transcription_agent": build_proof_transcription_node(model, workspace_dir, authorized_imports),
-            })
 
     # Assemble StateGraph
     graph = StateGraph(ResearchState)
@@ -209,8 +226,10 @@ def get_default_checkpointer(workspace_dir: str):
     """Return a SqliteSaver checkpointer scoped to the workspace directory."""
     try:
         from langgraph.checkpoint.sqlite import SqliteSaver
+        import sqlite3
         db_path = os.path.join(workspace_dir, "checkpoints.db")
-        return SqliteSaver.from_conn_string(db_path)
+        conn = sqlite3.connect(db_path, check_same_thread=False)
+        return SqliteSaver(conn)
     except (ImportError, Exception) as e:
         print(f"Checkpointer unavailable ({e}); resumability disabled.")
         return None

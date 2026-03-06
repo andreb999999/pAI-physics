@@ -113,8 +113,7 @@ class FetchArxivPapersTool(BaseTool):
 
     def _run(self, search_query: str, max_results: int = 5):
         # Create output folder if it doesn't exist
-        if not os.path.exists(self.output_folder):
-            os.makedirs(self.output_folder)
+        os.makedirs(self.output_folder, exist_ok=True)
 
         # Fetch and parse papers
         print(f"Searching for papers on '{search_query}'...")

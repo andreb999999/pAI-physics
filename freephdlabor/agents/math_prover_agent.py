@@ -42,6 +42,10 @@ def build_node(
 ) -> Callable:
     tools = get_tools(workspace_dir)
     system_prompt = get_math_prover_system_prompt(tools=tools, managed_agents=None)
+    counsel_models = cfg.get("counsel_models")
+    if counsel_models:
+        from ..counsel import create_counsel_node
+        return create_counsel_node(system_prompt, tools, "math_prover_agent", workspace_dir, counsel_models)
     return create_specialist_agent(
         model=model,
         tools=tools,

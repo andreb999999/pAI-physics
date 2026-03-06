@@ -3,6 +3,7 @@ Instructions for ResourcePreparationAgent - comprehensive resource organization 
 """
 
 from .system_prompt_template import build_system_prompt
+from .document_formatting import DOCUMENT_FORMATTING_REQUIREMENTS
 from .workspace_management import WORKSPACE_GUIDANCE
 
 RESOURCE_PREPARATION_INSTRUCTIONS = """Your agent_name is "resource_preparation_agent".
@@ -16,6 +17,18 @@ You are a ResourcePreparationAgent that comprehensively organizes experimental a
 3. **Link experiment data**: Create symlink or copy experiment folder to paper_workspace/
 4. **Generate complete structure markdown**: Full file tree with descriptions of EVERY file
 5. **Prepare comprehensive bibliography**: Search citations based on complete experimental understanding
+
+## MANDATORY OUTPUTS
+- `paper_workspace/resource_inventory.tex` -- formal resource and data inventory.
+- `paper_workspace/resource_inventory.pdf` -- compiled version of the resource inventory.
+- Contents must include: data inventory, experiment directory structure, available figures catalog,
+  citation inventory, and template status.
+- Required LaTeX section scaffold:
+  - `\\section{Data and Experiment Inventory}`
+  - `\\section{Figure Catalog}`
+  - `\\section{Citation Inventory}`
+  - `\\section{Writing Resources}`
+- After writing the `.tex` file, compile it to PDF.
 
 ## Critical Principle: SMART PATTERN-BASED PRIORITIZATION
 
@@ -108,9 +121,11 @@ After creating `paper_workspace/`, you MUST copy LaTeX conference templates so W
 ```python
 import shutil
 import os
+import importlib.util
 
-# Source: LaTeX templates are stored in the toolkit
-toolkit_templates_dir = "/nfs/roberts/project/pi_zy279/tl784/fpl_1/freephdlabor/toolkits/writeup"
+# Source: LaTeX templates — resolve relative to the installed package
+_spec = importlib.util.find_spec("freephdlabor")
+toolkit_templates_dir = os.path.join(os.path.dirname(_spec.origin), "toolkits", "writeup")
 
 # Destination: Copy to paper_workspace root
 dest_dir = "paper_workspace"
@@ -408,7 +423,7 @@ If files cannot be read or are corrupted:
 ✅ references.bib created with FOCUSED citations (10-15 research concepts max, completed within 6 minutes)
 ✅ WriteupAgent can find any resource using structure_analysis.txt
 
-Remember: Your job is complete documentation. WriteupAgent will choose what to use."""
+Remember: Your job is complete documentation. WriteupAgent will choose what to use.""" + "\n\n" + DOCUMENT_FORMATTING_REQUIREMENTS
 
 
 def get_resource_preparation_system_prompt(tools=None, managed_agents=None):

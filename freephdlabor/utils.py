@@ -33,6 +33,9 @@ AVAILABLE_MODELS = [
     # Google Gemini models
     "gemini-2.5-pro",
     "gemini-2.5-flash",
+    "gemini-3.0-pro",
+    # OpenAI GPT-5.2
+    "gpt-5.2",
 ]
 
 
@@ -116,7 +119,9 @@ def create_model(
         )
 
     elif "gemini" in model_name:
-        if "gemini-2.5-pro" in model_name:
+        if "gemini-3.0-pro" in model_name:
+            model_kwargs["thinking_budget"] = 65536
+        elif "gemini-2.5-pro" in model_name:
             model_kwargs["thinking_budget"] = 32768
         base_model = ChatLiteLLM(
             model=f"gemini/{model_name}",
@@ -174,6 +179,7 @@ def build_research_graph(
     pipeline_mode="default",
     followup_max_iterations=3,
     manager_max_steps=50,
+    counsel_models=None,
 ):
     """
     Build and return the compiled LangGraph research pipeline.
@@ -220,15 +226,11 @@ def build_research_graph(
         manager_max_steps=manager_max_steps,
         authorized_imports=essential_imports,
         checkpointer=checkpointer,
+        counsel_models=counsel_models,
     )
     print("LangGraph pipeline ready.")
     return compiled, checkpointer
 
-
-# Keep old name as alias for any remaining call sites
-def initialize_agent_system(*args, **kwargs):
-    """Alias for build_research_graph — kept for backwards compatibility."""
-    return build_research_graph(*args, **kwargs)
 
 
 def save_agent_memory(manager):

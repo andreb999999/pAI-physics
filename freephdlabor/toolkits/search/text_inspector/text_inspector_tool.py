@@ -25,23 +25,28 @@ Can answer questions about the content using AI analysis."""
     chunk_size: int = 6000
     api_delay: float = 12.0
 
+    md_converter: Any = None
+    raw_model_id: Optional[str] = None
+
     def __init__(self, model=None, text_limit: int = 100000, working_dir: str = None, **kwargs: Any):
         model_id = model if isinstance(model, str) else getattr(model, 'model', str(model)) if model else ""
         import os
         rpm_limit = int(os.environ.get("ANTHROPIC_RPM_LIMIT", "5"))
         api_delay = max(60 / rpm_limit, 10)
+        from ...model_utils import get_raw_model
+        raw_id = get_raw_model(model)
+        from ..text_web_browser.mdconvert import MarkdownConverter
+        converter = MarkdownConverter()
         super().__init__(
             model_id=model_id,
             text_limit=text_limit,
             working_dir=working_dir,
             chunk_size=6000,
             api_delay=api_delay,
+            md_converter=converter,
+            raw_model_id=raw_id if isinstance(raw_id, str) else model_id,
             **kwargs
         )
-        from ...model_utils import get_raw_model
-        self._raw_model = get_raw_model(model)
-        from ..text_web_browser.mdconvert import MarkdownConverter
-        self.md_converter = MarkdownConverter()
 
     def _safe_path(self, path: str) -> str:
         """Convert path to absolute path, resolving relative paths with working_dir if provided."""

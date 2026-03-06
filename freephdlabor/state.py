@@ -34,10 +34,12 @@ class ResearchState(TypedDict):
     min_review_score: int
     followup_max_iterations: int
     manager_max_steps: int
+    pipeline_stages: list[str]   # deterministic stage order for this run
 
     # -----------------------------------------------------------------
     # Dynamic routing state
     # -----------------------------------------------------------------
+    pipeline_stage_index: int             # next stage index in pipeline_stages
     current_agent: Optional[str]          # name of next specialist to invoke
     agent_task: Optional[str]             # task string sent to that specialist
 
@@ -66,6 +68,13 @@ class ResearchState(TypedDict):
     # Live-steering interrupt
     # -----------------------------------------------------------------
     interrupt_instruction: Optional[str]  # set by socket listener thread
+
+    # -----------------------------------------------------------------
+    # Theory / experiment track state (populated after Step 4.5)
+    # -----------------------------------------------------------------
+    theory_track_status: Optional[str]       # pending | in_progress | completed
+    experiment_track_status: Optional[str]   # pending | in_progress | completed
+    track_decomposition: Optional[dict]      # {"empirical_questions": [...], "theory_questions": [...]}
 
     # -----------------------------------------------------------------
     # Terminal flag

@@ -173,8 +173,19 @@ def build_system_prompt(tools, instructions, workspace_guidance, managed_agents=
     tools_section = ""
     for tool in tools:
         tools_section += f"- {tool.name}: {tool.description}\n"
-        tools_section += f"    Takes inputs: {tool.inputs}\n"
-        tools_section += f"    Returns an output of type: {tool.output_type}\n"
+        inputs = getattr(tool, "inputs", None)
+        if inputs is None:
+            schema = getattr(tool, "args_schema", None)
+            if schema is not None:
+                inputs = {
+                    k: {"type": v.get("type", "string"), "description": v.get("description", "")}
+                    for k, v in schema.model_json_schema().get("properties", {}).items()
+                }
+            else:
+                inputs = getattr(tool, "args", {})
+        tools_section += f"    Takes inputs: {inputs}\n"
+        output_type = getattr(tool, "output_type", "string")
+        tools_section += f"    Returns an output of type: {output_type}\n"
     
     # Format managed agents section (only if managed_agents provided)
     managed_agents_section = ""

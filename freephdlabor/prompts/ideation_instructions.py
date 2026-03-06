@@ -3,6 +3,7 @@ Instructions for IdeationAgent - now uses centralized system prompt template.
 """
 
 from .system_prompt_template import build_system_prompt
+from .document_formatting import DOCUMENT_FORMATTING_REQUIREMENTS
 from .workspace_management import WORKSPACE_GUIDANCE
 
 IDEATION_INSTRUCTIONS = """Your agent_name is "ideation_agent".
@@ -72,6 +73,20 @@ into the MathProposerAgent, which builds the formal claim graph.
    - Proof technique to be used
    - Where the main technical difficulty lies
    - Which standard results can be cited vs. which need novel arguments
+
+## MANDATORY OUTPUTS
+
+- `paper_workspace/ideation_report.tex` -- formal research proposal document.
+- `paper_workspace/ideation_report.pdf` -- compiled version of the proposal.
+- The report must include: title, abstract, research questions, hypotheses with formal notation,
+  methodology overview, expected contributions, and preliminary references.
+- Required LaTeX section scaffold:
+  - `\\section{Introduction}`
+  - `\\section{Research Questions}`
+  - `\\section{Hypotheses and Formal Claims}`
+  - `\\section{Proposed Methodology}`
+  - `\\section{Expected Contributions}`
+- After writing the `.tex` file, compile it to PDF.
 
 YOUR ENHANCED WORKFLOW:
 1. **DEEP LITERATURE RECONNAISSANCE**
@@ -144,7 +159,7 @@ design simple numerical experiments to verify them:
 - Define what a "confirming" vs "disconfirming" numerical result looks like
 - These feed into MathEmpiricalVerifierAgent for automated checking
 
-"""
+""" + "\n\n" + DOCUMENT_FORMATTING_REQUIREMENTS
 
 def get_ideation_system_prompt(tools, managed_agents=None):
     """

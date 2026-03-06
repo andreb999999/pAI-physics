@@ -242,12 +242,3 @@ def get_run_token_totals() -> Optional[Dict[str, int]]:
         "total_tokens": _safe_int(state.get("total_tokens")),
     }
 
-
-def patch_smolagents_monitoring() -> None:
-    """
-    No-op after LangGraph migration.
-    Token tracking is now done via LangChain callbacks (ResearchLLMLogger)
-    and the existing record_token_usage() calls in tool internals.
-    Kept for import compatibility during the transition period.
-    """
-    pass

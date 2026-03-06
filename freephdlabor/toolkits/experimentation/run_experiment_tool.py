@@ -294,13 +294,29 @@ class RunExperimentTool(BaseTool):
             print(f"\nStarting AI-Scientist-v2 experiment...")
             print(f"   You will see real-time progress below:\n")
 
-            process = subprocess.run(
-                cmd,
-                cwd=run_dir,
-                text=True,
-                check=False,
-                env=env
-            )
+            try:
+                process = subprocess.run(
+                    cmd,
+                    cwd=run_dir,
+                    text=True,
+                    check=False,
+                    env=env,
+                    timeout=3600,
+                )
+            except subprocess.TimeoutExpired:
+                return json.dumps({
+                    "status": "failure",
+                    "summary": "AI-Scientist-v2 experiment timed out after 3600 seconds (1 hour).",
+                    "results_directory": run_dir,
+                    "log_directory": log_dir,
+                    "command": " ".join(cmd),
+                    "error_type": "timeout",
+                    "timeout_seconds": 3600,
+                    "note": (
+                        "Partial files may exist in the run directory. "
+                        "Inspect artifacts and resume from experimentation if needed."
+                    ),
+                })
 
             if process.returncode != 0:
                 return json.dumps({

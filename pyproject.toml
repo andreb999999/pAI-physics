@@ -1,0 +1,78 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "freephdlabor"
+version = "0.1.0"
+description = "Local multi-agent research-to-paper system powered by LangGraph"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+
+# Minimal runtime dependencies (matches requirements-minimal.txt).
+# Install extras for full functionality — see below.
+dependencies = [
+    "langgraph>=0.4.0",
+    "langchain-core>=0.3.0",
+    "langchain-community>=0.3.0",
+    "langchain-openai>=0.3.0",
+    "langchain-anthropic>=0.3.0",
+    "litellm==1.81.15",
+    "pyyaml==6.0.3",
+    "python-dotenv==1.2.1",
+    "openai==2.24.0",
+    "anthropic==0.83.0",
+    "backoff==2.2.1",
+    "requests==2.32.5",
+    "beautifulsoup4==4.14.3",
+    "pymupdf==1.27.1",
+    "pdfminer.six==20260107",
+    "pypdf==6.7.3",
+    "chardet<6",
+    "toml",
+]
+
+[project.optional-dependencies]
+# pip install freephdlabor[observability]
+observability = [
+    "langsmith>=0.1.0",
+    "wandb",
+]
+
+# pip install freephdlabor[docs]
+docs = [
+    "pypandoc",
+    "python-docx",
+    "pillow",
+]
+
+# pip install freephdlabor[web]
+web = [
+    "playwright",
+    "crawl4ai",
+    "jina",
+]
+
+# pip install freephdlabor[experiment]
+experiment = [
+    "torch",
+    "transformers",
+    "datasets",
+    "huggingface_hub",
+    "tokenizers",
+    "tqdm",
+    "wandb",
+]
+
+# pip install freephdlabor[all]  — everything except vllm / gpu extras
+all = [
+    "freephdlabor[observability,docs,web,experiment]",
+]
+
+[project.scripts]
+freephdlabor = "freephdlabor.runner:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["freephdlabor*"]
