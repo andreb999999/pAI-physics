@@ -30,6 +30,9 @@ budget:
     gpt-5.2:
       input_per_1k: 0.00175
       output_per_1k: 0.01400
+    gpt-5.4:
+      input_per_1k: 0.00250
+      output_per_1k: 0.01500
     gemini-3.0-pro:
       input_per_1k: 0.00125
       output_per_1k: 0.01000

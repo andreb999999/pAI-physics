@@ -36,6 +36,7 @@ MODEL_CONTEXT_LIMITS: Dict[str, int] = {
     "gpt-5": 256_000,
     "gpt-5-mini": 256_000,
     "gpt-5-nano": 256_000,
+    "gpt-5.4": 1_050_000,
     "gpt-5.3-codex": 200_000,
     "gpt-4o": 128_000,
     "o3-2025-04-16": 200_000,
