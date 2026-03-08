@@ -241,5 +241,3 @@ Can answer questions about the content using AI analysis."""
         except Exception as e:
             return f"Error in final synthesis: {str(e)}\n\nChunk summaries:\n{combined_summary}"
 
-    async def _arun(self, **kwargs: Any) -> str:
-        raise NotImplementedError

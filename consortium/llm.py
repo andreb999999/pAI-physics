@@ -7,6 +7,7 @@ utils.create_model() instead.
 """
 
 import base64
+import logging
 import os
 from typing import Any, Dict, List, Optional, Union
 
@@ -14,6 +15,9 @@ import anthropic
 import backoff
 import openai
 
+logger = logging.getLogger(__name__)
+
+from .models import get_provider
 from .token_usage_tracker import record_token_usage
 
 
@@ -45,7 +49,7 @@ def _record_response_token_usage(response: Any, model_id: str, source: str) -> N
             model_id=model_id,
         )
     except Exception:
-        pass
+        logger.debug("Failed to record VLM token usage", exc_info=True)
 
 
 def encode_image_to_base64(image_data: Union[str, bytes, List[bytes]]) -> str:
@@ -103,11 +107,13 @@ def get_response_from_vlm(
                 "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
             })
         except Exception as e:
-            print(f"Warning: Failed to encode image {image_path}: {e}")
+            logger.warning("Failed to encode image %s: %s", image_path, e)
 
     new_msg_history = msg_history + [{"role": "user", "content": content}]
 
-    if "gpt-4o" in model or "gpt-4-vision" in model or "gpt-5" in model or "codex" in model:
+    provider = get_provider(model)
+
+    if provider == "openai":
         messages: List[Dict] = []
         if system_message:
             messages.append({"role": "system", "content": system_message})
@@ -124,7 +130,7 @@ def get_response_from_vlm(
         content_response = response.choices[0].message.content
         new_msg_history = new_msg_history + [{"role": "assistant", "content": content_response}]
 
-    elif model in {"claude-opus-4-6", "claude-sonnet-4-6"}:
+    elif provider == "anthropic":
         anthropic_content: List[Dict] = [{"type": "text", "text": prompt}]
         for image_path in images:
             try:
@@ -134,7 +140,7 @@ def get_response_from_vlm(
                     "source": {"type": "base64", "media_type": "image/jpeg", "data": b64},
                 })
             except Exception as e:
-                print(f"Warning: Failed to encode image {image_path}: {e}")
+                logger.warning("Failed to encode image %s: %s", image_path, e)
 
         response = client.messages.create(
             model=model,
@@ -153,16 +159,16 @@ def get_response_from_vlm(
 
     else:
         raise ValueError(
-            f"VLM model '{model}' not supported. "
-            "Supported: GPT-4o/GPT-5/Codex variants and Claude claude-opus-4-6/claude-sonnet-4-6."
+            f"VLM model '{model}' (provider={provider}) not supported. "
+            "Supported providers: openai, anthropic."
         )
 
     if print_debug:
-        print("*" * 20 + " VLM START " + "*" * 20)
+        logger.debug("VLM START")
         for j, msg in enumerate(new_msg_history):
-            print(f'{j}, {msg["role"]}: {msg["content"]}')
-        print(content_response)
-        print("*" * 21 + " VLM END " + "*" * 21)
+            logger.debug('%d, %s: %s', j, msg["role"], msg["content"])
+        logger.debug("VLM response: %s", content_response)
+        logger.debug("VLM END")
 
     return content_response, new_msg_history
 
@@ -174,10 +180,11 @@ def create_vlm_client(model: str = "gpt-4o-2024-05-13"):
     Returns:
         (client, model_name) tuple.
     """
-    if "gpt-4o" in model or "gpt-4-vision" in model or "gpt-5" in model or "codex" in model:
+    provider = get_provider(model)
+    if provider == "openai":
         return openai.OpenAI(), model
-    elif model in {"claude-opus-4-6", "claude-sonnet-4-6"}:
+    elif provider == "anthropic":
         return anthropic.Anthropic(), model
     else:
-        print(f"Model '{model}' not supported for VLM. Defaulting to gpt-4o-2024-05-13.")
+        logger.warning("Model '%s' not supported for VLM. Defaulting to gpt-4o-2024-05-13.", model)
         return openai.OpenAI(), "gpt-4o-2024-05-13"

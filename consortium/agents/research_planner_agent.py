@@ -4,9 +4,12 @@ ResearchPlannerAgent — LangGraph node module.
 
 from __future__ import annotations
 
+import os
 from typing import Any, Callable, List, Optional
 
-from ..agents.base_agent import create_specialist_agent
+from langchain_core.messages import HumanMessage
+from langgraph.prebuilt import create_react_agent
+
 from ..prompts.research_planner_instructions import get_research_planner_system_prompt
 from ..toolkits.filesystem.file_editing.file_editing_tools import (
     CreateFileWithContent, DeleteFileOrFolder, ListDir, ModifyFile, SearchKeyword, SeeFile,
@@ -18,6 +21,7 @@ from ..toolkits.writeup.latex_generator_tool import LaTeXGeneratorTool
 from ..toolkits.writeup.latex_syntax_checker_tool import LaTeXSyntaxCheckerTool
 from ..toolkits.writeup.vlm_document_analysis_tool import VLMDocumentAnalysisTool
 from ..toolkits.code_execution_tool import PythonCodeExecutionTool
+from ..workflow_utils import read_json
 
 
 def get_tools(workspace_dir: Optional[str], model_id: str) -> list:
@@ -49,6 +53,8 @@ def build_node(
     **cfg: Any,
 ) -> Callable:
     from ..toolkits.model_utils import get_raw_model
+    from .base_agent import _unwrap_model
+
     model_id = get_raw_model(model)
     tools = get_tools(workspace_dir, model_id)
     system_prompt = get_research_planner_system_prompt(tools=tools, managed_agents=None)
@@ -56,10 +62,35 @@ def build_node(
     if counsel_models:
         from ..counsel import create_counsel_node
         return create_counsel_node(system_prompt, tools, "research_planner_agent", workspace_dir, counsel_models)
-    return create_specialist_agent(
-        model=model,
+
+    react_agent = create_react_agent(
+        model=_unwrap_model(model),
         tools=tools,
-        system_prompt=system_prompt,
-        agent_name="research_planner_agent",
-        workspace_dir=workspace_dir,
+        prompt=system_prompt,
     )
+
+    def node_fn(state: dict) -> dict:
+        task = state.get("agent_task") or state.get("task", "")
+        result = react_agent.invoke({
+            "messages": [HumanMessage(content=task)],
+        })
+        last_msg = result["messages"][-1] if result.get("messages") else None
+        output = last_msg.content if last_msg and hasattr(last_msg, "content") else str(last_msg)
+
+        track_decomposition = None
+        if workspace_dir:
+            track_decomposition = read_json(
+                os.path.join(workspace_dir, "paper_workspace", "track_decomposition.json")
+            )
+
+        return {
+            "agent_outputs": {
+                **state.get("agent_outputs", {}),
+                "research_planner_agent": output,
+            },
+            "track_decomposition": track_decomposition,
+            "agent_task": None,
+        }
+
+    node_fn.__name__ = "research_planner_agent"
+    return node_fn

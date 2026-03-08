@@ -1,43 +1,24 @@
 import json
+import logging
 import os
 import re
 from typing import Optional
 from langchain_community.chat_models import ChatLiteLLM
 
-# Available models
-AVAILABLE_MODELS = [
-    # OpenAI GPT-5 models (latest)
-    "gpt-5",
-    "gpt-5-mini",
-    "gpt-5-nano",
-    "gpt-5.4",
-    "gpt-5.3-codex",
-    # OpenAI models
-    "gpt-4o",
-    "gpt-4.1-mini-2025-04-14",
-    # OpenAI reasoning models
-    "o4-mini-2025-04-16",
-    "o3-2025-04-16",
-    "o3-pro-2025-06-10",
-    # Claude models (Anthropic)
-    "claude-opus-4-6",
-    "claude-sonnet-4-6",
-    "claude-opus-4-20250514",
-    "claude-sonnet-4-20250514",
-    "claude-sonnet-4-5",
-    "claude-sonnet-4-5-20250929",
-    # DeepSeek models
-    "deepseek-chat",
-    "deepseek-coder",
-    # grok models
-    "grok-4-0709",
-    # Google Gemini models
-    "gemini-2.5-pro",
-    "gemini-2.5-flash",
-    "gemini-3.0-pro",
-    # OpenAI GPT-5.2
-    "gpt-5.2",
-]
+from .models import AVAILABLE_MODELS  # noqa: F401 — re-exported for backward compat
+
+logger = logging.getLogger(__name__)
+
+
+def _require_env(key: str, model_name: str) -> str:
+    """Get a required environment variable or raise a descriptive error."""
+    value = os.environ.get(key)
+    if not value:
+        raise EnvironmentError(
+            f"API key '{key}' is required for model '{model_name}' but is not set. "
+            f"Add it to your .env file: {key}=your_key_here"
+        )
+    return value
 
 
 def extract_content_between_markers(response: str, start_marker: str, end_marker: str) -> Optional[str]:
@@ -50,7 +31,8 @@ def extract_content_between_markers(response: str, start_marker: str, end_marker
         if matches:
             return matches[0].strip()
         return None
-    except Exception:
+    except Exception as e:
+        logger.warning("extract_content_between_markers failed: %s", e)
         return None
 
 
@@ -82,41 +64,41 @@ def create_model(
 
         base_model = ChatLiteLLM(
             model=f"anthropic/{model_name}",
-            api_key=os.environ["ANTHROPIC_API_KEY"],
+            api_key=_require_env("ANTHROPIC_API_KEY", model_name),
             model_kwargs=model_kwargs if model_kwargs else None,
         )
 
     elif "codex" in model_name:
         base_model = ChatLiteLLM(
             model=model_name,
-            api_key=os.environ["OPENAI_API_KEY"],
+            api_key=_require_env("OPENAI_API_KEY", model_name),
             model_kwargs={"reasoning_effort": reasoning_effort},
         )
 
     elif model_name.startswith("gpt-5"):
         base_model = ChatLiteLLM(
             model=model_name,
-            api_key=os.environ["OPENAI_API_KEY"],
+            api_key=_require_env("OPENAI_API_KEY", model_name),
             model_kwargs={"reasoning_effort": reasoning_effort, "verbosity": verbosity},
         )
 
     elif "gpt" in model_name or model_name.startswith(("o1-", "o3-", "o4-")):
         base_model = ChatLiteLLM(
             model=model_name,
-            api_key=os.environ["OPENAI_API_KEY"],
+            api_key=_require_env("OPENAI_API_KEY", model_name),
         )
 
     elif "deepseek" in model_name:
         base_model = ChatLiteLLM(
             model=model_name,
-            api_key=os.environ["DEEPSEEK_API_KEY"],
+            api_key=_require_env("DEEPSEEK_API_KEY", model_name),
             api_base="https://api.deepseek.com",
         )
 
     elif "llama" in model_name:
         base_model = ChatLiteLLM(
             model=f"openrouter/{model_name}",
-            api_key=os.environ["OPENROUTER_API_KEY"],
+            api_key=_require_env("OPENROUTER_API_KEY", model_name),
         )
 
     elif "gemini" in model_name:
@@ -126,7 +108,7 @@ def create_model(
             model_kwargs["thinking_budget"] = 32768
         base_model = ChatLiteLLM(
             model=f"gemini/{model_name}",
-            api_key=os.environ["GOOGLE_API_KEY"],
+            api_key=_require_env("GOOGLE_API_KEY", model_name),
             model_kwargs=model_kwargs if model_kwargs else None,
         )
 
@@ -185,7 +167,8 @@ def build_research_graph(
     """
     Build and return the compiled LangGraph research pipeline.
 
-    This is the LangGraph equivalent of the old initialize_agent_system().
+    The active graph is a directly wired three-phase workflow:
+    discovery -> parallel theory/experiment execution -> synthesis/papering.
 
     Args:
         model:                    ChatLiteLLM instance
@@ -201,13 +184,13 @@ def build_research_graph(
         enforce_editorial_artifacts: Run full editorial gates
         min_review_score:         Reviewer score threshold
         pipeline_mode:            "default" | "full_research" | "quick"
-        followup_max_iterations:  Max follow-up loops in full_research mode
-        manager_max_steps:        Max total manager iterations
+        followup_max_iterations:  Seeds the max follow-up research cycles
+        manager_max_steps:        Kept for call-site compatibility
 
     Returns:
         (compiled_graph, checkpointer) tuple.
     """
-    print("Building LangGraph research pipeline...")
+    logger.info("Building LangGraph research pipeline...")
 
     from .graph import build_research_graph as _build_graph, get_default_checkpointer
 
@@ -229,7 +212,7 @@ def build_research_graph(
         checkpointer=checkpointer,
         counsel_models=counsel_models,
     )
-    print("LangGraph pipeline ready.")
+    logger.info("LangGraph pipeline ready.")
     return compiled, checkpointer
 
 

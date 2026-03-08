@@ -111,5 +111,3 @@ class PaperSearchTool(BaseTool):
         except Exception as e:
             return json.dumps({"error": f"Error searching papers: {str(e)}"})
 
-    async def _arun(self, **kwargs: Any) -> str:
-        raise NotImplementedError

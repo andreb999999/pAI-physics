@@ -165,8 +165,6 @@ class LaTeXReflectionTool(BaseTool):
             }
             return json.dumps(error_result, indent=2)
 
-    async def _arun(self, **kwargs: Any) -> str:
-        raise NotImplementedError
 
     def _safe_path(self, path: str) -> str:
         """Convert path to absolute workspace path with clear error messages for agents."""

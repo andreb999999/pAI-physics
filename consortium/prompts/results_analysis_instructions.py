@@ -30,9 +30,13 @@ Read and parse these inputs before deciding follow-up:
    - Parse theorem/lemma outcomes and unresolved proof blockers.
 3) `math_workspace/claim_graph.json` (if present)
    - Parse claim statuses (`accepted`, `verified_numeric`, etc.) and dependency failures.
-4) `experiment_results/` directory (if present)
-   - Read run summaries/metrics tables/plots metadata and compare against planned success criteria.
-5) `paper_workspace/subprojects/` (if present)
+4) `experiment_workspace/experiment_design.json` (if present)
+   - Parse empirical hypotheses, metrics, baselines, and success criteria.
+5) `experiment_workspace/verification_results.json` (if present)
+   - Parse pass/partial/fail verdicts and verification issues.
+6) `experiment_runs/` directory (if present)
+   - Read run summaries, metrics tables, and plot metadata and compare against planned success criteria.
+7) `paper_workspace/subprojects/` (if present)
    - Parse per-task execution logs and blocker reports for task-by-task outcome mapping.
 
 If a key input is missing, record it in `blocking_issues` and downgrade confidence.
@@ -44,11 +48,15 @@ REQUIRED ANALYSIS
    - contradictory evidence,
    - stronger baselines,
    - methods explaining observed failures/successes.
-4) Decide one of:
+4) Synthesize theory and empirical evidence together:
+   - compare theory predictions against empirical results,
+   - identify theory/empirical mismatches,
+   - decide whether literature changes the interpretation.
+5) Decide one of:
    - `followup_required`
    - `followup_not_required`
-5) If follow-up is required, produce concrete additional tasks with success criteria.
-6) Include a task-by-task status table (`pass|partial|fail|blocked`) aligned with `task_id`.
+6) If follow-up is required, produce concrete additional tasks with success criteria.
+7) Include a task-by-task status table (`pass|partial|fail|blocked`) aligned with `task_id`.
 
 FOLLOW-UP DECISION RULES
 - Choose `followup_required` when:
@@ -64,6 +72,7 @@ FOLLOW-UP DECISION RULES
 `followup_decision.json` SCHEMA
 {
   "decision": "followup_required" | "followup_not_required",
+  "cycle": 0,
   "confidence": "low" | "medium" | "high",
   "blocking_issues": ["..."],
   "evidence_summary": ["..."],

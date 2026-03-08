@@ -18,36 +18,7 @@ from langchain_core.messages import HumanMessage
 from langchain_core.tools import BaseTool
 from langgraph.prebuilt import create_react_agent
 
-
-MODEL_CONTEXT_LIMITS: dict[str, int] = {
-    "claude-opus-4-6": 200_000,
-    "claude-sonnet-4-6": 200_000,
-    "claude-opus-4-20250514": 200_000,
-    "claude-sonnet-4-20250514": 200_000,
-    "claude-sonnet-4-5": 200_000,
-    "claude-sonnet-4-5-20250929": 200_000,
-    "anthropic/claude-opus-4-6": 200_000,
-    "anthropic/claude-sonnet-4-6": 200_000,
-    "gpt-5": 256_000,
-    "gpt-5-mini": 256_000,
-    "gpt-5-nano": 256_000,
-    "gpt-5.4": 1_050_000,
-    "gpt-5.3-codex": 200_000,
-    "gpt-4o": 128_000,
-    "o3-2025-04-16": 200_000,
-    "o4-mini-2025-04-16": 128_000,
-    "gemini-2.5-pro": 1_000_000,
-    "gemini-2.5-flash": 1_000_000,
-    "gemini-3.0-pro": 2_000_000,
-    "gpt-5.2": 256_000,
-    "deepseek-chat": 64_000,
-    "deepseek-coder": 64_000,
-    "grok-4-0709": 128_000,
-}
-
-
-def get_context_limit(model_id: str) -> int:
-    return MODEL_CONTEXT_LIMITS.get(model_id, 128_000)
+from ..models import get_context_limit  # noqa: F401 — re-exported for backward compat
 
 
 def _unwrap_model(model: Any) -> Any:
@@ -92,6 +63,7 @@ def create_specialist_agent(
 
         return {
             "agent_outputs": {**state.get("agent_outputs", {}), agent_name: output},
+            "agent_task": None,
         }
 
     node_fn.__name__ = agent_name

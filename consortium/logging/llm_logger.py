@@ -16,7 +16,7 @@ import json
 import os
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Union
 
 from langchain_core.callbacks import BaseCallbackHandler
@@ -87,7 +87,7 @@ class ResearchLLMLogger(BaseCallbackHandler):
 
         entry = {
             "call_id": call_id,
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "agent_name": self.agent_name,
             "status": "success",
             "input": inputs,
@@ -112,7 +112,7 @@ class ResearchLLMLogger(BaseCallbackHandler):
 
         entry = {
             "call_id": call_id,
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "agent_name": self.agent_name,
             "status": "error",
             "input": inputs,

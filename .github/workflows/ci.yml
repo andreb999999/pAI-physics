@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    name: Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install core dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -e "." pytest pytest-cov
+
+      - name: Run tests
+        run: |
+          pytest tests/ -v --tb=short --cov=consortium --cov-report=term-missing
+        env:
+          # Dummy keys so import-time validation doesn't fail in tests
+          OPENAI_API_KEY: "sk-test-000"
+          ANTHROPIC_API_KEY: "test-000"
+          GOOGLE_API_KEY: "test-000"
+
+  lint:
+    name: Type check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -e "." mypy types-PyYAML
+
+      - name: Run mypy on core modules
+        run: |
+          mypy consortium/config.py consortium/state.py consortium/budget.py \
+            --ignore-missing-imports --no-strict-optional
+        continue-on-error: true  # Non-blocking until type coverage improves

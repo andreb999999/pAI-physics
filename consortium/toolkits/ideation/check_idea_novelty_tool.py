@@ -222,5 +222,3 @@ This JSON will be automatically parsed, so ensure the format is precise.
         except Exception as e:
             return json.dumps({"error": f"Error checking novelty: {str(e)}"})
 
-    async def _arun(self, **kwargs: Any) -> str:
-        raise NotImplementedError

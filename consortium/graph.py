@@ -1,25 +1,11 @@
 """
-LangGraph research pipeline — StateGraph builder.
+LangGraph research pipeline — directly wired multi-phase workflow.
 
-Replaces the smolagents ManagerAgent.run() loop.
-
-Graph topology
---------------
-                  ┌──────────────────────────────────┐
-    START ──► manager ──► ideation_agent              │
-                  ▲       literature_review_agent     │
-                  │       research_planner_agent      │
-                  │       results_analysis_agent      │
-                  └───────experimentation_agent        │
-                          resource_preparation_agent  │
-                          writeup_agent               │
-                          proofreading_agent          │
-                          reviewer_agent              │
-                          (math agents if enabled)   │
-                          FINISH ──────────────────► END
-
-Every specialist node returns straight back to the manager node.
-The manager uses an LLM to decide which specialist to call next or to finish.
+This graph replaces the manager hub-and-spoke loop with:
+1. Discovery: ideation -> literature review -> research planner
+2. Parallel execution: theory and experiment tracks in parallel
+3. Synthesis loop: merge -> synthesis literature review -> results analysis
+4. Paper production: resource preparation -> writeup -> proofreading -> reviewer
 """
 
 from __future__ import annotations
@@ -27,14 +13,17 @@ from __future__ import annotations
 import os
 from typing import Any, List, Optional
 
-from langchain_core.messages import HumanMessage
 from langgraph.graph import END, StateGraph
+from langgraph.types import Send
 
 from .agents import (
+    build_experiment_design_node,
+    build_experiment_literature_node,
+    build_experiment_transcription_node,
+    build_experiment_verification_node,
     build_experimentation_node,
     build_ideation_node,
     build_literature_review_node,
-    build_manager_node,
     build_math_empirical_verifier_node,
     build_math_literature_node,
     build_math_proposer_node,
@@ -46,24 +35,24 @@ from .agents import (
     build_resource_preparation_node,
     build_results_analysis_node,
     build_reviewer_node,
+    build_track_merge_node,
     build_writeup_node,
 )
 from .state import ResearchState
+from .workflow_utils import (
+    followup_decision_requires_loop,
+    run_validation_gates,
+    safe_int,
+)
 
 # ---------------------------------------------------------------------------
 # Deterministic stage roster
 # ---------------------------------------------------------------------------
 
-PIPELINE_STAGES = [
+DISCOVERY_STAGES = [
     "ideation_agent",
     "literature_review_agent",
     "research_planner_agent",
-    "experimentation_agent",
-    "results_analysis_agent",
-    "resource_preparation_agent",
-    "writeup_agent",
-    "proofreading_agent",
-    "reviewer_agent",
 ]
 
 MATH_PIPELINE_STAGES = [
@@ -75,38 +64,307 @@ MATH_PIPELINE_STAGES = [
     "proof_transcription_agent",
 ]
 
+EXPERIMENT_PIPELINE_STAGES = [
+    "experiment_literature_agent",
+    "experiment_design_agent",
+    "experimentation_agent",
+    "experiment_verification_agent",
+    "experiment_transcription_agent",
+]
+
+POST_TRACK_STAGES = [
+    "synthesis_literature_review_agent",
+    "results_analysis_agent",
+    "resource_preparation_agent",
+    "writeup_agent",
+    "proofreading_agent",
+    "reviewer_agent",
+]
+
 
 def build_pipeline_stages(enable_math_agents: bool) -> list[str]:
-    """
-    Return deterministic stage order for the run.
+    stages = list(DISCOVERY_STAGES)
+    if enable_math_agents:
+        stages.extend(MATH_PIPELINE_STAGES)
+    stages.extend(EXPERIMENT_PIPELINE_STAGES)
+    stages.extend(POST_TRACK_STAGES)
+    return stages
 
-    When math agents are enabled, insert the full math pipeline immediately
-    after results analysis and before resource preparation/writeup.
-    """
-    stages = list(PIPELINE_STAGES)
-    if not enable_math_agents:
-        return stages
 
-    insertion_idx = stages.index("results_analysis_agent") + 1
+# ---------------------------------------------------------------------------
+# Routing helpers
+# ---------------------------------------------------------------------------
+
+def _format_track_task(state: dict, track_name: str, questions: list[str]) -> str:
+    cycle = safe_int(state.get("research_cycle", 0), 0)
+    if not questions:
+        return f"No {track_name} questions were identified for this cycle."
+
+    question_lines = "\n".join(f"- {question}" for question in questions)
     return (
-        stages[:insertion_idx]
-        + list(MATH_PIPELINE_STAGES)
-        + stages[insertion_idx:]
+        f"Research cycle: {cycle}\n"
+        f"Execute the {track_name} track for the current research plan.\n"
+        f"Questions assigned to this track:\n{question_lines}\n\n"
+        "Read the latest planning artifacts from `paper_workspace/`, "
+        "produce the mandatory artifacts for your track, and ground all work "
+        "in workspace evidence and cited literature."
     )
 
 
-# ---------------------------------------------------------------------------
-# Routing function
-# ---------------------------------------------------------------------------
+def track_router(state: ResearchState) -> list[Send]:
+    """Fan out to the theory and/or experiment tracks based on track decomposition."""
+    track_decomposition = state.get("track_decomposition") or {}
+    theory_questions = list(track_decomposition.get("theory_questions") or [])
+    empirical_questions = list(track_decomposition.get("empirical_questions") or [])
+    recommended_track = str(track_decomposition.get("recommended_track", "")).strip().lower()
 
-def _route_from_manager(state: ResearchState) -> str:
-    """Conditional edge: read current_agent from state and route there."""
+    sends: list[Send] = []
+    theory_allowed = state.get("math_enabled", False) and recommended_track in {"", "both", "theory"}
+    experiment_allowed = recommended_track in {"", "both", "empirical"}
+
+    if theory_allowed and theory_questions:
+        sends.append(
+            Send(
+                "theory_track",
+                {
+                    **state,
+                    "agent_task": _format_track_task(state, "theory", theory_questions),
+                    "theory_track_status": "in_progress",
+                },
+            )
+        )
+
+    if experiment_allowed and empirical_questions:
+        sends.append(
+            Send(
+                "experiment_track",
+                {
+                    **state,
+                    "agent_task": _format_track_task(state, "experiment", empirical_questions),
+                    "experiment_track_status": "in_progress",
+                },
+            )
+        )
+
+    if not sends:
+        sends.append(
+            Send(
+                "track_merge",
+                {
+                    **state,
+                    "agent_task": (
+                        "No theory or empirical execution track was selected. "
+                        "Proceed directly to synthesis and results analysis."
+                    ),
+                },
+            )
+        )
+    return sends
+
+
+def followup_router(state: ResearchState) -> str:
+    # Routing decision was already made by followup_gate_node which sets current_agent
+    # to "research_planner_agent" (loop) or "resource_preparation_agent" (continue).
+    return state.get("current_agent") or "resource_preparation_agent"
+
+
+def validation_router(state: ResearchState) -> str:
     if state.get("finished"):
         return END
-    agent = state.get("current_agent")
-    if not agent or agent == "FINISH":
-        return END
-    return agent
+    return "writeup_agent"
+
+
+def build_followup_gate_node(workspace_dir: str) -> Any:
+    def followup_gate_node(state: dict) -> dict:
+        required, reason = followup_decision_requires_loop(workspace_dir)
+        research_cycle = safe_int(state.get("research_cycle", 0), 0)
+        max_cycles = max(0, safe_int(state.get("max_research_cycles", 3), 3))
+
+        if required and research_cycle < max_cycles:
+            return {
+                "current_agent": "research_planner_agent",
+                "research_cycle": research_cycle + 1,
+                "followup_iteration": safe_int(state.get("followup_iteration", 0), 0) + 1,
+                "finished": False,
+                "agent_task": (
+                    "Prepare a focused follow-up research plan based on "
+                    f"results analysis. Reason: {reason}"
+                ),
+            }
+
+        return {
+            "current_agent": "resource_preparation_agent",
+            "finished": False,
+            "agent_task": None,
+        }
+
+    followup_gate_node.__name__ = "followup_gate"
+    return followup_gate_node
+
+
+def build_validation_gate_node() -> Any:
+    def validation_gate_node(state: dict) -> dict:
+        validation = run_validation_gates(state)
+        if validation["gate_passed"]:
+            return {
+                "validation_results": validation["validation_results"],
+                "finished": True,
+                "agent_task": None,
+            }
+
+        error_lines = [
+            f"- {gate}: {'; '.join(result['errors'])}"
+            for gate, result in validation["validation_results"].items()
+            if not result.get("is_valid")
+        ]
+        return {
+            "validation_results": validation["validation_results"],
+            "finished": False,
+            "agent_task": (
+                "Revise the paper to satisfy validation gates before finalization.\n"
+                "Validation failures:\n" + "\n".join(error_lines)
+            ),
+        }
+
+    validation_gate_node.__name__ = "validation_gate"
+    return validation_gate_node
+
+
+def build_theory_track_subgraph(
+    model: Any,
+    workspace_dir: str,
+    authorized_imports: Optional[List[str]] = None,
+    counsel_models: Optional[List[Any]] = None,
+):
+    graph = StateGraph(ResearchState)
+    counsel_kwargs = {"counsel_models": counsel_models} if counsel_models else {}
+    graph.add_node(
+        "math_literature_agent",
+        build_math_literature_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+    )
+    graph.add_node(
+        "math_proposer_agent",
+        build_math_proposer_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+    )
+    graph.add_node(
+        "math_prover_agent",
+        build_math_prover_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+    )
+    graph.add_node(
+        "math_rigorous_verifier_agent",
+        build_math_rigorous_verifier_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+    )
+    graph.add_node(
+        "math_empirical_verifier_agent",
+        build_math_empirical_verifier_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+    )
+    graph.add_node(
+        "proof_transcription_agent",
+        build_proof_transcription_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+    )
+    graph.set_entry_point("math_literature_agent")
+    graph.add_edge("math_literature_agent", "math_proposer_agent")
+    graph.add_edge("math_proposer_agent", "math_prover_agent")
+    graph.add_edge("math_prover_agent", "math_rigorous_verifier_agent")
+    graph.add_edge("math_rigorous_verifier_agent", "math_empirical_verifier_agent")
+    graph.add_edge("math_empirical_verifier_agent", "proof_transcription_agent")
+    graph.add_edge("proof_transcription_agent", END)
+    return graph.compile()
+
+
+def build_experiment_track_subgraph(
+    model: Any,
+    workspace_dir: str,
+    authorized_imports: Optional[List[str]] = None,
+    counsel_models: Optional[List[Any]] = None,
+):
+    graph = StateGraph(ResearchState)
+    counsel_kwargs = {"counsel_models": counsel_models} if counsel_models else {}
+    graph.add_node(
+        "experiment_literature_agent",
+        build_experiment_literature_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+    )
+    graph.add_node(
+        "experiment_design_agent",
+        build_experiment_design_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+    )
+    graph.add_node(
+        "experimentation_agent",
+        build_experimentation_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+    )
+    graph.add_node(
+        "experiment_verification_agent",
+        build_experiment_verification_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+    )
+    graph.add_node(
+        "experiment_transcription_agent",
+        build_experiment_transcription_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+    )
+    graph.set_entry_point("experiment_literature_agent")
+    graph.add_edge("experiment_literature_agent", "experiment_design_agent")
+    graph.add_edge("experiment_design_agent", "experimentation_agent")
+    graph.add_edge("experimentation_agent", "experiment_verification_agent")
+    graph.add_edge("experiment_verification_agent", "experiment_transcription_agent")
+    graph.add_edge("experiment_transcription_agent", END)
+    return graph.compile()
+
+
+def build_track_subgraph_node(
+    subgraph: Any,
+    status_field: str,
+    status_value: str = "completed",
+) -> Any:
+    def node(state: dict) -> dict:
+        final_state = subgraph.invoke(state)
+        return {
+            "agent_outputs": final_state.get("agent_outputs", {}),
+            status_field: status_value,
+            "agent_task": None,
+        }
+
+    node.__name__ = status_field.removesuffix("_status")
+    return node
+
+
+def build_noop_track_node(status_field: str) -> Any:
+    def node(state: dict) -> dict:
+        return {
+            status_field: state.get(status_field),
+            "agent_task": None,
+        }
+
+    node.__name__ = status_field.removesuffix("_status")
+    return node
+
+
+def build_synthesis_literature_node(
+    model: Any,
+    workspace_dir: str,
+    authorized_imports: Optional[List[str]] = None,
+    counsel_models: Optional[List[Any]] = None,
+) -> Any:
+    base_node = build_literature_review_node(
+        model,
+        workspace_dir,
+        authorized_imports,
+        **({"counsel_models": counsel_models} if counsel_models else {}),
+    )
+
+    def synthesis_node(state: dict) -> dict:
+        previous_output = state.get("agent_outputs", {}).get("literature_review_agent")
+        result = base_node(state)
+        outputs = dict(result.get("agent_outputs", {}))
+        new_output = outputs.pop("literature_review_agent", previous_output)
+        if previous_output is not None:
+            outputs["literature_review_agent"] = previous_output
+        outputs["synthesis_literature_review_agent"] = new_output
+        return {
+            **result,
+            "agent_outputs": outputs,
+        }
+
+    synthesis_node.__name__ = "synthesis_literature_review_agent"
+    return synthesis_node
 
 
 # ---------------------------------------------------------------------------
@@ -153,68 +411,76 @@ def build_research_graph(
     Returns:
         Compiled LangGraph CompiledGraph.
     """
-    # Deterministic stage order used by manager for fixed routing.
-    specialists = build_pipeline_stages(enable_math_agents)
-
-    # Build manager node with deterministic stage list.
-    manager_node = build_manager_node(
+    counsel_kwargs = {"counsel_models": counsel_models} if counsel_models else {}
+    theory_track_node = build_noop_track_node("theory_track_status")
+    if enable_math_agents:
+        theory_subgraph = build_theory_track_subgraph(
+            model=model,
+            workspace_dir=workspace_dir,
+            authorized_imports=authorized_imports,
+            counsel_models=counsel_models,
+        )
+        theory_track_node = build_track_subgraph_node(theory_subgraph, "theory_track_status")
+    experiment_subgraph = build_experiment_track_subgraph(
         model=model,
         workspace_dir=workspace_dir,
-        pipeline_mode=pipeline_mode,
-        pipeline_stages=specialists,
-        enable_math_agents=enable_math_agents,
-        followup_max_iterations=followup_max_iterations,
         authorized_imports=authorized_imports,
+        counsel_models=counsel_models,
     )
 
-    # When counsel_models are provided, each build_node() will return a counsel node
-    # instead of a single-model ReAct agent (handled inside each specialist module).
-    counsel_kwargs = {"counsel_models": counsel_models} if counsel_models else {}
-
-    # Build specialist nodes
-    specialist_nodes: dict[str, Any] = {
+    nodes: dict[str, Any] = {
         "ideation_agent": build_ideation_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
         "literature_review_agent": build_literature_review_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
         "research_planner_agent": build_research_planner_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+        "theory_track": theory_track_node,
+        "experiment_track": build_track_subgraph_node(experiment_subgraph, "experiment_track_status"),
+        "track_merge": build_track_merge_node(workspace_dir=workspace_dir),
+        "synthesis_literature_review_agent": build_synthesis_literature_node(
+            model, workspace_dir, authorized_imports, counsel_models
+        ),
         "results_analysis_agent": build_results_analysis_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
-        "experimentation_agent": build_experimentation_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+        "followup_gate": build_followup_gate_node(workspace_dir),
         "resource_preparation_agent": build_resource_preparation_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
         "writeup_agent": build_writeup_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
         "proofreading_agent": build_proofreading_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
         "reviewer_agent": build_reviewer_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+        "validation_gate": build_validation_gate_node(),
     }
-    if enable_math_agents:
-        specialist_nodes.update({
-            "math_literature_agent": build_math_literature_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
-            "math_proposer_agent": build_math_proposer_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
-            "math_prover_agent": build_math_prover_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
-            "math_rigorous_verifier_agent": build_math_rigorous_verifier_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
-            "math_empirical_verifier_agent": build_math_empirical_verifier_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
-            "proof_transcription_agent": build_proof_transcription_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
-        })
 
-    # Assemble StateGraph
     graph = StateGraph(ResearchState)
-
-    graph.add_node("manager", manager_node)
-    for name, node in specialist_nodes.items():
+    for name, node in nodes.items():
         graph.add_node(name, node)
 
-    # Entry point
-    graph.set_entry_point("manager")
+    graph.set_entry_point("ideation_agent")
+    graph.add_edge("ideation_agent", "literature_review_agent")
+    graph.add_edge("literature_review_agent", "research_planner_agent")
+    graph.add_conditional_edges("research_planner_agent", track_router)
+    graph.add_edge("theory_track", "track_merge")
+    graph.add_edge("experiment_track", "track_merge")
+    graph.add_edge("track_merge", "synthesis_literature_review_agent")
+    graph.add_edge("synthesis_literature_review_agent", "results_analysis_agent")
+    graph.add_edge("results_analysis_agent", "followup_gate")
+    graph.add_conditional_edges(
+        "followup_gate",
+        followup_router,
+        {
+            "research_planner_agent": "research_planner_agent",
+            "resource_preparation_agent": "resource_preparation_agent",
+        },
+    )
+    graph.add_edge("resource_preparation_agent", "writeup_agent")
+    graph.add_edge("writeup_agent", "proofreading_agent")
+    graph.add_edge("proofreading_agent", "reviewer_agent")
+    graph.add_edge("reviewer_agent", "validation_gate")
+    graph.add_conditional_edges(
+        "validation_gate",
+        validation_router,
+        {
+            END: END,
+            "writeup_agent": "writeup_agent",
+        },
+    )
 
-    # Conditional edges: manager -> specialist or END
-    routing_map = {name: name for name in specialist_nodes}
-    routing_map[END] = END
-    routing_map["FINISH"] = END
-
-    graph.add_conditional_edges("manager", _route_from_manager, routing_map)
-
-    # All specialists return to manager
-    for name in specialist_nodes:
-        graph.add_edge(name, "manager")
-
-    # Compile
     compile_kwargs: dict = {}
     if checkpointer is not None:
         compile_kwargs["checkpointer"] = checkpointer

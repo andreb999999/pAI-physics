@@ -19,42 +19,15 @@ from typing import Any, Callable, Dict, List, Optional
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, trim_messages
 
+from .models import get_context_limit
 
-# ---------------------------------------------------------------------------
-# Context limit table (mirrors agents/base_agent.py)
-# ---------------------------------------------------------------------------
-
-MODEL_CONTEXT_LIMITS: Dict[str, int] = {
-    "claude-opus-4-6": 200_000,
-    "claude-sonnet-4-6": 200_000,
-    "claude-opus-4-20250514": 200_000,
-    "claude-sonnet-4-20250514": 200_000,
-    "claude-sonnet-4-5": 200_000,
-    "claude-sonnet-4-5-20250929": 200_000,
-    "anthropic/claude-opus-4-6": 200_000,
-    "anthropic/claude-sonnet-4-6": 200_000,
-    "gpt-5": 256_000,
-    "gpt-5-mini": 256_000,
-    "gpt-5-nano": 256_000,
-    "gpt-5.4": 1_050_000,
-    "gpt-5.3-codex": 200_000,
-    "gpt-4o": 128_000,
-    "o3-2025-04-16": 200_000,
-    "o4-mini-2025-04-16": 128_000,
-    "gemini-2.5-pro": 1_000_000,
-    "gemini-2.5-flash": 1_000_000,
-    "deepseek-chat": 64_000,
-    "deepseek-coder": 64_000,
-    "grok-4-0709": 128_000,
-}
-_DEFAULT_LIMIT = 128_000
 _SAFETY_MARGIN = 0.75
 # Rough chars-per-token estimate used for fast threshold checking
 _CHARS_PER_TOKEN = 4
 
 
 def _context_limit(model_id: str) -> int:
-    return MODEL_CONTEXT_LIMITS.get(model_id, _DEFAULT_LIMIT)
+    return get_context_limit(model_id)
 
 
 def _estimate_tokens(messages: List[BaseMessage]) -> int:

@@ -118,5 +118,3 @@ ONLY INCLUDE "I am done" IF YOU ARE MAKING NO MORE CHANGES."""
         except Exception as e:
             return json.dumps({"error": f"Error refining idea: {str(e)}"})
 
-    async def _arun(self, **kwargs: Any) -> str:
-        raise NotImplementedError

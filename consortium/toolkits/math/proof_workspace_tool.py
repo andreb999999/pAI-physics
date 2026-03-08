@@ -231,8 +231,6 @@ class MathProofWorkspaceTool(BaseTool):
         except Exception as e:
             return self._error(f"math proof workspace tool failed: {e}")
 
-    async def _arun(self, **kwargs: Any) -> str:
-        raise NotImplementedError
 
     def _build_template(self, workspace_dir: str, claim_id: str) -> str:
         statement = ""

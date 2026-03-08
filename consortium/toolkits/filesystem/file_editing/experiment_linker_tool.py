@@ -78,5 +78,3 @@ class ExperimentLinkerTool(BaseTool):
         except Exception as e:
             return f'{{"success": false, "error": "Unexpected error: {str(e)}"}}'
 
-    async def _arun(self, **kwargs: Any) -> str:
-        raise NotImplementedError

@@ -445,8 +445,6 @@ class MathClaimGraphTool(BaseTool):
         except Exception as e:
             return self._error(f"math claim graph tool failed: {e}")
 
-    async def _arun(self, **kwargs: Any) -> str:
-        raise NotImplementedError
 
     def _resolve_workspace_dir(self, workspace_subdir: str) -> str:
         if self.working_dir:

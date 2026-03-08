@@ -116,8 +116,6 @@ class IdeaStandardizationTool(BaseTool):
                 "Related Work": "This represents a failed format conversion attempt."
             }])
 
-    async def _arun(self, **kwargs: Any) -> str:
-        raise NotImplementedError
 
     def _clean_json_string(self, json_str: str) -> str:
         """Clean JSON string to handle line-number prefixes and other formatting issues."""

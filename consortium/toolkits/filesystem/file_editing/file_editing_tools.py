@@ -5,13 +5,7 @@ from pydantic import BaseModel, Field, ConfigDict
 import os
 import importlib.util
 
-
-def _safe_int_env(name: str, default: int) -> int:
-    try:
-        value = int(os.getenv(name, str(default)))
-        return value if value >= 0 else default
-    except Exception:
-        return default
+from ....workflow_utils import safe_int_env as _safe_int_env
 
 
 def _truncate_text(content: str, max_chars: int, tool_name: str) -> str:
@@ -70,8 +64,6 @@ class ListDir(BaseTool):
         else:
             return '\n'.join(files)
 
-    async def _arun(self, **kwargs: Any) -> str:
-        raise NotImplementedError
 
     def _safe_path(self, path: str) -> str:
         """Convert path to absolute workspace path with clear error messages for agents."""
@@ -149,8 +141,6 @@ class SeeFile(BaseTool):
         max_chars = _safe_int_env("CONSORTIUM_SEE_FILE_MAX_CHARS", 12000)
         return _truncate_text(content, max_chars=max_chars, tool_name="see_file")
 
-    async def _arun(self, **kwargs: Any) -> str:
-        raise NotImplementedError
 
     def _safe_path(self, path: str) -> str:
         """Convert path to absolute workspace path with clear error messages for agents."""
@@ -218,8 +208,6 @@ class ModifyFile(BaseTool):
             file.write("".join(lines))
         return "Content modified."
 
-    async def _arun(self, **kwargs: Any) -> str:
-        raise NotImplementedError
 
     def _safe_path(self, path: str) -> str:
         """Convert path to absolute workspace path with clear error messages for agents."""
@@ -278,8 +266,6 @@ class CreateFileWithContent(BaseTool):
             file.write(content)
         return "File created successfully."
 
-    async def _arun(self, **kwargs: Any) -> str:
-        raise NotImplementedError
 
     def _safe_path(self, path: str) -> str:
         """Convert path to absolute workspace path with clear error messages for agents."""
@@ -361,8 +347,6 @@ class SearchKeyword(BaseTool):
         else:
             return f"The path '{path}' is neither a file nor a directory."
 
-    async def _arun(self, **kwargs: Any) -> str:
-        raise NotImplementedError
 
     def _search_in_file(self, filepath: str, keyword: str, context_lines: int, display_path: str) -> str:
         try:
@@ -484,8 +468,6 @@ class DeleteFileOrFolder(BaseTool):
             else:
                 return f"The file or folder {filename} does not exist."
 
-    async def _arun(self, **kwargs: Any) -> str:
-        raise NotImplementedError
 
     def _safe_path(self, path: str) -> str:
         """Convert path to absolute workspace path with clear error messages for agents."""

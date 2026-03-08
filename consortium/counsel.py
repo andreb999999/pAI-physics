@@ -311,6 +311,7 @@ def create_counsel_node(
         )
         return {
             "agent_outputs": {**state.get("agent_outputs", {}), agent_name: output},
+            "agent_task": None,
         }
 
     counsel_node.__name__ = agent_name

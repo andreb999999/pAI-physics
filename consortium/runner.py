@@ -6,7 +6,10 @@ this module can be imported/tested independently.
 """
 
 import importlib.util
+import json
 import os
+import platform
+import subprocess
 import sys
 from datetime import datetime
 
@@ -195,10 +198,202 @@ def _resolve_start_stage_index(stage_name: str, pipeline_stages: list[str]) -> i
     return pipeline_stages.index(canonical)
 
 
+_MODEL_KEY_MAP = {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "claude": "ANTHROPIC_API_KEY",
+    "gpt": "OPENAI_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "o3": "OPENAI_API_KEY",
+    "o4": "OPENAI_API_KEY",
+    "gemini": "GOOGLE_API_KEY",
+    "google": "GOOGLE_API_KEY",
+    "deepseek": "DEEPSEEK_API_KEY",
+    "grok": "XAI_API_KEY",
+    "xai": "XAI_API_KEY",
+}
+
+
+def _validate_api_keys(model_name: str) -> list[str]:
+    """Return a list of error messages for missing API keys given a model name.
+
+    Returns an empty list if all required keys are present.
+    """
+    errors = []
+    model_lower = model_name.lower()
+    required_key = None
+    for prefix, env_var in _MODEL_KEY_MAP.items():
+        if prefix in model_lower:
+            required_key = env_var
+            break
+    if required_key and not os.getenv(required_key):
+        errors.append(
+            f"Model '{model_name}' requires {required_key} but it is not set.\n"
+            f"  Add it to your .env file:  {required_key}=your_key_here"
+        )
+    # Counsel mode needs three keys; check is done lazily if counsel is enabled.
+    return errors
+
+
+def _list_runs(results_dir: str = "results") -> None:
+    """Print a summary table of past runs in the results directory."""
+    if not os.path.isdir(results_dir):
+        print(f"No results directory found at '{results_dir}'.")
+        return
+
+    entries = sorted(
+        (d for d in os.listdir(results_dir) if os.path.isdir(os.path.join(results_dir, d))),
+        reverse=True,
+    )
+    if not entries:
+        print("No past runs found in results/.")
+        return
+
+    header = f"{'Workspace':<45} {'Task (truncated)':<45} {'Cost':>8}  Status"
+    print(header)
+    print("-" * len(header))
+
+    for name in entries:
+        ws = os.path.join(results_dir, name)
+        # Cost
+        cost_str = "?"
+        budget_path = os.path.join(ws, "budget_state.json")
+        if os.path.exists(budget_path):
+            try:
+                with open(budget_path) as f:
+                    bd = json.load(f)
+                total = bd.get("total_usd", bd.get("total_cost_usd", None))
+                if total is not None:
+                    cost_str = f"${float(total):.2f}"
+            except Exception:
+                pass
+        # Status
+        status_str = "unknown"
+        status_path = os.path.join(ws, "STATUS.txt")
+        if os.path.exists(status_path):
+            try:
+                with open(status_path) as f:
+                    status_str = f.read().strip()[:20]
+            except Exception:
+                pass
+        # Task
+        task_str = ""
+        summary_path = os.path.join(ws, "run_summary.json")
+        if os.path.exists(summary_path):
+            try:
+                with open(summary_path) as f:
+                    sm = json.load(f)
+                task_str = sm.get("task", "")[:43]
+            except Exception:
+                pass
+        print(f"{name:<45} {task_str:<45} {cost_str:>8}  {status_str}")
+
+
+def _write_experiment_metadata(workspace_dir: str, args, model_name: str, task: str) -> None:
+    """Write experiment_metadata.json to the workspace at run start."""
+    git_commit = "unknown"
+    try:
+        git_commit = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL, text=True
+        ).strip()
+    except Exception:
+        pass
+
+    git_dirty = False
+    try:
+        result = subprocess.check_output(
+            ["git", "status", "--porcelain"], stderr=subprocess.DEVNULL, text=True
+        )
+        git_dirty = bool(result.strip())
+    except Exception:
+        pass
+
+    metadata = {
+        "timestamp": datetime.now().isoformat(),
+        "platform": platform.platform(),
+        "python_version": platform.python_version(),
+        "git_commit": git_commit,
+        "git_dirty": git_dirty,
+        "model": model_name,
+        "task_preview": task[:200],
+        "cli_args": {
+            "enable_math_agents": getattr(args, "enable_math_agents", False),
+            "enable_counsel": getattr(args, "enable_counsel", False),
+            "output_format": getattr(args, "output_format", "latex"),
+            "enforce_paper_artifacts": getattr(args, "enforce_paper_artifacts", False),
+            "min_review_score": getattr(args, "min_review_score", 8),
+        },
+    }
+    out_path = os.path.join(workspace_dir, "experiment_metadata.json")
+    try:
+        with open(out_path, "w") as f:
+            json.dump(metadata, f, indent=2)
+    except Exception:
+        pass
+
+
+def _write_run_summary(workspace_dir: str, task: str, model_name: str,
+                        start_time: datetime, stages_completed: list[str]) -> None:
+    """Write run_summary.json to the workspace at run end."""
+    duration_s = (datetime.now() - start_time).total_seconds()
+
+    total_cost = None
+    budget_path = os.path.join(workspace_dir, "budget_state.json")
+    if os.path.exists(budget_path):
+        try:
+            with open(budget_path) as f:
+                bd = json.load(f)
+            total_cost = bd.get("total_usd", bd.get("total_cost_usd"))
+        except Exception:
+            pass
+
+    total_tokens = None
+    token_path = os.path.join(workspace_dir, "run_token_usage.json")
+    if os.path.exists(token_path):
+        try:
+            with open(token_path) as f:
+                tok = json.load(f)
+            total_tokens = tok.get("total_tokens")
+        except Exception:
+            pass
+
+    # Detect final paper path
+    paper_path = None
+    for candidate in ["final_paper.pdf", "final_paper.tex", "final_paper.md"]:
+        p = os.path.join(workspace_dir, candidate)
+        if os.path.exists(p):
+            paper_path = candidate
+            break
+
+    summary = {
+        "task": task,
+        "model": model_name,
+        "started_at": start_time.isoformat(),
+        "duration_seconds": round(duration_s, 1),
+        "stages_completed": stages_completed,
+        "total_cost_usd": total_cost,
+        "total_tokens": total_tokens,
+        "final_paper": paper_path,
+        "workspace": workspace_dir,
+    }
+    out_path = os.path.join(workspace_dir, "run_summary.json")
+    try:
+        with open(out_path, "w") as f:
+            json.dump(summary, f, indent=2)
+        print(f"Run summary written: {out_path}")
+    except Exception:
+        pass
+
+
 def main():
     args = parse_arguments()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_start_time = datetime.now()
     effective_pipeline_mode = "full_research"
+
+    # --list-runs: print past workspaces and exit
+    if getattr(args, "list_runs", False):
+        _list_runs()
+        return 0
 
     # --- Logging setup ---
     env_log_default = os.getenv("CONSORTIUM_LOG_TO_FILES", "1").strip().lower() in {
@@ -242,6 +437,28 @@ def main():
         args, llm_config
     )
 
+    # --- API key validation (always run; also serves as the dry-run check) ---
+    key_errors = _validate_api_keys(model_name)
+    if key_errors:
+        for err in key_errors:
+            print(f"[ERROR] {err}")
+        print("\nFix the above before running. See .env.example for the full list of keys.")
+        return 1
+
+    # --- Dry-run mode: validate config and exit without touching the pipeline ---
+    if getattr(args, "dry_run", False):
+        budget_config = llm_config.get("budget", {}) if llm_config else {}
+        usd_limit = budget_config.get("usd_limit", "not set")
+        print("\n[dry-run] Environment checks passed:")
+        print(f"  model           : {model_name}")
+        print(f"  reasoning_effort: {reasoning_effort}")
+        print(f"  budget cap      : ${usd_limit}")
+        print(f"  math agents     : {getattr(args, 'enable_math_agents', False)}")
+        print(f"  counsel mode    : {getattr(args, 'enable_counsel', False)}")
+        print(f"  output format   : {getattr(args, 'output_format', 'latex')}")
+        print("\n[dry-run] All checks passed. Remove --dry-run to start the real run.")
+        return 0
+
     print(f"\nLangGraph Research System Initialized — model: {model_name}")
 
     # --- Experiment tool env config ---
@@ -269,8 +486,10 @@ def main():
         os.makedirs(results_base_dir, exist_ok=True)
         task = args.task or _DEFAULT_TASK
         print(f"Created workspace: {results_base_dir}")
+        _write_experiment_metadata(results_base_dir, args, model_name, task)
 
     os.environ["RESULTS_BASE_DIR"] = results_base_dir
+    os.environ["CONSORTIUM_OUTPUT_FORMAT"] = getattr(args, "output_format", "latex")
 
     # --- Token tracking ---
     run_id = f"{timestamp}_{os.getpid()}"
@@ -419,6 +638,8 @@ def main():
             "artifacts": {},
             "iteration_count": 0,
             "followup_iteration": 0,
+            "research_cycle": 0,
+            "max_research_cycles": args.followup_max_iterations,
             "validation_results": {},
             "interrupt_instruction": None,
             "theory_track_status": None,
@@ -452,6 +673,20 @@ def main():
                 "Run marked incomplete — missing: "
                 + ", ".join(result.get("missing_required_artifacts", []))
             )
+
+        # Determine which stages completed (read from state if available)
+        stages_done = []
+        if isinstance(final_state, dict):
+            idx = final_state.get("pipeline_stage_index", 0)
+            stages_done = pipeline_stages[:idx]
+
+        _write_run_summary(
+            workspace_dir=results_base_dir,
+            task=task,
+            model_name=model_name,
+            start_time=run_start_time,
+            stages_completed=stages_done,
+        )
 
         print(f"\n{'='*50}\nTask finished.\n{'='*50}")
 

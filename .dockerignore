@@ -1,0 +1,13 @@
+results/
+downloads/
+logs/
+__pycache__/
+*.pyc
+.git/
+.env
+.local/
+*.egg-info/
+.pytest_cache/
+tests/
+docs/
+.github/

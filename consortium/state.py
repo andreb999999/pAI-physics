@@ -14,6 +14,11 @@ from langgraph.graph.message import add_messages
 from typing_extensions import TypedDict
 
 
+def _merge_dicts(left: dict, right: dict) -> dict:
+    """Merge dict state produced by parallel branches."""
+    return {**(left or {}), **(right or {})}
+
+
 class ResearchState(TypedDict):
     # -----------------------------------------------------------------
     # Core conversation -- uses add_messages reducer (append-only)
@@ -46,7 +51,7 @@ class ResearchState(TypedDict):
     # -----------------------------------------------------------------
     # Agent outputs -- keyed by agent name
     # -----------------------------------------------------------------
-    agent_outputs: dict                   # agent_name -> last output string
+    agent_outputs: Annotated[dict, _merge_dicts]  # agent_name -> last output string
 
     # -----------------------------------------------------------------
     # Artifact tracking
@@ -58,6 +63,8 @@ class ResearchState(TypedDict):
     # -----------------------------------------------------------------
     iteration_count: int                  # total manager steps taken
     followup_iteration: int               # Step 6/6.2 loop counter
+    research_cycle: int                   # current plan-execute-analyze cycle
+    max_research_cycles: int              # hard cap on follow-up replanning cycles
 
     # -----------------------------------------------------------------
     # Validation results

@@ -20,6 +20,7 @@ MANDATORY OUTPUTS
 - `paper_workspace/research_plan.pdf`
 - `paper_workspace/research_plan_tasks.json`
 - `paper_workspace/research_plan_risk_register.md`
+- `paper_workspace/track_decomposition.json`
 
 INPUT FILE READING SPECIFICATION (MANDATORY)
 Read these files before planning:
@@ -50,6 +51,11 @@ REQUIRED PLAN CONTENT
 5) Clear acceptance criteria per task
 6) Risk register with mitigation plan
 7) Literature-grounded rationale with citations and links
+8) Track decomposition identifying whether the project needs:
+   - theory work only,
+   - empirical work only,
+   - both tracks in parallel,
+   - or no further execution.
 
 TASK-SPEC FORMAT (for `research_plan_tasks.json`)
 For each task include:
@@ -61,6 +67,20 @@ For each task include:
 - `citations` (keys/links that motivate this task)
 - `success_criteria`
 - `blocking_dependencies`
+
+`track_decomposition.json` SCHEMA
+{
+  "empirical_questions": ["..."],
+  "theory_questions": ["..."],
+  "recommended_track": "both" | "theory" | "empirical" | "none",
+  "rationale": "..."
+}
+
+FOLLOW-UP CYCLE BEHAVIOR
+- If `paper_workspace/followup_decision.json` exists, read it before planning.
+- When revisiting this stage after a prior cycle, produce a focused follow-up plan rather than a full restart.
+- Carry forward only the unresolved theory and empirical questions.
+- Tighten success criteria based on previously observed failures or ambiguities.
 
 QUALITY GATE
 - Every major claim/task must be traceable to at least one cited paper.

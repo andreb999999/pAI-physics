@@ -22,6 +22,8 @@ from typing import List, Dict, Any, Optional, Type
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field, ConfigDict
 
+from ...workflow_utils import safe_int_env as _safe_int_env, safe_float_env as _safe_float_env
+
 
 class CitationSearchToolInput(BaseModel):
     search_query: str = Field(description="Search query for papers (keywords, title, author, or topic)")
@@ -76,21 +78,9 @@ class CitationSearchTool(BaseTool):
             **kwargs,
         )
 
-    @staticmethod
-    def _safe_int_env(name: str, default: int) -> int:
-        try:
-            value = int(os.getenv(name, str(default)))
-            return value if value >= 0 else default
-        except Exception:
-            return default
-
-    @staticmethod
-    def _safe_float_env(name: str, default: float) -> float:
-        try:
-            value = float(os.getenv(name, str(default)))
-            return value if value >= 0 else default
-        except Exception:
-            return default
+    # Use module-level _safe_int_env / _safe_float_env from workflow_utils
+    _safe_int_env = staticmethod(_safe_int_env)
+    _safe_float_env = staticmethod(_safe_float_env)
 
     @staticmethod
     def _extract_arxiv_id(text: str) -> Optional[str]:
@@ -206,8 +196,6 @@ class CitationSearchTool(BaseTool):
             }
             return json.dumps(error_result, indent=2)
 
-    async def _arun(self, **kwargs: Any) -> str:
-        raise NotImplementedError
 
     def _search_arxiv(self, query: str, max_results: int) -> List[Dict[str, Any]]:
         """Search arXiv for papers."""
@@ -482,5 +470,5 @@ class CitationSearchTool(BaseTool):
         try:
             match = re.search(r'@\w+\{([^,]+),', bibtex)
             return match.group(1) if match else None
-        except:
+        except Exception:
             return None

@@ -137,8 +137,6 @@ class LaTeXContentVerificationTool(BaseTool):
             }
             return json.dumps(error_result, indent=2)
 
-    async def _arun(self, **kwargs: Any) -> str:
-        raise NotImplementedError
 
     def _check_required_files(self, candidate_dirs: List[str]) -> Dict[str, Any]:
         """Check if all required deliverable files exist."""

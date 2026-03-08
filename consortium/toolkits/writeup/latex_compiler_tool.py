@@ -170,8 +170,6 @@ class LaTeXCompilerTool(BaseTool):
                 "pdf_path": None,
             })
 
-    async def _arun(self, **kwargs: Any) -> str:
-        raise NotImplementedError
 
     def _resolve_citations_automatically(self, latex_file_path: str) -> tuple:
         """

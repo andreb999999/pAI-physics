@@ -211,4 +211,26 @@ Examples:
              "overrides counsel.max_debate_rounds in config).",
     )
 
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate API keys, config, and workspace setup then exit without running the pipeline. "
+             "Useful for checking your environment before a real (paid) run.",
+    )
+
+    parser.add_argument(
+        "--output-format",
+        type=str,
+        choices=["latex", "markdown"],
+        default="latex",
+        help="Output format for the final paper. 'latex' (default) produces final_paper.tex + PDF "
+             "(requires pdflatex). 'markdown' produces final_paper.md with no LaTeX dependency.",
+    )
+
+    parser.add_argument(
+        "--list-runs",
+        action="store_true",
+        help="List past runs in the results/ directory with cost and status, then exit.",
+    )
+
     return parser.parse_args()

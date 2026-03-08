@@ -24,12 +24,35 @@ from __future__ import annotations
 import json
 import os
 import signal
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
+
+try:
+    import filelock as _filelock_module
+    _FILELOCK_AVAILABLE = True
+except ImportError:
+    _FILELOCK_AVAILABLE = False
 
 from .spec import CampaignSpec, Stage
 
 STATUS_FILE = "campaign_status.json"
+_LOCK_TIMEOUT = 30  # seconds
+
+
+@contextmanager
+def _status_lock(campaign_dir: str):
+    """Context manager that holds an exclusive file lock on the status file.
+
+    Falls back to a no-op context manager if filelock is not installed.
+    """
+    lock_path = os.path.join(campaign_dir, "campaign_status.lock")
+    if _FILELOCK_AVAILABLE:
+        lock = _filelock_module.FileLock(lock_path, timeout=_LOCK_TIMEOUT)
+        with lock:
+            yield
+    else:
+        yield
 
 # Stage status constants
 PENDING = "pending"
@@ -120,42 +143,60 @@ class CampaignStatus:
 # ------------------------------------------------------------------
 
 def read_status(campaign_dir: str) -> CampaignStatus:
-    """Read campaign_status.json, returning an empty status if it doesn't exist."""
+    """Read campaign_status.json under an exclusive lock, returning empty status if not found."""
     path = os.path.join(campaign_dir, STATUS_FILE)
-    if os.path.exists(path):
-        with open(path) as f:
-            return CampaignStatus(json.load(f))
+    with _status_lock(campaign_dir):
+        if os.path.exists(path):
+            with open(path) as f:
+                return CampaignStatus(json.load(f))
     return CampaignStatus({"campaign_name": "", "spec_file": "", "stages": {}})
 
 
 def write_status(campaign_dir: str, status: CampaignStatus) -> None:
+    """Write campaign_status.json atomically under an exclusive lock."""
     os.makedirs(campaign_dir, exist_ok=True)
     path = os.path.join(campaign_dir, STATUS_FILE)
-    with open(path, "w") as f:
-        json.dump(status.raw(), f, indent=2)
+    tmp_path = path + ".tmp"
+    with _status_lock(campaign_dir):
+        with open(tmp_path, "w") as f:
+            json.dump(status.raw(), f, indent=2)
+        os.replace(tmp_path, path)  # atomic on POSIX
 
 
 def init_status(campaign_dir: str, spec: "CampaignSpec", spec_file: str) -> CampaignStatus:
-    """Create a fresh status file for a campaign, preserving any existing stage data."""
-    existing = read_status(campaign_dir)
-    data = {
-        "campaign_name": spec.name,
-        "spec_file": os.path.abspath(spec_file),
-        "stages": {},
-    }
-    for stage in spec.stages:
-        existing_stage = existing.raw()["stages"].get(stage.id, {})
-        data["stages"][stage.id] = existing_stage or {
-            "status": PENDING,
-            "workspace": None,
-            "pid": None,
-            "started_at": None,
-            "completed_at": None,
-            "missing_artifacts": [],
-            "fail_reason": None,
+    """Create or update the status file for a campaign, preserving existing stage data."""
+    os.makedirs(campaign_dir, exist_ok=True)
+    path = os.path.join(campaign_dir, STATUS_FILE)
+    tmp_path = path + ".tmp"
+    with _status_lock(campaign_dir):
+        existing_data: dict = {}
+        if os.path.exists(path):
+            try:
+                with open(path) as f:
+                    existing_data = json.load(f)
+            except Exception:
+                existing_data = {}
+        existing_stages = existing_data.get("stages", {})
+        data = {
+            "campaign_name": spec.name,
+            "spec_file": os.path.abspath(spec_file),
+            "stages": {},
         }
-    status = CampaignStatus(data)
-    write_status(campaign_dir, status)
+        for stage in spec.stages:
+            existing_stage = existing_stages.get(stage.id, {})
+            data["stages"][stage.id] = existing_stage or {
+                "status": PENDING,
+                "workspace": None,
+                "pid": None,
+                "started_at": None,
+                "completed_at": None,
+                "missing_artifacts": [],
+                "fail_reason": None,
+            }
+        status = CampaignStatus(data)
+        with open(tmp_path, "w") as f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp_path, path)
     return status
 
 

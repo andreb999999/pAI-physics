@@ -143,8 +143,6 @@ class MathProofRigorCheckerTool(BaseTool):
         except Exception as e:
             return self._error(f"proof rigor checker failed: {e}")
 
-    async def _arun(self, **kwargs: Any) -> str:
-        raise NotImplementedError
 
     def _run_checks(
         self,

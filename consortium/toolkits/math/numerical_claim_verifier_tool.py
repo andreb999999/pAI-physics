@@ -170,8 +170,6 @@ class MathNumericalClaimVerifierTool(BaseTool):
         except Exception as e:
             return self._error(f"numerical claim verifier failed: {e}")
 
-    async def _arun(self, **kwargs: Any) -> str:
-        raise NotImplementedError
 
     def _verify_expression(
         self,

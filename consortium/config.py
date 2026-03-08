@@ -1,6 +1,9 @@
+import logging
 import os
 import yaml
 import functools
+
+logger = logging.getLogger(__name__)
 
 # Custom parameter filtering function for model-specific requirements
 def filter_model_params(original_func):
@@ -68,6 +71,27 @@ def filter_model_params(original_func):
             return original_func(*args, **kwargs)
     return wrapper
 
+def _validate_config(config):
+    """Warn about missing or malformed config sections. Does not block execution."""
+    if not isinstance(config, dict):
+        logger.warning("LLM config is not a dict — ignoring")
+        return
+    if "main_agents" in config:
+        ma = config["main_agents"]
+        if not isinstance(ma, dict):
+            logger.warning("main_agents must be a dict in .llm_config.yaml")
+        elif "model" not in ma:
+            logger.warning("main_agents.model is not set in .llm_config.yaml")
+    if "budget" in config:
+        b = config["budget"]
+        if not isinstance(b, dict):
+            logger.warning("budget must be a dict in .llm_config.yaml")
+        elif "usd_limit" not in b:
+            logger.warning("budget.usd_limit is not set — cost enforcement will be disabled")
+        elif not b.get("pricing"):
+            logger.warning("budget.pricing is empty — cost enforcement will fail for unknown models")
+
+
 def load_llm_config():
     """Load LLM configuration from .llm_config.yaml if it exists."""
     config_path = ".llm_config.yaml"
@@ -75,11 +99,12 @@ def load_llm_config():
         try:
             with open(config_path, 'r') as f:
                 config = yaml.safe_load(f)
-            print(f"📖 Loaded LLM config from {config_path}")
+            logger.info("Loaded LLM config from %s", config_path)
+            _validate_config(config)
             return config
         except yaml.YAMLError as e:
-            print(f"⚠️ Error loading {config_path}: {e}")
+            logger.warning("Error loading %s: %s", config_path, e)
             return None
     else:
-        print(f"ℹ️ No {config_path} found, using CLI arguments")
+        logger.info("No %s found, using CLI arguments", config_path)
         return None

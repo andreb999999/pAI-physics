@@ -510,7 +510,7 @@ class StatisticalAnalysisPlotTool(Tool):
                             "significant": p_value < alpha_level,
                             "effect_size_interpretation": self._interpret_effect_size(abs(cohens_d))
                         })
-                    except:
+                    except Exception:
                         continue
         
         results["tests"] = test_results

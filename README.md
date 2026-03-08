@@ -9,6 +9,46 @@
 
 > Runtime note: the launcher now runs a deterministic full pipeline. `--pipeline-mode` is accepted for backward compatibility but ignored.
 
+---
+
+## 5-Minute Quickstart
+
+> **Cost**: ~$2–10 (single model, no counsel) | **Time**: 15–40 min | **Requires**: one API key
+
+```bash
+# 1. Bootstrap environment (one-time, ~5 min)
+./scripts/bootstrap.sh researchlab minimal
+
+conda activate researchlab
+
+# 2. Set your API key (only one provider needed)
+cp .env.example .env
+echo "ANTHROPIC_API_KEY=your_key_here" >> .env   # or OPENAI_API_KEY / GOOGLE_API_KEY
+
+# 3. Validate setup without spending tokens
+python launch_multiagent.py --task "test" --dry-run
+
+# 4. Run the included quickstart example (~$3, produces markdown paper draft)
+python launch_multiagent.py \
+  --task "$(cat examples/quickstart/task.txt)" \
+  --output-format markdown \
+  --no-counsel \
+  --no-log-to-files
+```
+
+After the run, look in `results/consortium_<timestamp>/` for:
+- `final_paper.md` — the generated paper draft
+- `paper_workspace/literature_review.pdf` — literature synthesis
+- `budget_state.json` — total tokens and cost used
+
+**Want a full paper with LaTeX/PDF?** Install LaTeX (`./scripts/bootstrap.sh researchlab latex`) and drop `--output-format markdown`.
+
+**Want multi-model quality?** Add `--enable-counsel` (requires OpenAI + Anthropic + Google keys; ~4× cost).
+
+**Want math theorem verification?** Add `--enable-math-agents` (see [Math Workflow](#math-workflow)).
+
+---
+
 ## Table of Contents
 
 - [What This Platform Does](#what-this-platform-does)
@@ -49,19 +89,29 @@ Runs are resumable through LangGraph checkpoints (`checkpoints.db`) and can be s
 
 ### Deterministic Stage Order
 
-Base stage order:
+The pipeline is a direct-wired linear graph (no manager hub). Stages are grouped into three tracks:
 
+**Discovery** (3 stages):
 1. `ideation_agent`
 2. `literature_review_agent`
 3. `research_planner_agent`
-4. `experimentation_agent`
-5. `results_analysis_agent`
-6. `resource_preparation_agent`
-7. `writeup_agent`
-8. `proofreading_agent`
-9. `reviewer_agent`
 
-If `--enable-math-agents` is enabled, these stages are inserted after `results_analysis_agent`:
+**Experiment Track** (5 stages):
+4. `experiment_literature_agent`
+5. `experiment_design_agent`
+6. `experimentation_agent`
+7. `experiment_verification_agent`
+8. `experiment_transcription_agent`
+
+**Post-Track** (6 stages):
+9. `synthesis_literature_review_agent`
+10. `results_analysis_agent`
+11. `resource_preparation_agent`
+12. `writeup_agent`
+13. `proofreading_agent`
+14. `reviewer_agent`
+
+If `--enable-math-agents` is enabled, 6 math stages are inserted after discovery and before the experiment track:
 
 - `math_literature_agent`
 - `math_proposer_agent`
@@ -72,14 +122,18 @@ If `--enable-math-agents` is enabled, these stages are inserted after `results_a
 
 ```mermaid
 flowchart TD
-    taskPrompt["Task Prompt"] --> manager["ManagerAgent"]
-    manager --> ideation["IdeationAgent"]
+    taskPrompt["Task Prompt"] --> ideation["IdeationAgent"]
     ideation --> litReview["LiteratureReviewAgent"]
     litReview --> planner["ResearchPlannerAgent"]
-    planner --> experiment["ExperimentationAgent"]
-    experiment --> analysis["ResultsAnalysisAgent"]
-    analysis --> mathOptional["Math Stages Optional"]
-    mathOptional --> resourcePrep["ResourcePreparationAgent"]
+    planner --> mathOptional["Math Stages (optional)"]
+    mathOptional --> expLit["ExperimentLiteratureAgent"]
+    expLit --> expDesign["ExperimentDesignAgent"]
+    expDesign --> experiment["ExperimentationAgent"]
+    experiment --> expVerify["ExperimentVerificationAgent"]
+    expVerify --> expTranscribe["ExperimentTranscriptionAgent"]
+    expTranscribe --> synthLit["SynthesisLiteratureReviewAgent"]
+    synthLit --> analysis["ResultsAnalysisAgent"]
+    analysis --> resourcePrep["ResourcePreparationAgent"]
     resourcePrep --> writeup["WriteupAgent"]
     writeup --> proofread["ProofreadingAgent"]
     proofread --> reviewer["ReviewerAgent"]
@@ -624,14 +678,21 @@ python scripts/lemma_library_cli.py --workspace /absolute/path/to/results/consor
 
 Runtime and spend depend on task scope, enabled gates, model choice, and revision loops.
 
-- Single-model runs are the cheapest baseline
-- Math-enabled runs take longer and cost more
-- Counsel mode is roughly 5-6x per specialist stage
+| Configuration | Typical Cost | Typical Runtime | Notes |
+|---|---|---|---|
+| Quickstart (markdown, no counsel) | $2–10 | 15–40 min | Single model, ArXiv only |
+| Base pipeline + LaTeX PDF | $10–40 | 30–90 min | Requires pdflatex installed |
+| Base pipeline + math agents | $20–60 | 60–150 min | Adds 6 math stages |
+| Counsel mode (4-model debate) | $50–200 | 2–5 hrs | Requires 3 API keys |
+| Full paper campaign (3 stages) | $100–400 | 6–12 hrs | Via OpenClaw orchestration |
 
-For counsel-heavy runs, keep `budget.usd_limit` high enough (the repo default is `600`) and watch:
+> **Budget cap**: The default `.llm_config.yaml` cap is $600. Reduce `budget.usd_limit` for experiments.
 
-- `run_token_usage.json`
-- `budget_ledger.jsonl`
+For counsel-heavy runs, monitor:
+
+- `run_token_usage.json` — token counts by model
+- `budget_ledger.jsonl` — per-call cost log
+- `run_summary.json` — final cost/token summary written at completion
 
 ## Troubleshooting
 

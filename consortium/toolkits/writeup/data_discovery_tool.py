@@ -506,7 +506,7 @@ class DataDiscoveryTool(Tool):
             if len(categorical_cols) > 0 and len(numeric_cols) > 0:
                 plot_types.append("categorical_comparison")
                 
-        except:
+        except Exception:
             plot_types = ["general_csv_plots"]
         
         return plot_types
@@ -520,7 +520,7 @@ class DataDiscoveryTool(Tool):
                 "categorical_columns": list(df.select_dtypes(include=['object']).columns),
                 "summary_stats": df[numeric_cols].describe().to_dict() if len(numeric_cols) > 0 else {}
             }
-        except:
+        except Exception:
             return {"note": "Summary generation failed"}
     
     def _identify_numpy_plot_potential(self, data: np.ndarray) -> List[str]:

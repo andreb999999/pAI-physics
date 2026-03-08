@@ -135,5 +135,3 @@ class FetchArxivPapersTool(BaseTool):
 
         return f"Download complete! Saved {len(downloaded_papers)} papers to the '{self.output_folder}' directory: {downloaded_papers}"
 
-    async def _arun(self, **kwargs: Any) -> str:
-        raise NotImplementedError

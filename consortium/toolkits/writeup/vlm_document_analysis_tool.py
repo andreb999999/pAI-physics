@@ -182,8 +182,6 @@ class VLMDocumentAnalysisTool(BaseTool):
             }
             return json.dumps(error_result, indent=2)
 
-    async def _arun(self, **kwargs: Any) -> str:
-        raise NotImplementedError
 
     def _analyze_pdf_comprehensively(self, pdf_path: str) -> str:
         """Comprehensive PDF analysis pipeline."""

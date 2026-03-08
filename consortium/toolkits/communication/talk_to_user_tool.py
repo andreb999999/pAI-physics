@@ -22,5 +22,3 @@ class TalkToUser(BaseTool):
         user_response = input("[User]: ")
         return user_response
 
-    async def _arun(self, **kwargs: Any) -> str:
-        raise NotImplementedError

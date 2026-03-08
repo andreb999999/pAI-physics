@@ -15,13 +15,30 @@ import importlib
 import io
 import logging
 import os
+import platform
 import re
+import signal
 import sys
 from contextlib import redirect_stdout, redirect_stderr
 from typing import Any, Dict, List, Optional, Type
 
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field, ConfigDict
+
+
+# ---------------------------------------------------------------------------
+# Builtins that agent code must not access directly
+# ---------------------------------------------------------------------------
+_DANGEROUS_BUILTINS = frozenset({
+    "eval", "exec", "compile", "breakpoint", "exit", "quit",
+    "__import__",
+})
+
+_CODE_EXEC_TIMEOUT = int(os.getenv("CONSORTIUM_CODE_EXEC_TIMEOUT_SEC", "300"))
+
+
+def _timeout_handler(signum, frame):
+    raise TimeoutError("Code execution exceeded time limit")
 
 
 # ---------------------------------------------------------------------------
@@ -55,18 +72,47 @@ def _execute_in_workspace(
             )
         return importlib.__import__(name, *args, **kwargs)
 
+    abs_workspace = os.path.abspath(workspace_dir)
+    original_chdir = os.chdir
+
+    def _safe_chdir(path):
+        abs_path = os.path.abspath(path)
+        if not abs_path.startswith(abs_workspace):
+            raise PermissionError(f"Cannot chdir outside workspace: {path}")
+        return original_chdir(abs_path)
+
     original_dir = os.getcwd()
     stdout_buf = io.StringIO()
     stderr_buf = io.StringIO()
+
+    # Build a restricted builtins dict excluding dangerous functions
+    safe_builtins = {
+        k: v for k, v in vars(builtins).items()
+        if k not in _DANGEROUS_BUILTINS
+    }
+    safe_builtins["__import__"] = _restricted_import
+
     try:
         os.chdir(workspace_dir)
         exec_globals: dict = {
-            "__builtins__": {**vars(builtins), "__import__": _restricted_import},
+            "__builtins__": safe_builtins,
             "__name__": "__main__",
         }
         compiled = compile(code, "<agent_code>", "exec")
-        with redirect_stdout(stdout_buf), redirect_stderr(stderr_buf):
-            exec(compiled, exec_globals)  # noqa: S102
+
+        # Set execution timeout (Unix only; on other platforms skip)
+        use_alarm = platform.system() != "Windows" and hasattr(signal, "SIGALRM")
+        if use_alarm:
+            old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
+            signal.alarm(_CODE_EXEC_TIMEOUT)
+
+        try:
+            with redirect_stdout(stdout_buf), redirect_stderr(stderr_buf):
+                exec(compiled, exec_globals)  # noqa: S102
+        finally:
+            if use_alarm:
+                signal.alarm(0)
+                signal.signal(signal.SIGALRM, old_handler)
 
         parts = []
         out = stdout_buf.getvalue()

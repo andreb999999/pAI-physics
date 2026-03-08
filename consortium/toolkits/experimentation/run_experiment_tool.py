@@ -459,5 +459,3 @@ class RunExperimentTool(BaseTool):
                 "important_note": "DO NOT generate synthetic experimental results. Report the failure honestly and focus on methodology and theoretical contributions."
             })
 
-    async def _arun(self, **kwargs: Any) -> str:
-        raise NotImplementedError

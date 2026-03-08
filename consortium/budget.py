@@ -1,8 +1,11 @@
 import json
+import logging
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
+
+logger = logging.getLogger(__name__)
 
 
 class BudgetExceededError(RuntimeError):
@@ -48,8 +51,18 @@ class BudgetManager:
                 data = json.load(f)
             self.total_usd = float(data.get("total_usd", 0.0))
             self.by_model = data.get("by_model", {}) or {}
-        except Exception:
-            # If state is corrupted, reset to avoid blocking usage
+        except (json.JSONDecodeError, OSError, ValueError) as exc:
+            if self.fail_closed:
+                raise BudgetExceededError(
+                    f"Budget state file '{self.state_path}' is corrupted and "
+                    f"fail_closed is enabled. Cannot safely continue without "
+                    f"accurate spend tracking. Error: {exc}"
+                ) from exc
+            logger.warning(
+                "Budget state file '%s' is corrupted (%s); resetting to zero. "
+                "Spend tracking may be inaccurate.",
+                self.state_path, exc,
+            )
             self.total_usd = 0.0
             self.by_model = {}
 
@@ -59,7 +72,7 @@ class BudgetManager:
             "usd_limit": self.usd_limit,
             "total_usd": round(self.total_usd, 6),
             "by_model": self.by_model,
-            "last_updated": datetime.utcnow().isoformat() + "Z",
+            "last_updated": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         }
         with open(self.state_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
@@ -127,7 +140,7 @@ class BudgetManager:
 
         entry = {
             "call_id": call_id or str(uuid.uuid4()),
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "model_id": model_id,
             "prompt_tokens": int(prompt_tokens),
             "completion_tokens": int(completion_tokens),
@@ -147,9 +160,9 @@ class BudgetManager:
                 source="budgeted_model",
                 model_id=model_id,
             )
-        except Exception:
+        except Exception as exc:
             # Never let token-tracker errors break budget accounting.
-            pass
+            logger.warning("Token tracker recording failed: %s", exc)
 
         if self.hard_stop and self.total_usd >= self.usd_limit:
             # Create lock file to prevent further calls

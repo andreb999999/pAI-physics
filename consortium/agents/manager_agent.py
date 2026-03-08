@@ -18,16 +18,21 @@ from langgraph.prebuilt import create_react_agent
 
 from ..prompts.manager_instructions import get_manager_system_prompt
 from ..supervision import (
-    validate_claim_traceability,
-    validate_math_acceptance,
-    validate_paper_quality,
-    validate_result_artifacts,
     validate_review_verdict,
 )
 from ..toolkits.filesystem.file_editing.file_editing_tools import (
     CreateFileWithContent, DeleteFileOrFolder, ListDir, ModifyFile, SearchKeyword, SeeFile,
 )
 from ..toolkits.writeup.vlm_document_analysis_tool import VLMDocumentAnalysisTool
+from ..workflow_utils import (
+    build_context_message as _shared_build_context_message,
+    build_required_artifacts as _shared_build_required_artifacts,
+    choose_validation_retry_stage as _shared_choose_validation_retry_stage,
+    followup_decision_requires_loop as _shared_followup_decision_requires_loop,
+    read_json as _shared_read_json,
+    run_validation_gates as _shared_run_validation_gates,
+    safe_int as _shared_safe_int,
+)
 
 try:
     from ..toolkits.search.text_inspector.text_inspector_tool import TextInspectorTool
@@ -46,10 +51,7 @@ _AGENT_TASK_RE = re.compile(r"AGENT_TASK\s*:\s*(.*)", re.DOTALL | re.IGNORECASE)
 
 
 def _safe_int(value: Any, default: int) -> int:
-    try:
-        return int(value)
-    except Exception:
-        return default
+    return _shared_safe_int(value, default)
 
 
 def _extract_agent_task(text: str, next_agent: str) -> str:
@@ -71,67 +73,15 @@ def _extract_agent_task(text: str, next_agent: str) -> str:
 
 
 def _build_context_message(state: dict) -> str:
-    """Format agent outputs and iteration info for the manager prompt."""
-    lines = [f"Task: {state.get('task', '')}\n"]
-
-    agent_outputs = state.get("agent_outputs", {})
-    if agent_outputs:
-        lines.append("=== Previous agent outputs ===")
-        for agent_name, output in agent_outputs.items():
-            lines.append(f"\n--- {agent_name} ---\n{output}")
-        lines.append("")
-
-    interrupt = state.get("interrupt_instruction")
-    if interrupt:
-        lines.append(f"=== LIVE STEERING INSTRUCTION ===\n{interrupt}\n")
-
-    validation = state.get("validation_results", {})
-    if validation:
-        lines.append("=== Validation results ===")
-        for gate, result in validation.items():
-            status = "PASS" if result.get("is_valid") else "FAIL"
-            errors = "; ".join(result.get("errors", []))
-            lines.append(f"  {gate}: {status}" + (f" — {errors}" if errors else ""))
-        lines.append("")
-
-    iteration = _safe_int(state.get("iteration_count", 0), 0)
-    max_steps = state.get("manager_max_steps", 50)
-    lines.append(f"Iteration: {iteration}/{max_steps}")
-
-    return "\n".join(lines)
+    return _shared_build_context_message(state)
 
 
 def _read_json(path: str) -> Optional[dict]:
-    if not os.path.exists(path):
-        return None
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            payload = json.load(f)
-        if isinstance(payload, dict):
-            return payload
-    except Exception:
-        return None
-    return None
+    return _shared_read_json(path)
 
 
 def _followup_decision_requires_loop(workspace_dir: str) -> tuple[bool, str]:
-    """Return (required, reason) from followup_decision.json."""
-    path = os.path.join(workspace_dir, "paper_workspace", "followup_decision.json")
-    payload = _read_json(path)
-    if not payload:
-        return False, "No followup_decision.json found."
-
-    decision = str(payload.get("decision", "")).strip().lower()
-    if decision == "followup_required":
-        reason = payload.get("evidence_summary") or payload.get("blocking_issues") or []
-        reason_text = str(reason[:3]) if isinstance(reason, list) else str(reason)
-        return True, f"results_analysis requested follow-up: {reason_text}"
-
-    followup_needed = payload.get("followup_needed")
-    if isinstance(followup_needed, bool) and followup_needed:
-        return True, "results_analysis set followup_needed=true"
-
-    return False, "followup_not_required"
+    return _shared_followup_decision_requires_loop(workspace_dir)
 
 
 def _apply_followup_loop_if_needed(
@@ -213,35 +163,7 @@ def _choose_validation_retry_stage(
     validation_results: dict,
     stages: list[str],
 ) -> tuple[int, str]:
-    """Pick a deterministic retry stage when final validation fails."""
-    if not stages:
-        return 0, "Validation failed; restarting from first stage."
-
-    if "math_acceptance" in validation_results and "math_prover_agent" in stages:
-        idx = stages.index("math_prover_agent")
-        return idx, "Validation failed on math acceptance; rerouting to math prover."
-
-    if "claim_traceability" in validation_results and "writeup_agent" in stages:
-        idx = stages.index("writeup_agent")
-        return idx, "Validation failed on claim traceability; rerouting to writeup."
-
-    if "review_verdict" in validation_results and "writeup_agent" in stages:
-        idx = stages.index("writeup_agent")
-        return idx, "Validation failed on review verdict; rerouting to writeup."
-
-    if "paper_quality" in validation_results and "writeup_agent" in stages:
-        idx = stages.index("writeup_agent")
-        return idx, "Validation failed on paper quality; rerouting to writeup."
-
-    if "artifact_gate" in validation_results and "resource_preparation_agent" in stages:
-        idx = stages.index("resource_preparation_agent")
-        return idx, "Validation failed on missing artifacts; rerouting to resource preparation."
-
-    if "writeup_agent" in stages:
-        idx = stages.index("writeup_agent")
-        return idx, "Validation failed; rerouting to writeup."
-
-    return 0, "Validation failed; restarting from first stage."
+    return _shared_choose_validation_retry_stage(validation_results, stages)
 
 
 # ---------------------------------------------------------------------------
@@ -249,105 +171,11 @@ def _choose_validation_retry_stage(
 # ---------------------------------------------------------------------------
 
 def _run_validation_gates(state: dict) -> dict:
-    """
-    Run all quality gates.  Returns a ``validation_results`` dict mapping
-    gate name -> {is_valid, errors}.  Also returns ``gate_passed`` bool.
-    """
-    workspace = state.get("workspace_dir") or "."
-    results: dict[str, dict] = {}
-    all_valid = True
-
-    enforce_paper = state.get("enforce_paper_artifacts", False)
-    pipeline_mode = str(state.get("pipeline_mode", "default")).strip().lower()
-    should_enforce = enforce_paper or (pipeline_mode == "full_research")
-
-    if should_enforce:
-        required = _build_required_artifacts(state)
-        summary = validate_result_artifacts(
-            result="",
-            workspace_dir=workspace,
-            required_artifacts=required,
-        )
-        ok = not summary.get("missing_required_artifacts")
-        results["artifact_gate"] = {
-            "is_valid": ok,
-            "errors": [
-                "Missing: " + ", ".join(summary.get("missing_required_artifacts", []))
-            ] if not ok else [],
-        }
-        all_valid = all_valid and ok
-
-    if state.get("math_enabled", False):
-        math_summary = validate_math_acceptance(workspace_dir=workspace)
-        if math_summary.get("graph_present"):
-            ok = math_summary.get("is_valid", True)
-            results["math_acceptance"] = {
-                "is_valid": ok,
-                "errors": math_summary.get("errors", []),
-            }
-            all_valid = all_valid and ok
-
-        if state.get("enforce_editorial_artifacts", False):
-            tr = validate_claim_traceability(workspace_dir=workspace)
-            ok = tr.get("is_valid", True)
-            results["claim_traceability"] = {
-                "is_valid": ok,
-                "errors": tr.get("errors", []),
-            }
-            all_valid = all_valid and ok
-
-    if state.get("enforce_editorial_artifacts", False):
-        min_score = state.get("min_review_score", 8)
-        rv = validate_review_verdict(workspace_dir=workspace, min_review_score=min_score)
-        ok = rv.get("is_valid", True)
-        results["review_verdict"] = {
-            "is_valid": ok,
-            "errors": rv.get("errors", []),
-        }
-        all_valid = all_valid and ok
-
-        pq = validate_paper_quality(workspace_dir=workspace)
-        ok = pq.get("is_valid", True)
-        results["paper_quality"] = {
-            "is_valid": ok,
-            "errors": pq.get("errors", []),
-        }
-        all_valid = all_valid and ok
-
-    return {"validation_results": results, "gate_passed": all_valid}
+    return _shared_run_validation_gates(state)
 
 
 def _build_required_artifacts(state: dict) -> list[str]:
-    pipeline_mode = str(state.get("pipeline_mode", "default")).strip().lower()
-    required = ["final_paper.tex"]
-    if pipeline_mode == "full_research":
-        required.extend([
-            "paper_workspace/track_decomposition.json",
-            "paper_workspace/literature_review.pdf",
-            "paper_workspace/research_plan.pdf",
-            "paper_workspace/results_assessment.pdf",
-            "paper_workspace/followup_decision.json",
-        ])
-    if state.get("require_experiment_plan", False):
-        required.append("experiments_to_run_later.md")
-    if state.get("require_pdf", False):
-        required.append("final_paper.pdf")
-    if state.get("enforce_editorial_artifacts", False):
-        required.extend([
-            "paper_workspace/author_style_guide.md",
-            "paper_workspace/intro_skeleton.tex",
-            "paper_workspace/style_macros.tex",
-            "paper_workspace/reader_contract.json",
-            "paper_workspace/editorial_contract.md",
-            "paper_workspace/theorem_map.json",
-            "paper_workspace/revision_log.md",
-            "paper_workspace/copyedit_report.md",
-            "paper_workspace/review_report.md",
-            "paper_workspace/review_verdict.json",
-        ])
-        if state.get("math_enabled", False):
-            required.append("paper_workspace/claim_traceability.json")
-    return required
+    return _shared_build_required_artifacts(state)
 
 
 # ---------------------------------------------------------------------------

@@ -760,7 +760,7 @@ class ComparisonPlotTool(Tool):
                                 "p_value": float(p_value),
                                 "significant": p_value < 0.05
                             })
-                        except:
+                        except Exception:
                             continue
         
         return statistical_results

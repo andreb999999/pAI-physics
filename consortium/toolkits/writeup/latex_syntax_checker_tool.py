@@ -146,8 +146,6 @@ class LaTeXSyntaxCheckerTool(BaseTool):
             }
             return json.dumps(error_result, indent=2)
 
-    async def _arun(self, **kwargs: Any) -> str:
-        raise NotImplementedError
 
     def _check_basic_syntax(self, content: str) -> List[Dict[str, Any]]:
         """Check basic LaTeX syntax errors."""

@@ -721,7 +721,7 @@ Generated: {timestamp}
                                 improvement = (next_val - current_val) / current_val
                             
                             improvements[metric] = improvement
-                        except:
+                        except Exception:
                             continue
                 
                 progression["improvements"][f"{current_stage}_to_{next_stage}"] = improvements

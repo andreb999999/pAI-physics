@@ -12,8 +12,10 @@ from __future__ import annotations
 import json
 import os
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
+
+from .workflow_utils import safe_int as _safe_int
 
 _LOCK = threading.Lock()
 
@@ -24,16 +26,7 @@ ENV_PRIVATE_TOKEN_TEXT = "CONSORTIUM_PRIVATE_TOKEN_TEXT"
 
 
 def _now_iso() -> str:
-    return datetime.utcnow().isoformat() + "Z"
-
-
-def _safe_int(value: Any) -> int:
-    try:
-        if value is None:
-            return 0
-        return int(value)
-    except Exception:
-        return 0
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _project_root() -> str:
