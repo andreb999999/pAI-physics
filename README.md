@@ -73,74 +73,114 @@ After the run, look in `results/consortium_<timestamp>/` for:
 
 ## What This Platform Does
 
-Given a `--task`, the manager orchestrates specialist agents that:
+Given a `--task`, the active single-run LangGraph workflow:
 
-1. Search and synthesize literature
-2. Plan and run experiments
-3. Analyze results and prepare resources
-4. Write, proofread, and review a paper
-5. Optionally run a math-proof pipeline (`--enable-math-agents`)
-6. Optionally run multi-model debate at each specialist stage (`--enable-counsel`)
-7. Supports autonomous multi-stage campaigns via OpenClaw or cron (`OpenClaw_Use_Guide.md`)
+1. Explores the problem through ideation and literature review
+2. Builds a research plan and writes `paper_workspace/track_decomposition.json`
+3. Launches the theory track, experiment track, or both in parallel based on that decomposition
+4. Merges and synthesizes track outputs, then runs results analysis and a follow-up decision
+5. Loops back to planning when more theory or experiments are needed
+6. Prepares resources, writes the paper, proofreads it, reviews it, and runs final validation gates
+7. Optionally enables theorem/proof work via `--enable-math-agents`
+8. Optionally enables multi-model debate at each specialist stage via `--enable-counsel`
+9. Supports autonomous multi-stage campaigns via OpenClaw or cron (`OpenClaw_Use_Guide.md`)
 
 Runs are resumable through LangGraph checkpoints (`checkpoints.db`) and can be steered live over TCP/HTTP.
 
 ## How the Pipeline Works
 
-### Deterministic Stage Order
+### Phase-Based Execution Graph
 
-The pipeline is a direct-wired linear graph (no manager hub). Stages are grouped into three tracks:
+The single-run pipeline is a direct-wired LangGraph workflow, not a manager hub and not a purely linear stage list. It executes in five phases:
 
-**Discovery** (3 stages):
-1. `ideation_agent`
-2. `literature_review_agent`
-3. `research_planner_agent`
+**1. Discovery**
+- `ideation_agent`
+- `literature_review_agent`
+- `research_planner_agent`
 
-**Experiment Track** (5 stages):
-4. `experiment_literature_agent`
-5. `experiment_design_agent`
-6. `experimentation_agent`
-7. `experiment_verification_agent`
-8. `experiment_transcription_agent`
+The planner produces `paper_workspace/track_decomposition.json`, which contains:
+- `theory_questions`
+- `empirical_questions`
+- `recommended_track`
+- `rationale`
 
-**Post-Track** (6 stages):
-9. `synthesis_literature_review_agent`
-10. `results_analysis_agent`
-11. `resource_preparation_agent`
-12. `writeup_agent`
-13. `proofreading_agent`
-14. `reviewer_agent`
+**2. Parallel Track Execution**
+- **Theory track** (when `--enable-math-agents` is enabled and the planner selects theory work):
+  - `math_literature_agent`
+  - `math_proposer_agent`
+  - `math_prover_agent`
+  - `math_rigorous_verifier_agent`
+  - `math_empirical_verifier_agent`
+  - `proof_transcription_agent`
+- **Experiment track** (when the planner selects empirical work):
+  - `experiment_literature_agent`
+  - `experiment_design_agent`
+  - `experimentation_agent`
+  - `experiment_verification_agent`
+  - `experiment_transcription_agent`
 
-If `--enable-math-agents` is enabled, 6 math stages are inserted after discovery and before the experiment track:
+**3. Merge And Interpretation**
+- `track_merge`
+- `synthesis_literature_review_agent`
+- `results_analysis_agent`
 
-- `math_literature_agent`
-- `math_proposer_agent`
-- `math_prover_agent`
-- `math_rigorous_verifier_agent`
-- `math_empirical_verifier_agent`
-- `proof_transcription_agent`
+**4. Follow-Up Loop**
+- `followup_gate` sends control back to `research_planner_agent` when more theory or experiments are needed
+- otherwise the run proceeds to paper production
+
+**5. Paper Production And Final QA**
+- `resource_preparation_agent`
+- `writeup_agent`
+- `proofreading_agent`
+- `reviewer_agent`
+- `validation_gate`
 
 ```mermaid
 flowchart TD
-    taskPrompt["Task Prompt"] --> ideation["IdeationAgent"]
-    ideation --> litReview["LiteratureReviewAgent"]
-    litReview --> planner["ResearchPlannerAgent"]
-    planner --> mathOptional["Math Stages (optional)"]
-    mathOptional --> expLit["ExperimentLiteratureAgent"]
-    expLit --> expDesign["ExperimentDesignAgent"]
-    expDesign --> experiment["ExperimentationAgent"]
-    experiment --> expVerify["ExperimentVerificationAgent"]
-    expVerify --> expTranscribe["ExperimentTranscriptionAgent"]
-    expTranscribe --> synthLit["SynthesisLiteratureReviewAgent"]
-    synthLit --> analysis["ResultsAnalysisAgent"]
-    analysis --> resourcePrep["ResourcePreparationAgent"]
-    resourcePrep --> writeup["WriteupAgent"]
-    writeup --> proofread["ProofreadingAgent"]
-    proofread --> reviewer["ReviewerAgent"]
-    reviewer --> finish["Finish"]
+    taskPrompt[TaskPrompt] --> ideation[IdeationAgent]
+    ideation --> litReview[LiteratureReviewAgent]
+    litReview --> planner[ResearchPlannerAgent]
+    planner --> trackRouter{TrackRouter}
+
+    subgraph theoryTrack [TheoryTrack]
+        mathLit[MathLiterature]
+        mathProp[MathProposer]
+        mathProver[MathProver]
+        mathRigorous[MathRigorousVerifier]
+        mathEmpirical[MathEmpiricalVerifier]
+        proofTrans[ProofTranscription]
+        mathLit --> mathProp --> mathProver --> mathRigorous --> mathEmpirical --> proofTrans
+    end
+
+    subgraph experimentTrack [ExperimentTrack]
+        expLit[ExperimentLiterature]
+        expDesign[ExperimentDesign]
+        expExec[Experimentation]
+        expVerify[ExperimentVerification]
+        expTrans[ExperimentTranscription]
+        expLit --> expDesign --> expExec --> expVerify --> expTrans
+    end
+
+    trackRouter -->|"theory questions"| mathLit
+    trackRouter -->|"empirical questions"| expLit
+    proofTrans --> trackMerge[TrackMerge]
+    expTrans --> trackMerge
+    trackMerge --> synthLit[SynthesisLiteratureReview]
+    synthLit --> resultsAnalysis[ResultsAnalysis]
+    resultsAnalysis --> followupGate{FollowupGate}
+    followupGate -->|"followup required"| planner
+    followupGate -->|"proceed"| resourcePrep[ResourcePreparation]
+    resourcePrep --> writeup[Writeup]
+    writeup --> proofread[Proofreading]
+    proofread --> reviewer[Reviewer]
+    reviewer --> validationGate{ValidationGate}
+    validationGate -->|pass| endNode((END))
+    validationGate -->|fail| writeup
 ```
 
-When counsel is enabled, each specialist node runs 4 independent model executions, then a debate + synthesis round before promoting consensus artifacts.
+If the planner selects no execution tracks, the graph falls through directly to `track_merge`, then continues through synthesis and results analysis.
+
+When counsel is enabled, each specialist node runs multiple independent model executions, then a debate + synthesis round before promoting consensus artifacts.
 
 ## Quick Start
 
@@ -413,6 +453,8 @@ python launch_multiagent.py \
   --task "$(cat automation_tasks/run3_paper_task_stable.txt)"
 ```
 
+These templates define a **campaign-style multi-run workflow** (`theory -> experiment -> paper`). That campaign-level sequencing is separate from the **single-run internal graph**, which now does planner-driven parallel theory/experiment routing inside one run.
+
 ## Live Steering During a Run
 
 Launcher opens:
@@ -512,6 +554,8 @@ For complete campaign configuration, task file authoring, failure recovery, and 
 
 The included `campaign.yaml` may contain legacy `--pipeline-mode` args; they are accepted for compatibility but ignored by current launcher behavior.
 
+OpenClaw sequencing is at the **campaign/workspace** level. Each launched run still uses the internal single-run graph documented above, including parallel track routing, follow-up replanning, and the final validation loop.
+
 ### SLURM / HPC
 
 Use `scripts/launch_multiagent_slurm.sh` as a template:
@@ -540,7 +584,7 @@ Use `python launch_multiagent.py --help` for full output.
 | `--resume` | `None` | Resume existing workspace |
 | `--start-from-stage` | `None` | Start from a specific stage (requires `--resume`) |
 | `--task` | built-in default | Task prompt |
-| `--manager-max-steps` | `None` (effective `50`) | Override manager step budget |
+| `--manager-max-steps` | `None` (effective `50`) | Legacy compatibility field retained in run state; not the primary routing control in the current direct-wired graph |
 | `--pipeline-mode` | `None` | Deprecated/ignored; deterministic full pipeline always used |
 | `--followup-max-iterations` | `3` | Max follow-up loops in deterministic pipeline |
 | `--enable-math-agents` | `false` | Enable theorem/proof pipeline |
@@ -569,12 +613,28 @@ results/consortium_YYYYMMDD_HHMMSS/
   paper_workspace/
     literature_review.pdf
     research_plan.pdf
+    research_plan_tasks.json
+    research_plan_risk_register.md
     results_assessment.pdf
     followup_decision.json
+    followup_literature_notes.md
     track_decomposition.json
-    theory_experiment_synthesis.md
-    paper_outline.md
+    experiment_report.tex            # when experiment transcription runs
+    experiment_report.pdf            # when experiment transcription runs
+    resource_inventory.pdf           # when resource preparation runs
     references.bib
+  experiment_workspace/
+    experiment_literature.md
+    experiment_baselines.json
+    experiment_design.json
+    experiment_rationale.md
+    execution_log.json
+    verification_report.md
+    verification_results.json
+  experiment_runs/
+    <uuid>/
+      experiments/
+        <timestamp>_<experiment_name>/
   math_workspace/                    # when --enable-math-agents
     claim_graph.json
     proofs/
@@ -600,15 +660,21 @@ What to inspect first:
 
 1. `final_paper.tex` / `final_paper.pdf`
 2. `paper_workspace/track_decomposition.json`
-3. `paper_workspace/followup_decision.json`
-4. `math_workspace/claim_graph.json` and `math_workspace/checks/*.jsonl` (if math enabled)
-5. `run_token_usage.json` and `budget_ledger.jsonl`
+3. `experiment_workspace/experiment_design.json` and `experiment_workspace/verification_results.json`
+4. `paper_workspace/followup_decision.json`
+5. `math_workspace/claim_graph.json` and `math_workspace/checks/*.jsonl` (if math enabled)
+6. `run_token_usage.json` and `budget_ledger.jsonl`
 
 ## Quality Gates and Artifact Contracts
 
-When `--enforce-paper-artifacts` is active, the manager checks for:
+When `--enforce-paper-artifacts` is active, the final validation gate checks for:
 
 - `final_paper.tex`
+- `paper_workspace/track_decomposition.json`
+- `paper_workspace/literature_review.pdf`
+- `paper_workspace/research_plan.pdf`
+- `paper_workspace/results_assessment.pdf`
+- `paper_workspace/followup_decision.json`
 - optionally `final_paper.pdf` (`--require-pdf`)
 - optionally `experiments_to_run_later.md` (`--require-experiment-plan`)
 
@@ -633,26 +699,37 @@ Additional strict validations include:
 - math acceptance/dependency consistency
 - claim traceability checks (editorial + math runs)
 
+Note: the proofreading and reviewer prompts currently describe richer `.tex/.pdf` report artifacts, but the active strict validation gate still keys off the `.md` / `.json` editorial artifacts listed above.
+
 ## Architecture and Module Map
 
 Core orchestration:
 
 - `launch_multiagent.py`: thin entry point
-- `consortium/runner.py`: run lifecycle, config loading, model/counsel setup, execution
-- `consortium/graph.py`: LangGraph `StateGraph`, deterministic stage roster
-- `consortium/state.py`: `ResearchState` schema
+- `consortium/runner.py`: run lifecycle, config loading, model/counsel setup, workspace/checkpoint initialization, execution
+- `consortium/utils.py`: model factory and `build_research_graph()` wrapper that returns the compiled graph plus checkpointer
+- `consortium/graph.py`: direct-wired LangGraph definition, track router, follow-up gate, validation gate, and theory/experiment subgraph builders
+- `consortium/state.py`: `ResearchState` schema, including `track_decomposition`, track status fields, and cycle counters
+- `consortium/workflow_utils.py`: shared follow-up parsing, required-artifact construction, and validation helpers
 - `consortium/counsel.py`: multi-model sandbox/debate/synthesis
 - `consortium/supervision/`: artifact/review/traceability validators
 
 Major package areas:
 
-- `consortium/agents/`: manager + specialist agent implementations
+- `consortium/agents/`: specialist agent implementations plus a compatibility manager module retained from the older routing model
 - `consortium/toolkits/search/`: arXiv/web/search/document inspection tools
 - `consortium/toolkits/experimentation/`: experiment execution helpers
 - `consortium/toolkits/writeup/`: LaTeX and citation tooling
 - `consortium/toolkits/math/`: claim graph, proof workspace, symbolic/numeric verification
 - `consortium/campaign/`: autonomous multi-stage campaign engine
 - `consortium/interaction/`: TCP + HTTP steering
+
+Notable agent groups:
+
+- **Discovery**: `ideation_agent`, `literature_review_agent`, `research_planner_agent`
+- **Theory track**: `math_literature_agent`, `math_proposer_agent`, `math_prover_agent`, `math_rigorous_verifier_agent`, `math_empirical_verifier_agent`, `proof_transcription_agent`
+- **Experiment track**: `experiment_literature_agent`, `experiment_design_agent`, `experimentation_agent`, `experiment_verification_agent`, `experiment_transcription_agent`
+- **Post-track / papering**: `track_merge`, `synthesis_literature_review_agent`, `results_analysis_agent`, `resource_preparation_agent`, `writeup_agent`, `proofreading_agent`, `reviewer_agent`
 
 ## Math Workflow
 
