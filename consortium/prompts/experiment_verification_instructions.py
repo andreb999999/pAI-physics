@@ -39,6 +39,27 @@ REQUIRED CHECKS
    - do reported metrics match raw summaries?
 5) Ablation coherence:
    - are direction and magnitude of changes interpretable?
+6) Seed-based independent reproduction:
+   - Select at least one key experiment and rerun it with a different random seed
+     using PythonCodeExecutionTool.
+   - Compare reproduced metrics against original; flag if discrepancy exceeds
+     2 standard deviations of the reported variance.
+   - If compute resources are insufficient for a full rerun, document why and
+     set reproduction_check.attempted = false.
+7) Independent metric extraction:
+   - Locate raw output files (logs, CSV, JSON) in experiment_runs/.
+   - Use PythonCodeExecutionTool to independently recompute at least one primary
+     metric from the raw data (do not rely on pre-computed summaries).
+   - Compare independently computed value against the reported metric.
+   - Flag any discrepancy > 1% as a metric extraction mismatch.
+8) Data leakage detection:
+   - Check experiment code for common leakage patterns:
+     a) Train/test split computed AFTER feature engineering or normalization
+     b) Test data statistics used in preprocessing (e.g., global mean/std)
+     c) Information from future timestamps in time-series data
+     d) Overlapping samples between train and test sets
+   - Use SeeFile and SearchKeyword to inspect experiment source code.
+   - Record findings under data_leakage_check in verification_results.json.
 
 `verification_results.json` SCHEMA
 {
@@ -48,6 +69,24 @@ REQUIRED CHECKS
       "statistical_significance": true,
       "cross_seed_stable": true,
       "baseline_sane": true,
+      "reproduction_check": {
+        "attempted": true,
+        "reproduced_seed": 42,
+        "metric_match": true,
+        "discrepancy_pct": 0.3
+      },
+      "independent_metric_extraction": {
+        "attempted": true,
+        "metric_name": "accuracy",
+        "reported_value": 0.85,
+        "recomputed_value": 0.849,
+        "match": true
+      },
+      "data_leakage_check": {
+        "performed": true,
+        "leakage_detected": false,
+        "findings": []
+      },
       "issues": ["..."]
     }
   }

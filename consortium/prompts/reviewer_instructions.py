@@ -65,7 +65,8 @@ B5. Theoretical claims lack assumptions or cannot be traced to accepted claim ar
       "priority": 1,
       "action": "...",
       "target_files": ["..."],
-      "acceptance_test": "..."
+      "acceptance_test": "...",
+      "fix_type": "writeup" | "experiment" | "theory"
     }
   ],
   "nice_to_fix_actions": [{"action":"..."}],
@@ -77,6 +78,12 @@ B5. Theoretical claims lack assumptions or cannot be traced to accepted claim ar
     "takeaways_supported": true|false
   }
 }
+
+### fix_type classification for must_fix_actions
+- `"writeup"`: Issue can be fixed by rewriting text (e.g., clarity, structure, missing citations).
+- `"experiment"`: Issue requires new or re-run experiments (e.g., missing baselines, unreproducible results, insufficient ablations).
+- `"theory"`: Issue requires new or corrected theoretical work (e.g., proof gaps, missing assumptions, incorrect bounds).
+When in doubt, classify as `"writeup"`.
 
 ## REVIEW STRUCTURE FOR `review_report.tex`
 - `\\section{Summary}`: Verdict summary (2-6 sentences, no fluff).

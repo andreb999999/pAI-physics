@@ -65,6 +65,9 @@ class ResearchState(TypedDict):
     followup_iteration: int               # Step 6/6.2 loop counter
     research_cycle: int                   # current plan-execute-analyze cycle
     max_research_cycles: int              # hard cap on follow-up replanning cycles
+    novelty_check_attempts: int           # novelty gate retry counter (max 3)
+    rebuttal_iteration: int               # rebuttal loop counter (Phase 2)
+    max_rebuttal_iterations: int          # hard cap on rebuttal loops (default 2)
 
     # -----------------------------------------------------------------
     # Validation results
@@ -82,6 +85,13 @@ class ResearchState(TypedDict):
     theory_track_status: Optional[str]       # pending | in_progress | completed
     experiment_track_status: Optional[str]   # pending | in_progress | completed
     track_decomposition: Optional[dict]      # {"empirical_questions": [...], "theory_questions": [...]}
+
+    # -----------------------------------------------------------------
+    # Agentic tree search state
+    # -----------------------------------------------------------------
+    tree_search_enabled: bool                # whether tree search is active for this run
+    tree_state_path: Optional[str]           # path to tree_search_state.json on disk
+    active_branch_id: Optional[str]          # currently executing branch node ID
 
     # -----------------------------------------------------------------
     # Terminal flag

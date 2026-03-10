@@ -132,8 +132,8 @@ def build_required_artifacts(state: dict) -> list[str]:
             "paper_workspace/editorial_contract.md",
             "paper_workspace/theorem_map.json",
             "paper_workspace/revision_log.md",
-            "paper_workspace/copyedit_report.md",
-            "paper_workspace/review_report.md",
+            "paper_workspace/copyedit_report.tex",
+            "paper_workspace/review_report.tex",
             "paper_workspace/review_verdict.json",
         ])
         if state.get("math_enabled", False):
@@ -242,3 +242,67 @@ def choose_validation_retry_stage(
         return idx, "Validation failed; rerouting to writeup."
 
     return 0, "Validation failed; restarting from first stage."
+
+
+# ---------------------------------------------------------------------------
+# Rebuttal fix classification (Phase 1: data-gathering)
+# ---------------------------------------------------------------------------
+
+_EXPERIMENT_KEYWORDS = frozenset({
+    "experiment", "rerun", "ablation", "baseline", "evaluation",
+    "metric", "benchmark", "dataset", "training", "hyperparameter",
+    "reproduce", "reproducibility", "run",
+})
+
+_THEORY_KEYWORDS = frozenset({
+    "proof", "theorem", "lemma", "mathematical", "formal",
+    "derivation", "bound", "convergence", "assumption", "rigor",
+})
+
+
+def classify_review_fixes(workspace_dir: str) -> str:
+    """Classify the type of fixes needed based on review_verdict.json.
+
+    Returns one of: ``"experiment"``, ``"theory"``, ``"writeup"``.
+    Priority: experiment > theory > writeup (most expensive fix type wins).
+    """
+    path = os.path.join(workspace_dir, "paper_workspace", "review_verdict.json")
+    if not os.path.exists(path):
+        return "writeup"
+
+    try:
+        with open(path) as f:
+            payload = json.load(f)
+    except Exception:
+        return "writeup"
+
+    must_fix = payload.get("must_fix_actions", [])
+    if not isinstance(must_fix, list):
+        return "writeup"
+
+    needs_experiment = False
+    needs_theory = False
+
+    for fix in must_fix:
+        fix_type = str(fix.get("fix_type", "")).strip().lower()
+        action = str(fix.get("action", "")).lower()
+        target_files = [str(f).lower() for f in fix.get("target_files", [])]
+
+        # Check explicit fix_type field first
+        if fix_type == "experiment":
+            needs_experiment = True
+        elif fix_type == "theory":
+            needs_theory = True
+        else:
+            # Heuristic classification from action text and target files
+            combined = action + " " + " ".join(target_files)
+            if any(kw in combined for kw in _EXPERIMENT_KEYWORDS):
+                needs_experiment = True
+            if any(kw in combined for kw in _THEORY_KEYWORDS):
+                needs_theory = True
+
+    if needs_experiment:
+        return "experiment"
+    if needs_theory:
+        return "theory"
+    return "writeup"

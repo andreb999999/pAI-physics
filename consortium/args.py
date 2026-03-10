@@ -112,7 +112,7 @@ Examples:
         type=str,
         default=None,
         help=(
-            "Start the deterministic full pipeline from a specific stage. "
+            "Start the fixed-stage pipeline from a specific stage. "
             "Requires --resume. Accepts canonical stage names (e.g., "
             "'experimentation_agent') and short aliases (e.g., 'experimentation')."
         ),
@@ -173,7 +173,7 @@ Examples:
         type=str,
         default=None,
         help=(
-            "DEPRECATED: ignored. The pipeline now always runs in deterministic full mode. "
+            "DEPRECATED: ignored. The pipeline now always runs a fixed-stage workflow. "
             "Use --start-from-stage with --resume to begin from a specific stage."
         ),
     )
@@ -183,6 +183,14 @@ Examples:
         type=int,
         default=3,
         help="Maximum Step 6 <-> 6.2 follow-up loops in full_research mode.",
+    )
+
+    parser.add_argument(
+        "--max-rebuttal-iterations",
+        type=int,
+        default=2,
+        help="Maximum rebuttal loops when reviewer identifies issues requiring "
+             "new experiments or theory work (default: 2).",
     )
 
     parser.add_argument(
@@ -231,6 +239,54 @@ Examples:
         "--list-runs",
         action="store_true",
         help="List past runs in the results/ directory with cost and status, then exit.",
+    )
+
+    # -----------------------------------------------------------------
+    # Agentic tree search
+    # -----------------------------------------------------------------
+    parser.add_argument(
+        "--enable-tree-search",
+        action="store_true",
+        default=False,
+        help="Enable agentic tree search: explore multiple proof strategies, "
+             "ideas, and experiment designs in parallel via DAG-layered best-first search.",
+    )
+
+    parser.add_argument(
+        "--tree-max-breadth",
+        type=int,
+        default=3,
+        help="Maximum parallel branches per decision point in tree search (default: 3).",
+    )
+
+    parser.add_argument(
+        "--tree-max-depth",
+        type=int,
+        default=4,
+        help="Maximum debugging/refinement recursion depth in tree search (default: 4).",
+    )
+
+    parser.add_argument(
+        "--tree-max-parallel",
+        type=int,
+        default=6,
+        help="Maximum concurrent tree branches executing at once (default: 6).",
+    )
+
+    parser.add_argument(
+        "--tree-pruning-threshold",
+        type=float,
+        default=0.2,
+        help="Score threshold below which tree branches are pruned (default: 0.2).",
+    )
+
+    parser.add_argument(
+        "--tree-counsel-mode",
+        type=str,
+        choices=["all_nodes", "final_only", "by_depth", "by_node_type"],
+        default="all_nodes",
+        help="When to run multi-model counsel within tree branches: "
+             "'all_nodes' (default, maximum quality), 'final_only', 'by_depth', 'by_node_type'.",
     )
 
     return parser.parse_args()

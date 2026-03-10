@@ -10,6 +10,7 @@ This graph replaces the manager hub-and-spoke loop with:
 
 from __future__ import annotations
 
+import json
 import os
 from typing import Any, List, Optional
 
@@ -231,6 +232,62 @@ def build_validation_gate_node() -> Any:
     return validation_gate_node
 
 
+def build_novelty_gate_node(workspace_dir: str) -> Any:
+    """Gate between ideation and literature review that checks novelty assessment."""
+
+    def novelty_gate_node(state: dict) -> dict:
+        assessment_path = os.path.join(
+            workspace_dir, "paper_workspace", "novelty_assessment.json"
+        )
+        max_attempts = 3
+        attempts = safe_int(state.get("novelty_check_attempts", 0), 0)
+
+        if not os.path.exists(assessment_path):
+            # No assessment file -- pass through (backward compat)
+            return {"current_agent": "literature_review_agent", "agent_task": None}
+
+        try:
+            with open(assessment_path) as f:
+                assessment = json.load(f)
+        except Exception:
+            return {"current_agent": "literature_review_agent", "agent_task": None}
+
+        if assessment.get("novel", True):
+            return {"current_agent": "literature_review_agent", "agent_task": None}
+
+        if attempts >= max_attempts:
+            # After max attempts, proceed anyway with a warning
+            print(
+                f"Warning: novelty gate failed after {max_attempts} attempts, "
+                "proceeding to literature review."
+            )
+            return {"current_agent": "literature_review_agent", "agent_task": None}
+
+        justification = assessment.get("novelty_justification", "N/A")
+        closest = assessment.get("closest_existing_work", "N/A")
+        return {
+            "current_agent": "ideation_agent",
+            "novelty_check_attempts": attempts + 1,
+            "agent_task": (
+                f"NOVELTY GATE REJECTION (attempt {attempts + 1}/{max_attempts}): "
+                f"Your previous idea was assessed as NOT NOVEL.\n"
+                f"Justification: {justification}\n"
+                f"Closest existing work: {closest}\n\n"
+                "Generate a substantially different idea that addresses a genuine "
+                "gap in the literature. Delete the old novelty_assessment.json and "
+                "run CheckIdeaNoveltyTool again on your new idea."
+            ),
+        }
+
+    novelty_gate_node.__name__ = "novelty_gate"
+    return novelty_gate_node
+
+
+def novelty_router(state: ResearchState) -> str:
+    """Route based on novelty gate decision."""
+    return state.get("current_agent") or "literature_review_agent"
+
+
 def build_theory_track_subgraph(
     model: Any,
     workspace_dir: str,
@@ -398,6 +455,7 @@ def build_research_graph(
     checkpointer=None,
     counsel_models: Optional[List[Any]] = None,
     summary_model_id: Optional[str] = "claude-sonnet-4-6",
+    tree_search_config: Optional[Any] = None,
 ):
     """
     Build and compile the full LangGraph research pipeline.
@@ -421,6 +479,10 @@ def build_research_graph(
                                   instead of a single-model ReAct agent.
         summary_model_id:         Model used to format stage summary PDFs.
                                   Set to None to disable automatic PDF summaries.
+        tree_search_config:       TreeSearchConfig instance (or None).
+                                  When provided and enabled, the theory track uses
+                                  DAG-layered best-first search to explore multiple
+                                  proof strategies in parallel.
 
     Returns:
         Compiled LangGraph CompiledGraph.
@@ -433,13 +495,27 @@ def build_research_graph(
 
     theory_track_node = build_noop_track_node("theory_track_status")
     if enable_math_agents:
-        theory_subgraph = build_theory_track_subgraph(
-            model=model,
-            workspace_dir=workspace_dir,
-            authorized_imports=authorized_imports,
-            counsel_models=counsel_models,
-            summary_model_id=summary_model_id,
-        )
+        # Use tree-search-enabled theory track when configured
+        if tree_search_config and getattr(tree_search_config, "enabled", False):
+            from consortium.tree_search.graph_integration import (
+                build_tree_search_theory_track,
+            )
+            theory_subgraph = build_tree_search_theory_track(
+                model=model,
+                workspace_dir=workspace_dir,
+                authorized_imports=authorized_imports,
+                counsel_models=counsel_models,
+                summary_model_id=summary_model_id,
+                tree_config=tree_search_config,
+            )
+        else:
+            theory_subgraph = build_theory_track_subgraph(
+                model=model,
+                workspace_dir=workspace_dir,
+                authorized_imports=authorized_imports,
+                counsel_models=counsel_models,
+                summary_model_id=summary_model_id,
+            )
         theory_track_node = build_track_subgraph_node(theory_subgraph, "theory_track_status")
     experiment_subgraph = build_experiment_track_subgraph(
         model=model,
@@ -466,6 +542,7 @@ def build_research_graph(
         "proofreading_agent": _wrap(build_proofreading_node(model, workspace_dir, authorized_imports, **counsel_kwargs), "proofreading_agent"),
         "reviewer_agent": _wrap(build_reviewer_node(model, workspace_dir, authorized_imports, **counsel_kwargs), "reviewer_agent"),
         "validation_gate": build_validation_gate_node(),
+        "novelty_gate": build_novelty_gate_node(workspace_dir),
     }
 
     graph = StateGraph(ResearchState)
@@ -473,7 +550,15 @@ def build_research_graph(
         graph.add_node(name, node)
 
     graph.set_entry_point("ideation_agent")
-    graph.add_edge("ideation_agent", "literature_review_agent")
+    graph.add_edge("ideation_agent", "novelty_gate")
+    graph.add_conditional_edges(
+        "novelty_gate",
+        novelty_router,
+        {
+            "ideation_agent": "ideation_agent",
+            "literature_review_agent": "literature_review_agent",
+        },
+    )
     graph.add_edge("literature_review_agent", "research_planner_agent")
     graph.add_conditional_edges("research_planner_agent", track_router)
     graph.add_edge("theory_track", "track_merge")

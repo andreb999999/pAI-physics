@@ -7,7 +7,7 @@
 - Entry point: `launch_multiagent.py`
 - Core package: `consortium/`
 
-> Runtime note: the launcher now runs a deterministic full pipeline. `--pipeline-mode` is accepted for backward compatibility but ignored.
+> Runtime note: the launcher now runs a fixed workflow graph. `--pipeline-mode` is accepted for backward compatibility but ignored.
 
 ---
 
@@ -52,6 +52,8 @@ After the run, look in `results/consortium_<timestamp>/` for:
 ## Table of Contents
 
 - [What This Platform Does](#what-this-platform-does)
+- [Guarantees and Non-Guarantees](#guarantees-and-non-guarantees)
+- [Known Limitations](#known-limitations)
 - [How the Pipeline Works](#how-the-pipeline-works)
 - [Quick Start](#quick-start)
 - [Installation (Detailed)](#installation-detailed)
@@ -64,9 +66,14 @@ After the run, look in `results/consortium_<timestamp>/` for:
 - [CLI Reference](#cli-reference)
 - [Understanding Outputs](#understanding-outputs)
 - [Quality Gates and Artifact Contracts](#quality-gates-and-artifact-contracts)
+- [Submission Checklist (NeurIPS / ICML / ICLR)](#submission-checklist-neurips--icml--iclr)
 - [Architecture and Module Map](#architecture-and-module-map)
 - [Math Workflow](#math-workflow)
 - [Runtime and Cost Expectations](#runtime-and-cost-expectations)
+- [Counsel Mode (Multi-Model Debate)](#counsel-mode-multi-model-debate)
+- [Agentic Tree Search](#agentic-tree-search)
+- [Experiment Execution Safety Model](#experiment-execution-safety-model)
+- [Empirical Quality Evidence](#empirical-quality-evidence)
 - [Troubleshooting](#troubleshooting)
 - [Running Tests](#running-tests)
 - [License](#license)
@@ -83,9 +90,38 @@ Given a `--task`, the active single-run LangGraph workflow:
 6. Prepares resources, writes the paper, proofreads it, reviews it, and runs final validation gates
 7. Optionally enables theorem/proof work via `--enable-math-agents`
 8. Optionally enables multi-model debate at each specialist stage via `--enable-counsel`
-9. Supports autonomous multi-stage campaigns via OpenClaw or cron (`OpenClaw_Use_Guide.md`)
+9. Optionally enables agentic tree search (`--enable-tree-search`) to explore multiple proof strategies, ideas, and experiment designs in parallel via DAG-layered best-first search
+10. Supports autonomous multi-stage campaigns via OpenClaw or cron (`OpenClaw_Use_Guide.md`)
 
 Runs are resumable through LangGraph checkpoints (`checkpoints.db`) and can be steered live over TCP/HTTP.
+
+## Guarantees and Non-Guarantees
+
+### What Consortium Guarantees
+
+- **Workflow execution**: Given valid API keys and a task prompt, the pipeline will execute every stage in the fixed workflow graph and produce the documented artifacts.
+- **Artifact generation**: Each stage produces its mandatory output files (see [Quality Gates and Artifact Contracts](#quality-gates-and-artifact-contracts)).
+- **Budget enforcement**: The pipeline will halt before exceeding the configured `budget.usd_limit`.
+- **Checkpointing**: Every completed stage is persisted to SQLite. A crashed run can be resumed from the last checkpoint.
+- **Validation gates**: When `--enforce-paper-artifacts` or `--enforce-editorial-artifacts` are enabled, the pipeline will not report success unless the specified artifacts exist and pass structural checks.
+
+### What Consortium Does NOT Guarantee
+
+- **Scientific correctness**: All generated claims, proofs, experimental results, and literature citations require human verification before any submission or publication.
+- **Reproducibility across runs**: LLM outputs are stochastic. Two runs with the same task and model will produce different papers.
+- **Calibrated review scores**: The reviewer agent's `overall_score` is an internal heuristic used to drive the revision loop. It is not a calibrated acceptance probability and should not be interpreted as a prediction of peer-review outcome.
+- **Novelty**: The ideation agent searches existing literature but cannot guarantee that a generated idea is truly novel. Manual novelty verification is required.
+- **Factual accuracy of citations**: Citation metadata is fetched from arXiv and Semantic Scholar. Papers may be miscited, misattributed, or retracted.
+- **Code correctness**: Experiment code is AI-generated. Results may contain bugs, incorrect baselines, or misleading metrics.
+
+## Known Limitations
+
+1. **No ground-truth verification**: The pipeline has no oracle for scientific truth. Quality gates check structural completeness (file exists, score above threshold), not factual accuracy.
+2. **Reviewer score is not calibrated**: `--min-review-score 8` means "the LLM reviewer assigned 8/10," not "this paper has an 80% chance of acceptance." The score distribution depends on the model, prompt, and paper domain.
+3. **Experiment execution has no OS-level sandboxing**: `RunExperimentTool` launches AI-Scientist-v2 as a subprocess on the host (or via SLURM). There is no Docker container, cgroup, or resource-limit enforcement beyond a configurable timeout. See [Experiment Execution Safety Model](#experiment-execution-safety-model).
+4. **Single-run stochasticity**: The pipeline is a fixed workflow graph (stages always execute in the same order), but LLM outputs are non-deterministic. "Fixed workflow graph" refers to the execution topology, not output reproducibility.
+5. **Budget tracking is best-effort**: Token-to-cost conversion depends on provider pricing tables embedded in litellm. Actual billed amounts may differ.
+6. **LaTeX compilation failures**: The writeup agent generates LaTeX that may not compile on first attempt. The revision loop retries, but complex papers may require manual fixup.
 
 ## How the Pipeline Works
 
@@ -95,6 +131,7 @@ The single-run pipeline is a direct-wired LangGraph workflow, not a manager hub 
 
 **1. Discovery**
 - `ideation_agent`
+- `novelty_gate` (loops back to ideation if the idea is not novel, up to 3 attempts)
 - `literature_review_agent`
 - `research_planner_agent`
 
@@ -138,7 +175,9 @@ The planner produces `paper_workspace/track_decomposition.json`, which contains:
 ```mermaid
 flowchart TD
     taskPrompt[TaskPrompt] --> ideation[IdeationAgent]
-    ideation --> litReview[LiteratureReviewAgent]
+    ideation --> noveltyGate{NoveltyGate}
+    noveltyGate -->|"novel"| litReview[LiteratureReviewAgent]
+    noveltyGate -->|"retry ≤3"| ideation
     litReview --> planner[ResearchPlannerAgent]
     planner --> trackRouter{TrackRouter}
 
@@ -181,6 +220,8 @@ flowchart TD
 If the planner selects no execution tracks, the graph falls through directly to `track_merge`, then continues through synthesis and results analysis.
 
 When counsel is enabled, each specialist node runs multiple independent model executions, then a debate + synthesis round before promoting consensus artifacts.
+
+When tree search is enabled (`--enable-tree-search`), the theory track replaces the linear prover stage with a tree search controller that explores multiple proof strategies in parallel (see [Agentic Tree Search](#agentic-tree-search)).
 
 ## Quick Start
 
@@ -305,7 +346,7 @@ Counsel precedence:
 
 From `consortium/utils.py`:
 
-- OpenAI: `gpt-5`, `gpt-5-mini`, `gpt-5-nano`, `gpt-5.2`, `gpt-5.3-codex`, `gpt-4o`, `gpt-4.1-mini-2025-04-14`, `o4-mini-2025-04-16`, `o3-2025-04-16`, `o3-pro-2025-06-10`
+- OpenAI: `gpt-5`, `gpt-5-mini`, `gpt-5-nano`, `gpt-5.2`, `gpt-5.4`, `gpt-5.3-codex`, `gpt-4o`, `gpt-4.1-mini-2025-04-14`, `o4-mini-2025-04-16`, `o3-2025-04-16`, `o3-pro-2025-06-10`
 - Anthropic: `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-opus-4-20250514`, `claude-sonnet-4-20250514`, `claude-sonnet-4-5`, `claude-sonnet-4-5-20250929`
 - Google: `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-3.0-pro`
 - DeepSeek: `deepseek-chat`, `deepseek-coder`
@@ -385,6 +426,33 @@ python launch_multiagent.py \
 ```
 
 Counsel runs are much more expensive (roughly 5-6x per specialist stage).
+
+### Run with Tree Search (Parallel Proof Strategies)
+
+```bash
+python launch_multiagent.py \
+  --task "Prove convergence of the proposed optimizer and explore alternative proof strategies." \
+  --enable-math-agents \
+  --enable-tree-search \
+  --tree-max-breadth 3 \
+  --tree-max-depth 4 \
+  --no-counsel
+```
+
+### Run with Tree Search + Counsel (Maximum Quality)
+
+```bash
+python launch_multiagent.py \
+  --task "Full exploration with parallel strategies and multi-model debate at every branch." \
+  --enable-math-agents \
+  --enable-tree-search \
+  --enable-counsel \
+  --tree-counsel-mode all_nodes \
+  --enforce-paper-artifacts \
+  --require-pdf
+```
+
+Tree search with counsel at every node is the most expensive configuration (~15-20x per-claim cost vs. baseline).
 
 ## Resume and Stage-Based Resume
 
@@ -571,22 +639,17 @@ Use `python launch_multiagent.py --help` for full output.
 | Flag | Default | Description |
 |---|---|---|
 | `--model` | `None` | Model override for all agents |
-| `--interpreter` | `python` | Deprecated/no-op (accepted for compatibility) |
 | `--debug` | `false` | Enable debug logging |
 | `--log-to-files` | env-driven | Force stdout/stderr redirection to `logs/` |
 | `--no-log-to-files` | env-driven | Disable file redirection |
-| `--reasoning-effort` | `None` | GPT-5 reasoning level (`none|minimal|low|medium|high|xhigh`) |
-| `--verbosity` | `None` | GPT-5 verbosity (`low|medium|high`) |
+| `--reasoning-effort` | `None` | GPT-5 reasoning level (`none\|minimal\|low\|medium\|high\|xhigh`) |
+| `--verbosity` | `None` | GPT-5 verbosity (`low\|medium\|high`) |
 | `--callback_host` | `127.0.0.1` | Interrupt socket host |
 | `--callback_port` | `5001` | Interrupt socket port (HTTP is `port + 1`) |
-| `--enable-planning` | `false` | Deprecated/no-op |
-| `--planning-interval` | `3` | Deprecated/no-op |
 | `--resume` | `None` | Resume existing workspace |
 | `--start-from-stage` | `None` | Start from a specific stage (requires `--resume`) |
 | `--task` | built-in default | Task prompt |
-| `--manager-max-steps` | `None` (effective `50`) | Legacy compatibility field retained in run state; not the primary routing control in the current direct-wired graph |
-| `--pipeline-mode` | `None` | Deprecated/ignored; deterministic full pipeline always used |
-| `--followup-max-iterations` | `3` | Max follow-up loops in deterministic pipeline |
+| `--followup-max-iterations` | `3` | Max follow-up loops in fixed-stage pipeline |
 | `--enable-math-agents` | `false` | Enable theorem/proof pipeline |
 | `--enforce-paper-artifacts` | `false` | Require paper artifact contract before success |
 | `--require-pdf` | `false` | Require `final_paper.pdf` |
@@ -596,6 +659,29 @@ Use `python launch_multiagent.py --help` for full output.
 | `--enable-counsel` | `false` | Force-enable multi-model counsel |
 | `--no-counsel` | `false` | Force-disable counsel |
 | `--counsel-max-debate-rounds` | `None` (effective `3`) | Override counsel debate rounds |
+| `--max-rebuttal-iterations` | `2` | Max reviewer → writeup rebuttal loops |
+| `--enable-tree-search` | `false` | Enable agentic tree search (parallel proof strategies, idea variants, experiment designs) |
+| `--tree-max-breadth` | `3` | Max parallel branches per decision point |
+| `--tree-max-depth` | `4` | Max debugging/refinement recursion depth |
+| `--tree-max-parallel` | `6` | Max concurrent branches executing at once |
+| `--tree-pruning-threshold` | `0.2` | Score threshold below which branches are pruned |
+| `--tree-counsel-mode` | `all_nodes` | When to run counsel within tree branches (`all_nodes`\|`final_only`\|`by_depth`\|`by_node_type`) |
+| `--dry-run` | `false` | Validate setup without running pipeline |
+| `--output-format` | `latex` | Output format (`latex` or `markdown`) |
+| `--list-runs` | `false` | List past runs and exit |
+
+<details>
+<summary>Deprecated flags (accepted for backward compatibility, ignored at runtime)</summary>
+
+| Flag | Default | Note |
+|---|---|---|
+| `--interpreter` | `python` | No-op; experiment tool auto-detects Python |
+| `--enable-planning` | `false` | No-op; planning is handled by `research_planner_agent` |
+| `--planning-interval` | `3` | No-op; planning always runs at the designated stage |
+| `--manager-max-steps` | `None` (effective `50`) | Retained in run state for compatibility; not the routing control in the fixed workflow graph |
+| `--pipeline-mode` | `None` | Ignored; the fixed workflow graph always runs |
+
+</details>
 
 Notes:
 
@@ -646,6 +732,9 @@ results/consortium_YYYYMMDD_HHMMSS/
       model_1_claude-sonnet-4-6/
       model_2_gpt-5.2/
       model_3_gemini-3.0-pro/
+  tree_search_state.json             # when --enable-tree-search
+  tree_branches/                     # when --enable-tree-search
+    <branch_id>/                     # forked workspace per branch
   inter_agent_messages/
   run_token_usage.json
   budget_state.json                  # when budget is configured
@@ -687,8 +776,8 @@ Additional strict checks with `--enforce-editorial-artifacts` include:
 - `paper_workspace/editorial_contract.md`
 - `paper_workspace/theorem_map.json`
 - `paper_workspace/revision_log.md`
-- `paper_workspace/copyedit_report.md`
-- `paper_workspace/review_report.md`
+- `paper_workspace/copyedit_report.tex`
+- `paper_workspace/review_report.tex`
 - `paper_workspace/review_verdict.json`
 - `paper_workspace/claim_traceability.json` (when math agents are enabled)
 
@@ -699,30 +788,67 @@ Additional strict validations include:
 - math acceptance/dependency consistency
 - claim traceability checks (editorial + math runs)
 
-Note: the proofreading and reviewer prompts currently describe richer `.tex/.pdf` report artifacts, but the active strict validation gate still keys off the `.md` / `.json` editorial artifacts listed above.
+The proofreading and reviewer agents produce `.tex`/`.pdf` report artifacts; the validation gate checks for the `.tex` source files listed above. The `.pdf` compiled outputs are produced alongside them but are not individually gated.
+
+## Submission Checklist (NeurIPS / ICML / ICLR)
+
+Consortium produces a paper draft, not a submission-ready manuscript. Before submitting to any venue, complete this human verification checklist:
+
+### Novelty and Positioning
+- [ ] Verify the core claim is genuinely novel by searching recent proceedings (not just arXiv) for the same or equivalent result.
+- [ ] Confirm the paper clearly states its contribution relative to the closest prior work identified by the literature review agent.
+- [ ] Check that the "Related Work" section does not misrepresent cited papers.
+
+### Baselines and Experiments
+- [ ] Confirm baselines are appropriate and fairly tuned (not strawman comparisons).
+- [ ] Verify reported numbers by re-running at least one key experiment independently.
+- [ ] Check that evaluation metrics match the venue's norms for the paper's subfield.
+- [ ] Inspect generated figures for mislabeled axes, truncated ranges, or misleading scales.
+
+### Citations and References
+- [ ] Spot-check at least 10 citations: verify the cited paper exists, the claim attributed to it is accurate, and it is not retracted.
+- [ ] Confirm `references.bib` entries have correct author names, titles, years, and venues.
+- [ ] Check for missing citations to foundational or directly competing work.
+
+### Writing and Ethics
+- [ ] Read the full paper for coherence, logical flow, and AI-voice artifacts.
+- [ ] Write or revise the ethics/broader-impact section manually (venue-specific requirements vary).
+- [ ] Verify the abstract accurately reflects the paper's actual results and claims.
+- [ ] Confirm the paper meets the venue's formatting requirements (page limits, style file, anonymization).
+
+### Final Validation
+- [ ] Compile the LaTeX locally and verify the PDF renders correctly.
+- [ ] Run a plagiarism/AI-text-detection check if required by the venue.
+- [ ] Have at least one domain expert read the paper before submission.
 
 ## Architecture and Module Map
 
 Core orchestration:
 
 - `launch_multiagent.py`: thin entry point
-- `consortium/runner.py`: run lifecycle, config loading, model/counsel setup, workspace/checkpoint initialization, execution
+- `consortium/runner.py`: run lifecycle, config loading, model/counsel/tree-search setup, workspace/checkpoint initialization, execution
 - `consortium/utils.py`: model factory and `build_research_graph()` wrapper that returns the compiled graph plus checkpointer
-- `consortium/graph.py`: direct-wired LangGraph definition, track router, follow-up gate, validation gate, and theory/experiment subgraph builders
-- `consortium/state.py`: `ResearchState` schema, including `track_decomposition`, track status fields, and cycle counters
+- `consortium/graph.py`: direct-wired LangGraph definition, track router, novelty gate, follow-up gate, validation gate, and theory/experiment subgraph builders
+- `consortium/state.py`: `ResearchState` schema, including `track_decomposition`, track status fields, tree search state, and cycle counters
+- `consortium/models.py`: canonical model registry with context limits and provider mappings
 - `consortium/workflow_utils.py`: shared follow-up parsing, required-artifact construction, and validation helpers
 - `consortium/counsel.py`: multi-model sandbox/debate/synthesis
 - `consortium/supervision/`: artifact/review/traceability validators
 
 Major package areas:
 
-- `consortium/agents/`: specialist agent implementations plus a compatibility manager module retained from the older routing model
-- `consortium/toolkits/search/`: arXiv/web/search/document inspection tools
-- `consortium/toolkits/experimentation/`: experiment execution helpers
-- `consortium/toolkits/writeup/`: LaTeX and citation tooling
+- `consortium/agents/`: 20 specialist agent implementations, base agent factory, and track merge node
+- `consortium/toolkits/search/`: arXiv/web/search/document inspection tools (including Open Deep Search with web scraping, reranking, and SERP integration)
+- `consortium/toolkits/experimentation/`: experiment execution helpers (including SLURM job submission)
+- `consortium/toolkits/writeup/`: LaTeX generation/compilation/reflection, citation search, data visualization (comparison plots, training analysis, statistical analysis, multi-panel composition), and VLM document analysis
 - `consortium/toolkits/math/`: claim graph, proof workspace, symbolic/numeric verification
-- `consortium/campaign/`: autonomous multi-stage campaign engine
+- `consortium/toolkits/filesystem/`: file editing, knowledge base repo management and indexing
+- `consortium/toolkits/ideation/`: idea generation, refinement, novelty checking, paper search
+- `consortium/toolkits/communication/`: user messaging
+- `consortium/tree_search/`: agentic tree search — DAG-layered best-first search for parallel proof strategies, idea variants, and experiment designs (see [Agentic Tree Search](#agentic-tree-search))
+- `consortium/campaign/`: autonomous multi-stage campaign engine (spec, runner, memory, status, notifications)
 - `consortium/interaction/`: TCP + HTTP steering
+- `consortium/external_tools/`: AI Scientist v2 integration for experiment execution
 
 Notable agent groups:
 
@@ -761,6 +887,8 @@ Runtime and spend depend on task scope, enabled gates, model choice, and revisio
 | Base pipeline + LaTeX PDF | $10–40 | 30–90 min | Requires pdflatex installed |
 | Base pipeline + math agents | $20–60 | 60–150 min | Adds 6 math stages |
 | Counsel mode (4-model debate) | $50–200 | 2–5 hrs | Requires 3 API keys |
+| Tree search (no counsel) | $60–180 | 2–4 hrs | ~3x per claim (max_breadth=3) |
+| Tree search + counsel (all nodes) | $200–600 | 4–10 hrs | ~15-20x per claim; maximum quality |
 | Full paper campaign (3 stages) | $100–400 | 6–12 hrs | Via OpenClaw orchestration |
 
 > **Budget cap**: The default `.llm_config.yaml` cap is $600. Reduce `budget.usd_limit` for experiments.
@@ -770,6 +898,170 @@ For counsel-heavy runs, monitor:
 - `run_token_usage.json` — token counts by model
 - `budget_ledger.jsonl` — per-call cost log
 - `run_summary.json` — final cost/token summary written at completion
+
+## Counsel Mode (Multi-Model Debate)
+
+Counsel mode (`--enable-counsel`) replaces single-model execution at each pipeline stage with a parallel multi-model debate and synthesis protocol.
+
+### Participating Models
+
+By default, four frontier models run independently:
+
+| Slot | Model | Provider | Notes |
+|------|-------|----------|-------|
+| 0 | `claude-opus-4-6` | Anthropic | Also serves as synthesis model |
+| 1 | `claude-sonnet-4-6` | Anthropic | |
+| 2 | `gpt-5.2` | OpenAI | `reasoning_effort=high` |
+| 3 | `gemini-3.0-pro` | Google | `thinking_budget=65536` |
+
+Custom model specs can be set in `.llm_config.yaml` under `counsel.models`.
+
+### Debate Protocol
+
+Each pipeline stage runs through four phases:
+
+1. **Sandbox phase** (parallel): Each model receives the same task and system prompt but works in an isolated copy of the workspace (`counsel_sandboxes/<agent>/<model>/`). All four models execute simultaneously via `ThreadPoolExecutor`.
+2. **Debate phase** (parallel per round): After all sandbox runs complete, each model critiques all four solutions. This runs for `max_debate_rounds` rounds (default: 3, configurable via `--counsel-max-debate-rounds` or `CONSORTIUM_COUNSEL_MAX_DEBATE_ROUNDS`). Each round's critiques run in parallel.
+3. **Synthesis phase**: Claude Opus 4.6 reviews all solutions and all debate rounds, then produces a single authoritative output for the stage.
+4. **Artifact promotion**: Files from each sandbox are merged into the main workspace. Later sandboxes win on file-level conflicts (last-write-wins).
+
+### When to Use Counsel
+
+- Use counsel when quality matters more than cost (e.g., final paper runs, important campaigns).
+- Counsel helps most on stages where model disagreement reveals weaknesses: literature review, experiment design, writeup.
+- Skip counsel (`--no-counsel`) for iterative development, quickstart runs, or cost-sensitive exploration.
+
+### Cost and Performance Impact
+
+- Counsel multiplies per-stage cost by roughly 5-6x (4 independent model runs + 3 rounds of 4 debate calls + 1 synthesis call).
+- Wall-clock time increases modestly because sandbox and debate phases run in parallel, but total runtime is still longer due to synthesis and sequential stage execution.
+- Requires API keys for all three providers: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`.
+
+### Counsel Precedence
+
+1. `--no-counsel` disables counsel even if `counsel.enabled: true` in config.
+2. `--enable-counsel` enables counsel even if `counsel.enabled: false` in config.
+3. If neither flag is passed, the `counsel.enabled` value from `.llm_config.yaml` is used.
+
+## Agentic Tree Search
+
+Tree search (`--enable-tree-search`) replaces linear execution at key decision points with parallel exploration of multiple strategies, selecting the best results via LLM-guided scoring.
+
+Inspired by the AI Scientist-v2 progressive agentic tree search (paper 2504.08066v1), adapted for mathematical research where the claim graph imposes a DAG dependency structure.
+
+### How It Works
+
+The tree search controller operates in a **DAG-layered best-first** loop:
+
+1. **Identify frontier claims** — claims in the claim graph whose dependencies are all resolved
+2. **Generate proof strategies** — for each frontier claim, produce N alternative approaches (e.g., direct proof, contradiction, alternative lemma chain)
+3. **Score branches** — composite score: 40% LLM promise + 25% claim graph impact + 15% cost efficiency + 10% depth penalty + 10% sibling diversity
+4. **Execute top-K branches in parallel** — each branch runs in a forked workspace through the full prover → rigorous verifier → empirical verifier pipeline
+5. **Process results** — successful branches are promoted, failed branches spawn debugging children (up to `max_depth`), low-scoring branches are pruned
+
+### Integration Points
+
+Tree search hooks into four places in the pipeline:
+
+| Integration Point | What It Does | Graph Location |
+|---|---|---|
+| **Theory track** | Parallel proof strategies per claim | Replaces linear math prover stage |
+| **Ideation** | Parallel idea variants scored by novelty/tractability | Before literature review |
+| **Experiment track** | Parallel experiment designs | Before experiment execution |
+| **Follow-up loop** | Parallel gap-fixing directions | At follow-up replanning |
+
+Currently, only the **theory track** integration is fully wired into `graph.py`. The ideation, experiment, and follow-up routers are implemented in `consortium/tree_search/graph_integration.py` but require additional wiring in `graph.py` to activate.
+
+### Tree Search Node Types
+
+| Node Type | Purpose |
+|---|---|
+| `PROOF_STRATEGY` | Alternative approach to proving a claim |
+| `LEMMA_DECOMPOSITION` | Alternative lemma chain supporting a theorem |
+| `DEBUGGING` | Child branch addressing gaps from a failed proof |
+| `IDEA_VARIANT` | Alternative research direction at ideation |
+| `EXPERIMENT_DESIGN` | Alternative experimental setup |
+| `FOLLOWUP_GAP_FIX` | Fix proof gaps for blocking claims |
+| `FOLLOWUP_EXTENSION` | Extend results or strengthen experiments |
+
+### Composition with Counsel
+
+Tree search and counsel are orthogonal:
+
+- **Tree search** = same model, different tasks (explore N strategies in parallel)
+- **Counsel** = different models, same task (4-model debate per strategy)
+
+They compose: each tree branch can run the full counsel debate. `--tree-counsel-mode` controls when counsel runs within branches:
+
+| Mode | Behavior |
+|---|---|
+| `all_nodes` (default) | Every tree node gets full 4-model debate. Maximum quality. |
+| `final_only` | Only the winning branch runs counsel after tree selection. |
+| `by_depth` | Counsel at specified tree depths only. |
+| `by_node_type` | Counsel only on high-stakes node types (e.g., `PROOF_STRATEGY`). |
+
+With `max_breadth=3` and 4 counsel models, this means 12 parallel agent runs per claim at the proof stage.
+
+### Module Structure
+
+```
+consortium/tree_search/
+    __init__.py               # Public API
+    tree_state.py             # TreeNode, TreeSearchConfig, TreeSearchState, enums
+    tree_manager.py           # DAG-layered best-first search controller
+    node_evaluator.py         # Composite scoring (LLM + claim graph + cost + depth + diversity)
+    strategy_generator.py     # LLM-based proof/idea/experiment strategy generation
+    graph_integration.py      # LangGraph integration (theory, ideation, experiment, follow-up routers)
+    workspace_fork.py         # Copy-on-write workspace forking
+    tree_persistence.py       # JSON save/load for tree state
+    budget_allocator.py       # Per-branch budget distribution
+    tree_visualization.py     # ASCII tree, Mermaid diagram, summary table
+```
+
+### Tree Search Artifacts
+
+When tree search is enabled, the workspace includes:
+
+- `tree_search_state.json` — serialized tree state (all nodes, scores, statuses)
+- `tree_branches/<branch_id>/` — forked workspace per branch
+
+### Configuration
+
+Tree search is off by default. Enable via CLI flags:
+
+```bash
+--enable-tree-search            # activate tree search
+--tree-max-breadth 3            # branches per decision point (default: 3)
+--tree-max-depth 4              # max debugging recursion (default: 4)
+--tree-max-parallel 6           # max concurrent branches (default: 6)
+--tree-pruning-threshold 0.2    # prune branches scoring below this (default: 0.2)
+--tree-counsel-mode all_nodes   # counsel integration mode (default: all_nodes)
+```
+
+## Experiment Execution Safety Model
+
+### What IS in Place
+
+- **Subprocess isolation**: `RunExperimentTool` launches AI-Scientist-v2 as a child process via `subprocess.run()`. Experiment code runs in a dedicated `experiment_runs/<uuid>/` directory, separate from the main workspace.
+- **Timeout enforcement**: Local subprocess mode enforces `CONSORTIUM_EXPERIMENT_TIMEOUT` (default: 3600 seconds). If the experiment exceeds this, the subprocess is killed.
+- **SLURM mode** (when `CONSORTIUM_SLURM_ENABLED=1`): Experiments are submitted as SLURM batch jobs with configurable partition, time limit, GPU allocation, and memory. SLURM's own resource enforcement applies.
+- **Budget cap**: The overall USD budget limit prevents unbounded API spend during experiments.
+- **Input validation**: The tool validates that research ideas conform to AI-Scientist-v2's expected JSON schema before launching.
+- **Docker support**: A `Dockerfile` and `docker-compose.yml` are provided for running the entire pipeline in a container, which provides filesystem and process isolation.
+
+### What is NOT in Place
+
+- **No per-experiment Docker/container isolation**: When running locally (not via Docker), experiments execute as the same OS user with full filesystem access. There is no per-experiment container, namespace, or chroot.
+- **No cgroup/ulimit enforcement** (local mode): CPU, memory, and disk usage are unbounded beyond the subprocess timeout.
+- **No network isolation**: Experiment code can make arbitrary network requests.
+- **No code review gate**: AI-generated experiment code is executed without human review. The `experiment_verification_agent` checks results after execution, not code before execution.
+
+### Recommendations for Production Use
+
+- Run the pipeline inside Docker (`docker compose run consortium ...`) for filesystem isolation.
+- On HPC clusters, use SLURM mode (`CONSORTIUM_SLURM_ENABLED=1`) to leverage cluster-level resource enforcement.
+- Set a conservative `CONSORTIUM_EXPERIMENT_TIMEOUT` for untrusted or exploratory tasks.
+- Review generated experiment code in `experiment_runs/` before trusting results.
 
 ## Troubleshooting
 
@@ -832,17 +1124,36 @@ export CONSORTIUM_SEARCH_MAX_CHARS=12000
 export CONSORTIUM_SEARCH_MAX_MATCHES=200
 ```
 
+## Empirical Quality Evidence
+
+_This section is a placeholder for benchmark results measuring the quality of Consortium-generated papers._
+
+Planned metrics:
+- **Artifact completion rate**: Fraction of runs that produce all required artifacts without manual intervention.
+- **Reviewer score distribution**: Histogram of `overall_score` values from the internal reviewer agent across a test suite of tasks.
+- **Citation accuracy**: Spot-check accuracy rate of generated `references.bib` entries against ground truth.
+- **Experiment reproducibility**: Rate at which generated experiments produce consistent results across repeated runs.
+- **Cost efficiency**: Median cost per completed paper draft across task categories.
+
+We will publish benchmark results here once a standardized evaluation suite is available.
+
 ## Running Tests
 
 ```bash
 pytest tests/
 ```
 
-Deterministic test modules include:
+Test modules:
 
-- `tests/test_validation.py`
-- `tests/test_config.py`
-- `tests/test_prereqs.py`
+- `tests/test_validation.py` — artifact/review/traceability validators
+- `tests/test_config.py` — configuration loading and precedence
+- `tests/test_prereqs.py` — prerequisite checks
+- `tests/test_graph.py` — graph construction and routing
+- `tests/test_parallel_graph.py` — parallel track execution
+- `tests/test_runner.py` — runner lifecycle
+- `tests/test_state.py` — state schema and reducers
+- `tests/test_budget.py` — budget tracking, ledger, lock files
+- `tests/test_counsel.py` — counsel model specs and imports
 
 ## License
 

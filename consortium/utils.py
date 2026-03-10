@@ -164,6 +164,7 @@ def build_research_graph(
     manager_max_steps=50,
     counsel_models=None,
     summary_model_id="claude-sonnet-4-6",
+    tree_search_config=None,
 ):
     """
     Build and return the compiled LangGraph research pipeline.
@@ -215,6 +216,7 @@ def build_research_graph(
         checkpointer=checkpointer,
         counsel_models=counsel_models,
         summary_model_id=summary_model_id,
+        tree_search_config=tree_search_config,
     )
     logger.info("LangGraph pipeline ready.")
     return compiled, checkpointer

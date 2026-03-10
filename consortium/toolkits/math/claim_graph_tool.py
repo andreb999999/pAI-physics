@@ -891,3 +891,56 @@ class MathClaimGraphTool(BaseTool):
     @staticmethod
     def _error(message: str) -> str:
         return json.dumps({"success": False, "error": message}, indent=2)
+
+
+# ---------------------------------------------------------------------------
+# Standalone helpers for tree search integration
+# ---------------------------------------------------------------------------
+
+def load_claim_graph(workspace_dir: str, subdir: str = "math_workspace") -> Dict[str, Any]:
+    """Load and return the claim_graph.json dict from *workspace_dir*."""
+    path = os.path.join(workspace_dir, subdir, "claim_graph.json")
+    if not os.path.exists(path):
+        return {"claims": []}
+    with open(path) as f:
+        return json.load(f)
+
+
+def get_frontier_claims(
+    claim_graph: Dict[str, Any],
+    completed_claims: List[str],
+) -> List[Dict[str, Any]]:
+    """Return claims whose dependencies are all in *completed_claims*.
+
+    A claim is *frontier* when it is not yet resolved (not in
+    completed_claims) and every entry in its ``depends_on`` is resolved.
+    Skips claims with status ``accepted`` or ``rejected``.
+    """
+    completed = set(completed_claims)
+    frontier: List[Dict[str, Any]] = []
+    for c in claim_graph.get("claims", []):
+        cid = c["id"]
+        if cid in completed:
+            continue
+        if c.get("status") in ("accepted", "rejected"):
+            continue
+        if all(d in completed for d in c.get("depends_on", [])):
+            frontier.append(c)
+    return frontier
+
+
+def get_downstream_impact(claim_id: str, claim_graph: Dict[str, Any]) -> int:
+    """Count claims that transitively depend on *claim_id*."""
+    dependents: Dict[str, set] = {}
+    for c in claim_graph.get("claims", []):
+        for dep in c.get("depends_on", []):
+            dependents.setdefault(dep, set()).add(c["id"])
+    visited: set = set()
+    stack = [claim_id]
+    while stack:
+        cid = stack.pop()
+        if cid in visited:
+            continue
+        visited.add(cid)
+        stack.extend(dependents.get(cid, set()))
+    return len(visited) - 1

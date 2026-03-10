@@ -173,8 +173,8 @@ def _build_required_artifacts(args, enforce_paper_artifacts, enforce_editorial_a
                 "paper_workspace/editorial_contract.md",
                 "paper_workspace/theorem_map.json",
                 "paper_workspace/revision_log.md",
-                "paper_workspace/copyedit_report.md",
-                "paper_workspace/review_report.md",
+                "paper_workspace/copyedit_report.tex",
+                "paper_workspace/review_report.tex",
                 "paper_workspace/review_verdict.json",
             ])
             if args.enable_math_agents:
@@ -420,7 +420,7 @@ def main():
     if args.pipeline_mode is not None:
         print(
             "Warning: --pipeline-mode is deprecated and ignored. "
-            "Running deterministic full pipeline mode."
+            "Running fixed-stage full pipeline mode."
         )
 
     if args.start_from_stage and not args.resume:
@@ -499,7 +499,7 @@ def main():
     print(f"Token tracker initialized: {token_file}")
 
     print(f"Task: {task[:100]}{'...' if len(task) > 100 else ''}")
-    print("Pipeline mode: full_research (deterministic)")
+    print("Pipeline mode: full_research (fixed-stage)")
     if args.enable_math_agents:
         print("Math agent workflow enabled.")
 
@@ -599,6 +599,19 @@ def main():
         )
         os.environ["CONSORTIUM_COUNSEL_MAX_DEBATE_ROUNDS"] = str(max_debate_rounds)
 
+    # Build tree search config if enabled
+    tree_search_config = None
+    if getattr(args, "enable_tree_search", False):
+        from consortium.tree_search.tree_state import CounselMode, TreeSearchConfig
+        tree_search_config = TreeSearchConfig(
+            enabled=True,
+            max_breadth=getattr(args, "tree_max_breadth", 3),
+            max_depth=getattr(args, "tree_max_depth", 4),
+            max_parallel=getattr(args, "tree_max_parallel", 6),
+            pruning_threshold=getattr(args, "tree_pruning_threshold", 0.2),
+            counsel_mode=CounselMode(getattr(args, "tree_counsel_mode", "all_nodes")),
+        )
+
     try:
         graph, checkpointer = build_research_graph(
             model=model,
@@ -614,6 +627,7 @@ def main():
             followup_max_iterations=args.followup_max_iterations,
             manager_max_steps=args.manager_max_steps if args.manager_max_steps else 50,
             counsel_models=counsel_models_list,
+            tree_search_config=tree_search_config,
         )
 
         # Build initial state
@@ -640,11 +654,17 @@ def main():
             "followup_iteration": 0,
             "research_cycle": 0,
             "max_research_cycles": args.followup_max_iterations,
+            "novelty_check_attempts": 0,
+            "rebuttal_iteration": 0,
+            "max_rebuttal_iterations": args.max_rebuttal_iterations,
             "validation_results": {},
             "interrupt_instruction": None,
             "theory_track_status": None,
             "experiment_track_status": None,
             "track_decomposition": None,
+            "tree_search_enabled": getattr(args, "enable_tree_search", False),
+            "tree_state_path": None,
+            "active_branch_id": None,
             "finished": False,
         }
 

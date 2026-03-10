@@ -31,10 +31,13 @@ except (ImportError, ModuleNotFoundError):
 
 
 def get_tools(workspace_dir: Optional[str], model_id: str) -> list:
+    from ..toolkits.ideation.check_idea_novelty_tool import CheckIdeaNoveltyTool
+
     tools = [
         FetchArxivPapersTool(working_dir=workspace_dir),
         GenerateIdeaTool(model=model_id),
         RefineIdeaTool(model=model_id),
+        CheckIdeaNoveltyTool(model=model_id),
         VLMDocumentAnalysisTool(model=model_id, working_dir=workspace_dir),
         LaTeXGeneratorTool(model=model_id, working_dir=workspace_dir),
         LaTeXCompilerTool(working_dir=workspace_dir, model=model_id),

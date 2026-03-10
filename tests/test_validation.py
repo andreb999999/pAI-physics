@@ -14,6 +14,7 @@ from consortium.supervision.result_validation import (
     sanitize_result_payload,
 )
 from consortium.supervision.review_verdict_validation import validate_review_verdict
+from consortium.workflow_utils import build_required_artifacts, classify_review_fixes
 from consortium.supervision.paper_quality_validation import validate_paper_quality
 from consortium.supervision.math_acceptance_validation import validate_math_acceptance
 
@@ -203,6 +204,54 @@ class TestValidateMathAcceptance:
         assert result["is_valid"]
         assert not result["graph_present"]
 
+    def test_editorial_artifacts_require_tex(self, tmp_path):
+        """B1: editorial artifacts should require .tex (not .md) for reports."""
+        state = {
+            "workspace_dir": str(tmp_path),
+            "enforce_paper_artifacts": True,
+            "enforce_editorial_artifacts": True,
+        }
+        required = build_required_artifacts(state)
+        assert "paper_workspace/copyedit_report.tex" in required
+        assert "paper_workspace/review_report.tex" in required
+        assert "paper_workspace/copyedit_report.md" not in required
+        assert "paper_workspace/review_report.md" not in required
+
+    def test_editorial_artifacts_pass_with_tex_files(self, tmp_path):
+        """B1: validation should pass when .tex report files exist."""
+        pw = tmp_path / "paper_workspace"
+        pw.mkdir()
+        # Create all required artifacts
+        (tmp_path / "final_paper.tex").write_text("\\documentclass{article}")
+        (pw / "track_decomposition.json").write_text("{}")
+        (pw / "literature_review.pdf").write_bytes(b"pdf")
+        (pw / "research_plan.pdf").write_bytes(b"pdf")
+        (pw / "results_assessment.pdf").write_bytes(b"pdf")
+        (pw / "followup_decision.json").write_text("{}")
+        (pw / "author_style_guide.md").write_text("guide")
+        (pw / "intro_skeleton.tex").write_text("skeleton")
+        (pw / "style_macros.tex").write_text("macros")
+        (pw / "reader_contract.json").write_text("{}")
+        (pw / "editorial_contract.md").write_text("contract")
+        (pw / "theorem_map.json").write_text("{}")
+        (pw / "revision_log.md").write_text("log")
+        (pw / "copyedit_report.tex").write_text("\\section{Report}")
+        (pw / "review_report.tex").write_text("\\section{Review}")
+        (pw / "review_verdict.json").write_text("{}")
+        state = {
+            "workspace_dir": str(tmp_path),
+            "enforce_paper_artifacts": True,
+            "enforce_editorial_artifacts": True,
+        }
+        required = build_required_artifacts(state)
+        summary = validate_result_artifacts(
+            result="", workspace_dir=str(tmp_path), required_artifacts=required,
+        )
+        assert not summary.get("missing_required_artifacts"), (
+            f"Unexpected missing: {summary.get('missing_required_artifacts')}"
+        )
+
+
     def test_accepted_claim_missing_proof(self, tmp_path):
         math_dir = tmp_path / "math_workspace"
         math_dir.mkdir()
@@ -211,3 +260,68 @@ class TestValidateMathAcceptance:
         result = validate_math_acceptance(str(tmp_path))
         assert not result["is_valid"]
         assert any("proof file" in e for e in result["errors"])
+
+
+# ---------------------------------------------------------------------------
+# classify_review_fixes
+# ---------------------------------------------------------------------------
+
+class TestClassifyReviewFixes:
+    def _make_verdict(self, tmp_path, must_fix_actions):
+        pw = tmp_path / "paper_workspace"
+        pw.mkdir(exist_ok=True)
+        verdict = {
+            "overall_score": 5,
+            "must_fix_actions": must_fix_actions,
+        }
+        (pw / "review_verdict.json").write_text(json.dumps(verdict))
+
+    def test_no_verdict_file(self, tmp_path):
+        assert classify_review_fixes(str(tmp_path)) == "writeup"
+
+    def test_explicit_experiment_fix_type(self, tmp_path):
+        self._make_verdict(tmp_path, [
+            {"action": "fix something", "fix_type": "experiment", "target_files": []},
+        ])
+        assert classify_review_fixes(str(tmp_path)) == "experiment"
+
+    def test_explicit_theory_fix_type(self, tmp_path):
+        self._make_verdict(tmp_path, [
+            {"action": "fix proof gap", "fix_type": "theory", "target_files": []},
+        ])
+        assert classify_review_fixes(str(tmp_path)) == "theory"
+
+    def test_explicit_writeup_fix_type(self, tmp_path):
+        self._make_verdict(tmp_path, [
+            {"action": "rewrite intro", "fix_type": "writeup", "target_files": []},
+        ])
+        assert classify_review_fixes(str(tmp_path)) == "writeup"
+
+    def test_heuristic_experiment_keyword(self, tmp_path):
+        self._make_verdict(tmp_path, [
+            {"action": "rerun baseline experiment with more seeds", "target_files": []},
+        ])
+        assert classify_review_fixes(str(tmp_path)) == "experiment"
+
+    def test_heuristic_theory_keyword(self, tmp_path):
+        self._make_verdict(tmp_path, [
+            {"action": "fix the convergence proof bound", "target_files": []},
+        ])
+        assert classify_review_fixes(str(tmp_path)) == "theory"
+
+    def test_writeup_only_actions(self, tmp_path):
+        self._make_verdict(tmp_path, [
+            {"action": "improve clarity of introduction", "target_files": ["final_paper.tex"]},
+        ])
+        assert classify_review_fixes(str(tmp_path)) == "writeup"
+
+    def test_experiment_takes_priority_over_theory(self, tmp_path):
+        self._make_verdict(tmp_path, [
+            {"action": "fix the theorem proof", "fix_type": "theory", "target_files": []},
+            {"action": "add ablation experiment", "fix_type": "experiment", "target_files": []},
+        ])
+        assert classify_review_fixes(str(tmp_path)) == "experiment"
+
+    def test_empty_must_fix_list(self, tmp_path):
+        self._make_verdict(tmp_path, [])
+        assert classify_review_fixes(str(tmp_path)) == "writeup"
