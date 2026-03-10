@@ -90,7 +90,7 @@ Given a `--task`, the active single-run LangGraph workflow:
 6. Prepares resources, writes the paper, proofreads it, reviews it, and runs final validation gates
 7. Optionally enables theorem/proof work via `--enable-math-agents`
 8. Optionally enables multi-model debate at each specialist stage via `--enable-counsel`
-9. Optionally enables agentic tree search (`--enable-tree-search`) to explore multiple proof strategies, ideas, and experiment designs in parallel via DAG-layered best-first search
+9. Optionally enables agentic tree search (`--enable-tree-search`) to explore multiple proof strategies in parallel via DAG-layered best-first search
 10. Supports autonomous multi-stage campaigns via OpenClaw or cron (`OpenClaw_Use_Guide.md`)
 
 Runs are resumable through LangGraph checkpoints (`checkpoints.db`) and can be steered live over TCP/HTTP.
@@ -660,7 +660,7 @@ Use `python launch_multiagent.py --help` for full output.
 | `--no-counsel` | `false` | Force-disable counsel |
 | `--counsel-max-debate-rounds` | `None` (effective `3`) | Override counsel debate rounds |
 | `--max-rebuttal-iterations` | `2` | Max reviewer → writeup rebuttal loops |
-| `--enable-tree-search` | `false` | Enable agentic tree search (parallel proof strategies, idea variants, experiment designs) |
+| `--enable-tree-search` | `false` | Enable agentic tree search (parallel proof strategies in theory track) |
 | `--tree-max-breadth` | `3` | Max parallel branches per decision point |
 | `--tree-max-depth` | `4` | Max debugging/refinement recursion depth |
 | `--tree-max-parallel` | `6` | Max concurrent branches executing at once |
@@ -845,7 +845,7 @@ Major package areas:
 - `consortium/toolkits/filesystem/`: file editing, knowledge base repo management and indexing
 - `consortium/toolkits/ideation/`: idea generation, refinement, novelty checking, paper search
 - `consortium/toolkits/communication/`: user messaging
-- `consortium/tree_search/`: agentic tree search — DAG-layered best-first search for parallel proof strategies, idea variants, and experiment designs (see [Agentic Tree Search](#agentic-tree-search))
+- `consortium/tree_search/`: agentic tree search — DAG-layered best-first search for parallel proof strategies in the theory track (see [Agentic Tree Search](#agentic-tree-search))
 - `consortium/campaign/`: autonomous multi-stage campaign engine (spec, runner, memory, status, notifications)
 - `consortium/interaction/`: TCP + HTTP steering
 - `consortium/external_tools/`: AI Scientist v2 integration for experiment execution
@@ -945,9 +945,9 @@ Each pipeline stage runs through four phases:
 
 ## Agentic Tree Search
 
-Tree search (`--enable-tree-search`) replaces linear execution at key decision points with parallel exploration of multiple strategies, selecting the best results via LLM-guided scoring.
+Tree search (`--enable-tree-search`) replaces the linear proof stage in the theory track with parallel exploration of multiple proof strategies, selecting the best results via LLM-guided scoring.
 
-Inspired by the AI Scientist-v2 progressive agentic tree search (paper 2504.08066v1), adapted for mathematical research where the claim graph imposes a DAG dependency structure.
+Inspired by the AI Scientist-v2 progressive agentic tree search (paper 2504.08066v1), adapted for mathematical research where the claim graph imposes a DAG dependency structure. Tree search is scoped to the theory track (proof stage) because that is where the pipeline has a genuine combinatorial bottleneck: proofs are binary (valid or not), alternative strategies are well-defined, and the claim graph provides real prioritisation signal.
 
 ### How It Works
 
@@ -959,18 +959,9 @@ The tree search controller operates in a **DAG-layered best-first** loop:
 4. **Execute top-K branches in parallel** — each branch runs in a forked workspace through the full prover → rigorous verifier → empirical verifier pipeline
 5. **Process results** — successful branches are promoted, failed branches spawn debugging children (up to `max_depth`), low-scoring branches are pruned
 
-### Integration Points
+### Integration Point
 
-Tree search hooks into four places in the pipeline:
-
-| Integration Point | What It Does | Graph Location |
-|---|---|---|
-| **Theory track** | Parallel proof strategies per claim | Replaces linear math prover stage |
-| **Ideation** | Parallel idea variants scored by novelty/tractability | Before literature review |
-| **Experiment track** | Parallel experiment designs | Before experiment execution |
-| **Follow-up loop** | Parallel gap-fixing directions | At follow-up replanning |
-
-Currently, only the **theory track** integration is fully wired into `graph.py`. The ideation, experiment, and follow-up routers are implemented in `consortium/tree_search/graph_integration.py` but require additional wiring in `graph.py` to activate.
+Tree search hooks into the **theory track**, replacing the linear prover → verifier chain with a tree search controller that explores multiple proof strategies per claim in parallel.
 
 ### Tree Search Node Types
 
@@ -978,11 +969,10 @@ Currently, only the **theory track** integration is fully wired into `graph.py`.
 |---|---|
 | `PROOF_STRATEGY` | Alternative approach to proving a claim |
 | `LEMMA_DECOMPOSITION` | Alternative lemma chain supporting a theorem |
+| `ASSUMPTION_VARIANT` | Proof under weakened or strengthened assumptions |
 | `DEBUGGING` | Child branch addressing gaps from a failed proof |
-| `IDEA_VARIANT` | Alternative research direction at ideation |
-| `EXPERIMENT_DESIGN` | Alternative experimental setup |
-| `FOLLOWUP_GAP_FIX` | Fix proof gaps for blocking claims |
-| `FOLLOWUP_EXTENSION` | Extend results or strengthen experiments |
+| `INDEPENDENT_VERIFICATION` | Cross-check via a different verification method |
+| `COMPONENT_ABLATION` | Ablation testing a proof component in isolation |
 
 ### Composition with Counsel
 
@@ -1010,8 +1000,8 @@ consortium/tree_search/
     tree_state.py             # TreeNode, TreeSearchConfig, TreeSearchState, enums
     tree_manager.py           # DAG-layered best-first search controller
     node_evaluator.py         # Composite scoring (LLM + claim graph + cost + depth + diversity)
-    strategy_generator.py     # LLM-based proof/idea/experiment strategy generation
-    graph_integration.py      # LangGraph integration (theory, ideation, experiment, follow-up routers)
+    strategy_generator.py     # LLM-based proof strategy generation
+    graph_integration.py      # LangGraph theory track integration
     workspace_fork.py         # Copy-on-write workspace forking
     tree_persistence.py       # JSON save/load for tree state
     budget_allocator.py       # Per-branch budget distribution

@@ -16,8 +16,6 @@ from typing import Any, Optional
 
 from consortium.tree_search.node_evaluator import rescore_all, score_node
 from consortium.tree_search.strategy_generator import (
-    generate_experiment_variants,
-    generate_idea_variants,
     generate_proof_strategies,
     load_prior_proof,
     load_verification_gaps,

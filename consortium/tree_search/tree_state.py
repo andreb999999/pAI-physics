@@ -32,19 +32,6 @@ class NodeType(str, Enum):
     INDEPENDENT_VERIFICATION = "independent_verification"
     COMPONENT_ABLATION = "component_ablation"
 
-    # Ideation
-    IDEA_VARIANT = "idea_variant"
-
-    # Experiment
-    EXPERIMENT_DESIGN = "experiment_design"
-
-    # Follow-up
-    FOLLOWUP_GAP_FIX = "followup_gap_fix"
-    FOLLOWUP_EXTENSION = "followup_extension"
-
-    # Aggregation
-    SYNTHESIS = "synthesis"
-
 
 class NodeStatus(str, Enum):
     """Lifecycle status of a tree node."""

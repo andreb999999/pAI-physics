@@ -1,8 +1,8 @@
 """Agentic tree search for phdlabor-1.
 
-Implements DAG-layered best-first search across ideation, theory, experiment,
-and follow-up phases. Inspired by AI Scientist-v2 progressive agentic tree
-search, adapted for mathematical research with claim-graph-aware branching.
+Implements DAG-layered best-first search for the theory track (proof stage).
+Inspired by AI Scientist-v2 progressive agentic tree search, adapted for
+mathematical research with claim-graph-aware branching.
 """
 
 from consortium.tree_search.tree_state import (
