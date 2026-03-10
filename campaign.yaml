@@ -7,7 +7,7 @@
 name: "Muon Implicit Regularization"
 
 # All stage workspaces live under this directory.
-# Stage 2 and 3 will --resume the workspace of their upstream dependency
+# Stage 2+ will --resume the workspace of their upstream dependency
 # so they can see its artifacts directly.
 workspace_root: "results/muon_campaign"
 
@@ -16,11 +16,9 @@ heartbeat_interval_minutes: 30
 
 # --- Notifications (all optional) ---
 notification:
-  # Set SLACK_WEBHOOK_URL in .env to enable Slack alerts.
-  slack_webhook: "${SLACK_WEBHOOK_URL}"
-  # Set TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID in .env for Telegram.
-  # telegram_bot_token: "${TELEGRAM_BOT_TOKEN}"
-  # telegram_chat_id: "${TELEGRAM_CHAT_ID}"
+  # ntfy.sh push notifications — install the ntfy app and subscribe to your topic.
+  ntfy_topic: "OpenClaw-Engaging"
+  # ntfy_server: "https://ntfy.sh"  # default; uncomment to use a self-hosted server
   on_stage_complete: true
   on_failure: true
   on_heartbeat: false   # set true for verbose progress pings
@@ -28,7 +26,7 @@ notification:
 # --- Stages ---
 stages:
 
-  - id: theory
+  - id: theory1
     task_file: automation_tasks/run1_theory_task_stable.txt
     args:
       - "--pipeline-mode"
@@ -46,11 +44,11 @@ stages:
 
   - id: experiments
     task_file: automation_tasks/run2_experiment_task_stable.txt
-    depends_on: theory
-    # context_from tells runner.py to resume the theory workspace so
+    depends_on: theory1
+    # context_from tells runner.py to resume the theory1 workspace so
     # experiment agents can see math_workspace/ artifacts directly,
-    # and to prepend the theory memory summary to the task prompt.
-    context_from: theory
+    # and to prepend the theory1 memory summary to the task prompt.
+    context_from: theory1
     args:
       - "--pipeline-mode"
       - "full_research"
@@ -62,16 +60,37 @@ stages:
         - fairness_protocol.json
         - experiment_plan.md
 
+  - id: theory2
+    task_file: automation_tasks/run2b_scaling_theory_task.txt
+    depends_on: experiments
+    context_from:
+      - experiments
+      - theory1
+    args:
+      - "--pipeline-mode"
+      - "full_research"
+      - "--enable-math-agents"
+    success_artifacts:
+      required:
+        - math_workspace/scaling_claims.json
+      optional:
+        - math_workspace/scaling_proofs/
+        - math_workspace/scaling_checks/
+    memory_dirs:
+      - math_workspace/
+
   - id: paper
     task_file: automation_tasks/run3_paper_task_stable.txt
     depends_on:
-      - theory
+      - theory1
       - experiments
-    # Resume the experiments workspace (which was itself resumed from theory,
-    # so it has both math_workspace/ and experiment artifacts).
+      - theory2
+    # Resume the theory2 workspace (which was resumed from experiments,
+    # which was resumed from theory1 — so it has all artifacts).
     context_from:
+      - theory2
       - experiments
-      - theory
+      - theory1
     args:
       - "--pipeline-mode"
       - "full_research"

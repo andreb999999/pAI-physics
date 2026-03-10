@@ -1,21 +1,25 @@
 """
-Campaign runner — launches pipeline stages as subprocesses.
+Campaign runner — launches pipeline stages as subprocesses or SLURM jobs.
 
 Key responsibilities:
   1. Build enriched task prompts (base task + prior-stage context).
   2. Resolve the workspace directory for the new stage (either fresh or
      --resume an existing workspace from a prior stage that feeds this one).
-  3. Launch launch_multiagent.py as a subprocess and return the Popen handle.
-  4. Write PID to campaign_dir/pids/<stage_id>.pid for later monitoring.
+  3. Launch launch_multiagent.py as a subprocess (local) or SLURM job (HPC).
+  4. Write PID/SLURM job ID to campaign status for later monitoring.
 """
 
 from __future__ import annotations
 
 import os
+import re
 import socket
 import subprocess
 import sys
-from typing import List, Optional
+import tempfile
+from typing import List, Optional, Union
+
+import yaml
 
 from .spec import CampaignSpec, Stage
 from .status import CampaignStatus
@@ -209,6 +213,164 @@ def launch_stage(
 
     print(f"[campaign] Stage '{stage.id}' started (PID {proc.pid}), workspace: {workspace}")
     return proc
+
+
+def launch_stage_slurm(
+    stage: Stage,
+    spec: CampaignSpec,
+    status: CampaignStatus,
+    campaign_dir: str,
+    launcher: Optional[str] = None,
+    extra_env: Optional[dict] = None,
+    partition: Optional[str] = None,
+    time_limit: Optional[str] = None,
+    mem: Optional[str] = None,
+    cpus: Optional[int] = None,
+) -> int:
+    """
+    Launch a pipeline stage as a SLURM batch job.
+
+    This is the SLURM counterpart to launch_stage(). Instead of a local
+    subprocess, it generates an sbatch script and submits it to the cluster.
+
+    Args:
+        stage:        Stage definition from the campaign spec.
+        spec:         Full campaign spec.
+        status:       Current campaign status (used to resolve workspaces).
+        campaign_dir: Directory where campaign_status.json lives.
+        launcher:     Path to launch_multiagent.py. Defaults to auto-resolved.
+        extra_env:    Optional extra environment variables.
+        partition:    SLURM partition override (default from engaging_config.yaml).
+        time_limit:   SLURM time limit override.
+        mem:          Memory override.
+        cpus:         CPU count override.
+
+    Returns:
+        SLURM job ID. The caller is responsible for writing the job ID
+        to status and calling write_status().
+    """
+    launcher = launcher or _find_launcher()
+    repo_dir = os.path.dirname(os.path.abspath(launcher))
+    workspace = build_stage_workspace(stage, spec, status)
+    task_prompt = build_task_prompt(stage, spec, status, campaign_dir)
+
+    # Load Engaging config for defaults
+    config_path = os.environ.get("ENGAGING_CONFIG", os.path.join(repo_dir, "engaging_config.yaml"))
+    cluster_config = {}
+    if os.path.exists(config_path):
+        with open(config_path) as f:
+            raw = yaml.safe_load(f) or {}
+        cluster_config = raw.get("cluster", {})
+
+    orch_config = cluster_config.get("orchestrator", {})
+    partition = partition or orch_config.get("partition", "sched_mit_hill")
+    time_limit = time_limit or orch_config.get("time", "12:00:00")
+    mem = mem or orch_config.get("mem", "32G")
+    cpus = cpus or orch_config.get("cpus", 4)
+
+    conda_init = cluster_config.get(
+        "conda_init_script",
+        "/orcd/data/lhtsai/001/om2/mabdel03/miniforge3/etc/profile.d/conda.sh",
+    )
+    conda_env_prefix = cluster_config.get(
+        "conda_env_prefix",
+        "/home/mabdel03/conda_envs/consortium",
+    )
+    conda_module = cluster_config.get("modules", {}).get("conda", "miniforge/25.11.0-0")
+
+    # Build the command-line arguments
+    stage_args = list(stage.args)
+    # No callback port needed — SLURM job runs non-interactively
+    # Remove any callback args to avoid port conflicts
+    stage_args_str = " ".join(f'"{a}"' if " " in a else a for a in stage_args)
+
+    # Write the task to a temp file (avoids shell quoting issues with long prompts)
+    os.makedirs(os.path.join(campaign_dir, "task_prompts"), exist_ok=True)
+    task_file = os.path.join(campaign_dir, "task_prompts", f"{stage.id}_task.txt")
+    with open(task_file, "w") as f:
+        f.write(task_prompt)
+
+    # SLURM log directory
+    log_dir = os.path.join(campaign_dir, "logs")
+    os.makedirs(log_dir, exist_ok=True)
+    slurm_log_dir = os.path.join(campaign_dir, "slurm_logs")
+    os.makedirs(slurm_log_dir, exist_ok=True)
+
+    # Build environment exports
+    env_exports = ""
+    if extra_env:
+        for k, v in extra_env.items():
+            env_exports += f"export {k}={v!r}\n"
+
+    script_content = f"""#!/bin/bash
+#SBATCH --job-name=campaign_{stage.id}
+#SBATCH --partition={partition}
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task={cpus}
+#SBATCH --time={time_limit}
+#SBATCH --mem={mem}
+#SBATCH --output={slurm_log_dir}/{stage.id}_%j.out
+#SBATCH --error={slurm_log_dir}/{stage.id}_%j.err
+
+echo "========================================"
+echo "Campaign Stage: {stage.id}"
+echo "Job ID: $SLURM_JOB_ID"
+echo "Node:   $(hostname)"
+echo "Time:   $(date)"
+echo "========================================"
+
+module load {conda_module}
+source {conda_init}
+conda deactivate 2>/dev/null || true
+conda activate {conda_env_prefix}
+
+export CONSORTIUM_SLURM_ENABLED=1
+export ENGAGING_CONFIG="{config_path}"
+{env_exports}
+
+cd {repo_dir}
+
+python launch_multiagent.py \\
+    --task "$(cat {task_file})" \\
+    --resume {workspace} \\
+    {stage_args_str}
+
+EXIT_CODE=$?
+echo "Stage {stage.id} completed with exit code $EXIT_CODE at $(date)"
+exit $EXIT_CODE
+"""
+
+    script_path = os.path.join(campaign_dir, "slurm_scripts", f"{stage.id}.sh")
+    os.makedirs(os.path.dirname(script_path), exist_ok=True)
+    with open(script_path, "w") as f:
+        f.write(script_content)
+    os.chmod(script_path, 0o755)
+
+    # Submit via sbatch
+    result = subprocess.run(
+        ["sbatch", script_path],
+        capture_output=True,
+        text=True,
+    )
+
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"sbatch failed for stage '{stage.id}': {result.stderr}"
+        )
+
+    match = re.search(r"Submitted batch job (\d+)", result.stdout)
+    if not match:
+        raise RuntimeError(
+            f"Could not parse SLURM job ID from: {result.stdout}"
+        )
+
+    job_id = int(match.group(1))
+    print(
+        f"[campaign] Stage '{stage.id}' submitted as SLURM job {job_id} "
+        f"to {partition}, workspace: {workspace}"
+    )
+    return job_id
 
 
 def _find_launcher() -> str:

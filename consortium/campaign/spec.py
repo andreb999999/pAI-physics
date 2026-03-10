@@ -56,6 +56,12 @@ class NotificationConfig:
     slack_webhook: Optional[str] = None
     telegram_bot_token: Optional[str] = None
     telegram_chat_id: Optional[str] = None
+    ntfy_topic: Optional[str] = None
+    ntfy_server: Optional[str] = None  # defaults to https://ntfy.sh
+    twilio_account_sid: Optional[str] = None
+    twilio_auth_token: Optional[str] = None
+    twilio_from_number: Optional[str] = None
+    sms_to_number: Optional[str] = None
     on_stage_complete: bool = True
     on_failure: bool = True
     on_heartbeat: bool = False
@@ -63,9 +69,15 @@ class NotificationConfig:
     @classmethod
     def from_dict(cls, d: dict) -> "NotificationConfig":
         return cls(
+            ntfy_topic=_expand_env(d.get("ntfy_topic")),
+            ntfy_server=_expand_env(d.get("ntfy_server")),
             slack_webhook=_expand_env(d.get("slack_webhook")),
             telegram_bot_token=_expand_env(d.get("telegram_bot_token")),
             telegram_chat_id=_expand_env(d.get("telegram_chat_id")),
+            twilio_account_sid=_expand_env(d.get("twilio_account_sid")),
+            twilio_auth_token=_expand_env(d.get("twilio_auth_token")),
+            twilio_from_number=_expand_env(d.get("twilio_from_number")),
+            sms_to_number=_expand_env(d.get("sms_to_number")),
             on_stage_complete=d.get("on_stage_complete", True),
             on_failure=d.get("on_failure", True),
             on_heartbeat=d.get("on_heartbeat", False),

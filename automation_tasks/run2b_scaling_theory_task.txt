@@ -1,0 +1,50 @@
+Theory run for Muon scaling rules.
+
+This stage builds on completed theory1 (implicit regularization) and experiments (fair comparison).
+
+Advisor guidance:
+"Look into the question: does a scaling rule exist for Muon?
+Scaling rule means scaling between batch size and step size.
+E.g., for an increase in batch size, how much of an increase in step size must occur to get the same results (e.g., to get the same 1-step decrease in loss)?
+Critical batch size?"
+
+Literature search (IMPORTANT — do this first):
+- Search ArXiv for papers on batch size scaling laws for optimizers. Key terms: "critical batch size", "batch size scaling rule", "linear scaling rule SGD", "batch size learning rate scaling", "signSGD batch size".
+- Search for: "gradient noise scale" (McCandlish et al.), "large batch training" scaling laws, "sign gradient noise", "majority vote gradient".
+- Search for any existing scaling analysis of Muon or sign-based optimizers.
+- Search for: "operator norm steepest descent scaling", "mirror descent batch size".
+- Download and analyze the most relevant papers. Use their frameworks (especially gradient noise scale / critical batch size framework) to structure your analysis of Muon.
+
+Goals:
+1) Investigate whether a batch-size/step-size scaling rule exists for the Muon optimizer (sign-gradient descent).
+2) Formalize any scaling relationships as mathematical claims in a claim graph.
+3) Explore the notion of "critical batch size" for Muon — the batch size beyond which increasing batch size yields diminishing returns per sample.
+4) Connect scaling results back to the implicit regularization findings from theory1.
+
+Formal objectives:
+1) Build (or extend) a claim graph with scaling-related assumptions, definitions, lemmas, and theorems.
+2) Key questions to formalize:
+   - For Muon update W_{t+1} = W_t - eta * sign(grad_B L(W_t)) with batch size B:
+     a) If we double B, what happens to the optimal eta? Is there a simple scaling law eta(B)?
+     b) Does sign(grad) make Muon MORE or LESS sensitive to batch size than Adam/SGD?
+     c) Is there a critical batch size B* beyond which sign(avg_grad) ≈ sign(full_grad)?
+   - The sign function's majority-vote interpretation: sign(sum of stochastic gradients) = majority vote of per-sample gradient signs. How does vote accuracy scale with B?
+3) Draft proofs or derive bounds for any identified scaling relationships.
+4) Run symbolic/numerical verification of scaling claims.
+5) Save outputs to math_workspace/scaling_claims.json, scaling_proofs/, scaling_checks/.
+
+Connection to prior stages:
+- Use theory1's claim graph and regularization results as building blocks (available in math_workspace/).
+- Reference experimental observations about Muon's behavior from the experiments stage.
+- If theory1 established L_Muon ≈ L + lambda*R, explore how lambda scales with batch size.
+
+Required claim graph additions (scaling_claims.json):
+- Assumptions: gradient noise model, batch sampling, sign stability conditions.
+- Definitions: critical batch size, scaling rule, effective learning rate under sign.
+- Lemmas: sign majority-vote concentration, noise reduction under batching for sign-gradient.
+- Theorems: at least one scaling relationship (even if approximate or regime-specific).
+
+Execution guidance:
+- Use ALL available tools: ArXiv search (fetch_arxiv_papers), web search, paper search (Semantic Scholar), citation search, VLM document analysis for reading downloaded PDFs, math claim graph tools, proof workspace tools, Python code execution for numerical verification.
+- If any tool fails, continue with remaining tools and still produce best-effort formal outputs.
+- Prioritize: (1) literature grounding, (2) scaling claim graph + proofs, (3) numerical verification.

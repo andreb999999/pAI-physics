@@ -76,34 +76,55 @@ class RunExperimentTool(BaseTool):
         if current_python and os.path.exists(current_python):
             return current_python
 
-        # Strategy 2: Look for conda environment Python
+        # Strategy 2: Use CONDA_PREFIX (works on all systems including HPC clusters)
+        # This is the most reliable approach for prefix-based and named conda envs.
+        conda_prefix = os.environ.get('CONDA_PREFIX')
+        if conda_prefix:
+            candidate = os.path.join(conda_prefix, 'bin', 'python')
+            if os.path.exists(candidate):
+                return candidate
+
+        # Strategy 3: Look for conda environment Python by name
         conda_env = os.environ.get('CONDA_DEFAULT_ENV')
         if conda_env:
-            # Try common conda paths
-            possible_paths = [
-                os.path.expanduser(f"~/.conda/envs/{conda_env}/bin/python"),
-                os.path.expanduser(f"~/anaconda3/envs/{conda_env}/bin/python"),
-                os.path.expanduser(f"~/miniconda3/envs/{conda_env}/bin/python"),
-                f"/opt/conda/envs/{conda_env}/bin/python"
+            # Try common conda base locations (including HPC/Engaging paths)
+            conda_bases = [
+                "/orcd/data/lhtsai/001/om2/mabdel03/miniforge3",
+                os.path.expanduser("~/.conda"),
+                os.path.expanduser("~/miniforge3"),
+                os.path.expanduser("~/anaconda3"),
+                os.path.expanduser("~/miniconda3"),
+                "/opt/conda",
             ]
-            for path in possible_paths:
-                if os.path.exists(path):
-                    return path
+            for base in conda_bases:
+                candidate = os.path.join(base, "envs", conda_env, "bin", "python")
+                if os.path.exists(candidate):
+                    return candidate
 
-        # Strategy 3: Check for specific environment names
-        env_names = ['ai_scientist', 'ai_scientist_v2', 'as_env']
+        # Strategy 4: Check for specific environment names
+        env_names = ['consortium', 'ai_scientist', 'ai_scientist_v2', 'as_env']
+        conda_bases = [
+            "/orcd/data/lhtsai/001/om2/mabdel03/miniforge3",
+            os.path.expanduser("~/.conda"),
+            os.path.expanduser("~/miniforge3"),
+            os.path.expanduser("~/anaconda3"),
+            os.path.expanduser("~/miniconda3"),
+            "/opt/conda",
+        ]
         for env_name in env_names:
-            possible_paths = [
-                os.path.expanduser(f"~/.conda/envs/{env_name}/bin/python"),
-                os.path.expanduser(f"~/anaconda3/envs/{env_name}/bin/python"),
-                os.path.expanduser(f"~/miniconda3/envs/{env_name}/bin/python"),
-                f"/opt/conda/envs/{env_name}/bin/python"
-            ]
-            for path in possible_paths:
-                if os.path.exists(path):
-                    return path
+            for base in conda_bases:
+                candidate = os.path.join(base, "envs", env_name, "bin", "python")
+                if os.path.exists(candidate):
+                    return candidate
+        # Also check prefix-based envs in known locations
+        prefix_candidates = [
+            "/home/mabdel03/conda_envs/consortium/bin/python",
+        ]
+        for candidate in prefix_candidates:
+            if os.path.exists(candidate):
+                return candidate
 
-        # Strategy 4: Fall back to system python
+        # Strategy 5: Fall back to system python
         return "python"
 
     def _run(self, idea_json: str, code_model: str = None,
@@ -290,43 +311,94 @@ class RunExperimentTool(BaseTool):
                 print(f"Log directory created: {log_dir}")
                 print(f"AI-Scientist-v2 working directory: {run_dir}")
 
-            # Run without capturing output - stream to terminal
-            print(f"\nStarting AI-Scientist-v2 experiment...")
-            print(f"   You will see real-time progress below:\n")
+            # --- Execute: SLURM or local subprocess ---
+            from .slurm_runner import is_slurm_enabled
 
-            try:
-                process = subprocess.run(
-                    cmd,
-                    cwd=run_dir,
-                    text=True,
-                    check=False,
-                    env=env,
-                    timeout=3600,
-                )
-            except subprocess.TimeoutExpired:
-                return json.dumps({
-                    "status": "failure",
-                    "summary": "AI-Scientist-v2 experiment timed out after 3600 seconds (1 hour).",
-                    "results_directory": run_dir,
-                    "log_directory": log_dir,
-                    "command": " ".join(cmd),
-                    "error_type": "timeout",
-                    "timeout_seconds": 3600,
-                    "note": (
-                        "Partial files may exist in the run directory. "
-                        "Inspect artifacts and resume from experimentation if needed."
-                    ),
-                })
+            if is_slurm_enabled():
+                # SLURM mode: submit as a batch job to GPU partition and poll
+                from .slurm_runner import submit_experiment_job, poll_job_completion
 
-            if process.returncode != 0:
-                return json.dumps({
-                    "status": "failure",
-                    "summary": f"AI-Scientist-v2 script failed to execute. Python executable: {python_executable}",
-                    "results_directory": run_dir,
-                    "log_directory": log_dir,
-                    "command": " ".join(cmd),
-                    "note": "Check terminal output above for error details"
-                })
+                print(f"\nSLURM mode enabled — submitting experiment as batch job...")
+                try:
+                    job_id, sbatch_script = submit_experiment_job(
+                        cmd=cmd,
+                        run_dir=run_dir,
+                        job_name=f"exp_{idea_name[:20]}",
+                    )
+                    print(f"Submitted SLURM job {job_id}. Polling for completion...")
+
+                    if log_dir:
+                        with open(os.path.join(log_dir, "slurm_job_id.txt"), "w") as f:
+                            f.write(f"{job_id}\n")
+                        with open(os.path.join(log_dir, "sbatch_script.sh"), "w") as f:
+                            with open(sbatch_script) as src:
+                                f.write(src.read())
+
+                    final_state, elapsed = poll_job_completion(job_id)
+
+                    if final_state != "COMPLETED":
+                        slurm_log = os.path.join(run_dir, "slurm_logs", f"exp_{job_id}.out")
+                        return json.dumps({
+                            "status": "failure",
+                            "summary": f"SLURM experiment job {job_id} ended with state: {final_state}",
+                            "slurm_job_id": job_id,
+                            "results_directory": run_dir,
+                            "log_directory": log_dir,
+                            "elapsed_seconds": elapsed,
+                            "slurm_log": slurm_log,
+                            "note": f"Check SLURM logs at: {slurm_log}",
+                        })
+
+                    print(f"SLURM job {job_id} completed successfully in {elapsed}s")
+
+                except Exception as e:
+                    return json.dumps({
+                        "status": "failure",
+                        "summary": f"SLURM submission/polling failed: {str(e)}",
+                        "results_directory": run_dir,
+                        "log_directory": log_dir,
+                        "error_type": "slurm_error",
+                    })
+            else:
+                # Local subprocess mode (original behavior)
+                print(f"\nStarting AI-Scientist-v2 experiment (local subprocess)...")
+                print(f"   You will see real-time progress below:\n")
+
+                timeout = int(os.environ.get("CONSORTIUM_EXPERIMENT_TIMEOUT", "3600"))
+
+                try:
+                    process = subprocess.run(
+                        cmd,
+                        cwd=run_dir,
+                        text=True,
+                        check=False,
+                        env=env,
+                        timeout=timeout,
+                    )
+                except subprocess.TimeoutExpired:
+                    return json.dumps({
+                        "status": "failure",
+                        "summary": f"AI-Scientist-v2 experiment timed out after {timeout} seconds.",
+                        "results_directory": run_dir,
+                        "log_directory": log_dir,
+                        "command": " ".join(cmd),
+                        "error_type": "timeout",
+                        "timeout_seconds": timeout,
+                        "note": (
+                            "Partial files may exist in the run directory. "
+                            "Inspect artifacts and resume from experimentation if needed."
+                        ),
+                    })
+
+                if process.returncode != 0:
+                    return json.dumps({
+                        "status": "failure",
+                        "summary": f"AI-Scientist-v2 script failed to execute. Python executable: {python_executable}",
+                        "results_directory": run_dir,
+                        "log_directory": log_dir,
+                        "command": " ".join(cmd),
+                        "note": "Check terminal output above for error details"
+                    })
 
             # 4. Parse and Return Results
             experiments_path = os.path.join(run_dir, "experiments")

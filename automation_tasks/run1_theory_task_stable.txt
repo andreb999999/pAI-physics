@@ -1,25 +1,36 @@
 Theory run for Muon implicit regularization.
 
-Goal:
+Goal — from advisor:
+"Finding whether there exists implicit regularization results for Muon, and if so, can we play with it.
+Say your loss with Muon = regularized loss with GD. Check if this is the case.
+This could be a paper on its own: L_1 * A_1 ≈ L_2 * A_2."
+
+Literature search (IMPORTANT — do this first):
+- Search ArXiv for prior work on implicit regularization in sign-gradient descent, signSGD, and Muon optimizer.
+- Search for papers on steepest descent under non-Euclidean norms (operator norm, nuclear norm duality).
+- Search for papers on implicit bias of mirror descent, natural gradient, and matrix-valued optimization.
+- Key authors/terms to search: "implicit regularization signSGD", "Muon optimizer", "steepest descent operator norm", "nuclear norm implicit bias", "mirror descent implicit regularization", "polar decomposition gradient".
+- Download and analyze the most relevant papers. Use their results to ground your theoretical claims — cite prior work where it exists rather than re-deriving known results.
+
+Formal objectives:
 1) Formalize the conjecture that Muon on L is equivalent to GD on L + lambda * R.
 2) Build a claim graph with assumptions, definitions, lemmas, and main theorem(s).
 3) Draft proofs for core claims and run symbolic/numerical verification where possible.
 4) Save outputs in the workspace (working_idea.json, math_workspace/claim_graph.json, proofs, checks).
 
 Conjecture:
-- Muon update: W_{t+1} = W_t - eta * sign(grad L(W_t))
-- We seek R(W) such that Muon dynamics are equivalent (fixed points/trajectory limits/optimizers) to GD on L + lambda * R.
+- Muon update: W_{t+1} = W_t - eta * polar(grad L(W_t)), where polar(G) = U_G V_G^T from the SVD G = U_G Sigma V_G^T.
+- This is steepest descent under the operator (spectral) norm. By norm duality, we conjecture implicit regularization toward minimum nuclear norm solutions.
+- We seek R(W) such that Muon dynamics are equivalent (fixed points/trajectory limits/implicit bias) to GD on L + lambda * R.
 - Start with linear or matrix-factorization setting; if nonlinear case is too hard, keep it as conjectural extension.
 
 Required claim graph content:
 - Assumptions: SVD/sign properties, smoothness/convergence conditions.
 - Definitions: Muon update, Muon flow, candidate regularizer, equivalence notion.
-- Lemmas: sign-function properties, projection interpretation, flow dynamics, fixed-point characterization.
+- Lemmas: sign-function properties, polar decomposition as operator-norm steepest descent (von Neumann trace inequality), flow dynamics, fixed-point characterization.
 - Theorems: at least one main linear-case theorem plus optional continuous-time theorem.
 
-Execution constraints:
-- No external-network tools (no ArXiv/web search).
-- No VLM tools.
-- If any tool fails, continue with available tools and still produce best-effort formal outputs.
-- Prioritize finishing claim graph + proofs + verification artifacts.
-- Do not delegate to sub-agents (do not call ideation_agent, math_proposer_agent, math_prover_agent, or other *_agent callables). Use available math tools directly in this manager run.
+Execution guidance:
+- Use ALL available tools: ArXiv search (fetch_arxiv_papers), web search, paper search (Semantic Scholar), citation search, VLM document analysis for reading downloaded PDFs, math claim graph tools, proof workspace tools, LaTeX tools, and Python code execution for numerical verification.
+- If any tool fails, continue with remaining tools and still produce best-effort formal outputs.
+- Prioritize: (1) literature grounding, (2) claim graph + proofs, (3) numerical verification artifacts.

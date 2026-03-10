@@ -1,26 +1,37 @@
 Experiment run for Adam/AdamW vs Muon comparison.
 
+Advisor guidance:
+"Take NanoGPT and do Adam vs. Muon. Check if AdamW or Adam is the right baseline.
+Figure out how to compare them fairly — do a literature review of the fairest comparison methodology here."
+
+Literature review (IMPORTANT — do this first):
+- Search ArXiv and Semantic Scholar for papers on fair optimizer comparison methodology. Key terms: "fair optimizer comparison", "optimizer benchmark methodology", "Adam vs SGD comparison", "hyperparameter tuning budget", "compute-matched comparison".
+- Search specifically for: "Muon optimizer" papers, "signSGD empirical", "AdamW vs Adam language model", "decoupled weight decay regularization" (the original AdamW paper by Loshchilov & Hutter).
+- Search for NanoGPT benchmark papers and any existing Muon vs Adam comparisons.
+- Download and analyze the most relevant papers to ground the fairness protocol in established methodology.
+- Determine from the literature whether Adam or AdamW is the correct baseline for LM training and document the rationale with citations.
+
 Objectives:
-1) Produce a fair-comparison methodology for optimizer evaluation on NanoGPT-like training.
+1) Produce a literature-grounded fair-comparison methodology for optimizer evaluation on NanoGPT-like training.
 2) Implement and run a local lightweight benchmark that compares Adam/AdamW-like updates vs Muon/sign-gradient-style updates on tractable surrogate tasks.
 3) Save reproducible experiment artifacts, metrics, and analysis in the workspace.
 
 Required outputs:
-- experiment_plan.md (fairness protocol: compute matching, tuning budget parity, schedules, metrics)
+- experiment_plan.md (fairness protocol: compute matching, tuning budget parity, schedules, metrics, Adam vs AdamW baseline choice rationale with citations)
 - fairness_protocol.json (machine-readable comparison policy)
 - experiment_results.json (measured metrics from executed local runs)
-- experiment_analysis.md (interpretation of results + pitfalls)
+- experiment_analysis.md (interpretation of results + pitfalls + initial observations about regularization signatures)
 - comparison_plots metadata or tabular summaries saved as files
 
 Fairness topics to cover:
-- Adam vs AdamW baseline choice and rationale for LM training
+- Adam vs AdamW baseline choice and rationale for LM training (cite the literature you find)
 - Equal hyperparameter-search budget per optimizer
 - Matching compute/FLOPs, update count, and wall-clock reporting
 - Metric set: train loss, validation loss/perplexity proxy, throughput, memory
 - Common pitfalls and how protocol avoids them
+- Weight sparsity/regularization signature metrics (L1 norm, L1/L2 ratio, nuclear norm of weight matrices) — connect back to theory1's implicit regularization predictions
 
-Execution constraints:
-- No external-network tools (no ArXiv/web search).
-- No VLM tools.
-- No sub-agent delegation (do not call *_agent callables); execute directly in manager run.
+Execution guidance:
+- Use ALL available tools: ArXiv search (fetch_arxiv_papers), web search, paper search (Semantic Scholar), citation search, VLM document analysis for reading downloaded PDFs, Python code execution for experiments, LaTeX tools for figures/tables.
 - If NanoGPT code is unavailable locally, run surrogate experiments and clearly label them as proxy evidence while still producing full fairness protocol for NanoGPT.
+- If any tool fails, continue with remaining tools.

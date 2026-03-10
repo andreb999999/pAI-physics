@@ -1,28 +1,38 @@
 Analysis and paper run.
 
 Inputs available in this resumed workspace:
-- Theory artifacts in math_workspace/ (claim_graph, proofs, checks, summaries)
-- Experiment artifacts in inputs/experiment_results/ (experiment_results.json, experiment_analysis.md, fairness_protocol.json, comparison_plots_metadata.txt, experiment_plan.md)
+- Theory 1 artifacts in math_workspace/ (claim_graph.json, proofs/, checks/, summaries — implicit regularization results)
+- Experiment artifacts (experiment_results.json, experiment_analysis.md, fairness_protocol.json, comparison_plots metadata, experiment_plan.md)
+- Theory 2 artifacts in math_workspace/ (scaling_claims.json, scaling_proofs/, scaling_checks/ — scaling rule results)
+- Downloaded papers from prior stages (use these for related work and citations)
+
+Literature search for related work section:
+- Search ArXiv and Semantic Scholar to fill gaps in the related work section. Key terms: "implicit regularization deep learning", "Muon optimizer", "signSGD convergence", "steepest descent non-Euclidean", "nuclear norm regularization neural networks", "batch size scaling laws", "critical batch size optimizers".
+- Ensure the related work section is comprehensive: implicit bias literature (Gunasekar et al., Soudry et al., Li et al.), sign-based optimizers (signSGD, LAMB), Muon/polar decomposition optimizers, scaling laws (Kaplan et al., McCandlish et al.), and optimizer comparison methodology.
+- Download any missing key references and cite them properly.
 
 Objectives:
-1) Synthesize theory + experiment findings.
-2) Analyze whether the practical evidence is consistent with the conjecture L_1*A_1 ~= L_2*A_2.
-3) Produce complete paper artifacts and compile PDF.
+1) Synthesize theory1 (implicit regularization) + experiments (fair comparison) + theory2 (scaling rules) into a unified paper.
+2) Analyze whether the practical evidence is consistent with the conjecture L_1*A_1 ≈ L_2*A_2.
+3) Assess whether the scaling rule predictions hold against experimental observations.
+4) Produce complete paper artifacts and compile PDF.
 
 Required outputs:
 - final_paper.tex
 - final_paper.pdf
-- analysis_connection.md (explicit theory-experiment bridge analysis)
+- analysis_connection.md (explicit theory-experiment bridge analysis for both theory tracks)
 - artifacts_index.md (list of supporting files and how used)
 
 Paper requirements:
-- Include introduction, related work, method/theory, experiment design, results, connection analysis, limitations, conclusion.
+- Sections: introduction, related work, method/theory (Part I: implicit regularization, Part II: scaling rules), experiment design, results, connection analysis, limitations, conclusion.
 - Clearly separate "proved", "empirically supported", and "open conjecture" claims.
 - Include fairness-protocol details and surrogate/NanoGPT caveats.
+- Include per-prediction assessment table: theory prediction → experimental finding → verdict (supported/contradicted/untested).
 - Include actionable next-step experiment plan for full NanoGPT.
+- Discuss the advisor's framing: "This could be a paper on its own" — assess paper-readiness of each theory track independently.
+- Related work must cite real papers found via ArXiv/Semantic Scholar search — do not fabricate citations.
 
-Execution constraints:
-- No external-network tools.
-- No VLM tools.
-- No sub-agent delegation (do not call *_agent callables); execute directly in manager run.
-- Use available local artifacts only, and ensure PDF compilation succeeds.
+Execution guidance:
+- Use ALL available tools: ArXiv search (fetch_arxiv_papers), web search, paper search (Semantic Scholar), citation search, VLM document analysis for reading PDFs and checking compiled output, LaTeX generator, LaTeX compiler, LaTeX syntax checker, Python code execution for any additional analysis or figure generation.
+- Ensure PDF compilation succeeds. If it fails, debug LaTeX errors and retry.
+- If any tool fails, continue with remaining tools.

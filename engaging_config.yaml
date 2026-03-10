@@ -1,0 +1,65 @@
+# =============================================================================
+# MIT Engaging Cluster Configuration for Consortium
+# =============================================================================
+# Single source of truth for all Engaging-specific settings.
+# Referenced by SLURM scripts, bootstrap, and the SLURM experiment runner.
+
+cluster:
+  name: engaging
+
+  # ---------------------------------------------------------------------------
+  # Conda environment
+  # ---------------------------------------------------------------------------
+  conda_init_script: /orcd/data/lhtsai/001/om2/mabdel03/miniforge3/etc/profile.d/conda.sh
+  conda_env_prefix: /home/mabdel03/conda_envs/consortium
+
+  # ---------------------------------------------------------------------------
+  # Modules to load
+  # ---------------------------------------------------------------------------
+  modules:
+    conda: miniforge/25.11.0-0
+    cuda: cuda/12.4.0
+    cudnn: cudnn/9.8.0.87-cuda12
+
+  # ---------------------------------------------------------------------------
+  # Orchestrator (Tier 1) — CPU partition for the LLM API orchestrator
+  # The orchestrator is CPU-only; it makes outbound HTTPS calls to LLM APIs.
+  # ---------------------------------------------------------------------------
+  orchestrator:
+    partition: sched_mit_hill       # 12hr limit, CPU-only, 66 nodes
+    time: "12:00:00"
+    cpus: 4
+    mem: "32G"
+
+  # ---------------------------------------------------------------------------
+  # Experiment GPU jobs (Tier 2) — submitted by the orchestrator via sbatch
+  # ---------------------------------------------------------------------------
+  # Default: pi_tpoggio — A100x8, 7-day limit, dedicated node
+  experiment_gpu:
+    partition: pi_tpoggio
+    time: "7-00:00:00"
+    cpus: 8
+    mem: "64G"
+    gres: "gpu:a100:1"
+
+  # Fallback partitions (shorter queues, broader availability)
+  experiment_gpu_shared:
+    partition: mit_normal_gpu
+    time: "06:00:00"
+    cpus: 8
+    mem: "64G"
+    gres: "gpu:1"
+
+  experiment_gpu_long:
+    partition: mit_preemptable
+    time: "2-00:00:00"
+    cpus: 8
+    mem: "64G"
+    gres: "gpu:1"
+
+  # ---------------------------------------------------------------------------
+  # Paths
+  # ---------------------------------------------------------------------------
+  repo_root: /orcd/scratch/orcd/012/mabdel03/AI_Researcher/phdlabor-1
+  scratch_root: /orcd/scratch/orcd/012/mabdel03/AI_Researcher
+  slurm_output_dir: /orcd/scratch/orcd/012/mabdel03/AI_Researcher/phdlabor-1/slurm_outputs

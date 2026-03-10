@@ -163,6 +163,7 @@ def build_research_graph(
     followup_max_iterations=3,
     manager_max_steps=50,
     counsel_models=None,
+    summary_model_id="claude-sonnet-4-6",
 ):
     """
     Build and return the compiled LangGraph research pipeline.
@@ -186,6 +187,8 @@ def build_research_graph(
         pipeline_mode:            "default" | "full_research" | "quick"
         followup_max_iterations:  Seeds the max follow-up research cycles
         manager_max_steps:        Kept for call-site compatibility
+        summary_model_id:         Model for stage summary PDF generation.
+                                  Set to None to disable.
 
     Returns:
         (compiled_graph, checkpointer) tuple.
@@ -211,6 +214,7 @@ def build_research_graph(
         authorized_imports=essential_imports,
         checkpointer=checkpointer,
         counsel_models=counsel_models,
+        summary_model_id=summary_model_id,
     )
     logger.info("LangGraph pipeline ready.")
     return compiled, checkpointer

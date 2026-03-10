@@ -48,6 +48,9 @@ private_token_usage/
 # Local installers
 Miniconda3-latest-MacOSX-arm64.sh
 Miniconda3-latest-MacOSX-x86_64.sh
+# Slurm job outputs
+slurm_outputs/
+
 # Local ad-hoc project workspaces (never commit)
 /project*/
 /my_project_*/

@@ -1,21 +1,22 @@
 #!/bin/bash
 
 # =============================================================================
-# SLURM CONFIGURATION - Modify these for your cluster setup
+# SLURM CONFIGURATION — Orchestrator (CPU-only, Tier 1)
+# The orchestrator makes LLM API calls over the network; it does NOT need GPU.
+# GPU experiments are submitted as separate SLURM jobs from within the pipeline.
 # =============================================================================
-#SBATCH --job-name=consortium_run    # Job name (customize this)
-#SBATCH --partition=gpu_h200              # SLURM partition (customize to your cluster)
-#SBATCH --nodes=1                         # Number of nodes
-#SBATCH --ntasks-per-node=1               # Tasks per node
-#SBATCH --cpus-per-task=8                 # CPUs per task
-#SBATCH --gres=gpu:h200:1                 # GPU resources (customize GPU type)
-#SBATCH --time=48:00:00                   # Time limit (HH:MM:SS)
-#SBATCH --mem=64G                         # Memory allocation
-#SBATCH --output=slurm_outputs/slurm_%j.out   # Standard output log
-#SBATCH --error=slurm_outputs/slurm_%j.err    # Error log
+#SBATCH --job-name=consortium_orch       # Job name
+#SBATCH --partition=sched_mit_hill       # CPU partition (12hr limit, MIT Engaging)
+#SBATCH --nodes=1                        # Number of nodes
+#SBATCH --ntasks-per-node=1              # Tasks per node
+#SBATCH --cpus-per-task=4                # CPUs per task (API calls + local processing)
+#SBATCH --time=12:00:00                  # Time limit (partition max)
+#SBATCH --mem=32G                        # Memory allocation
+#SBATCH --output=slurm_outputs/orch_%j.out   # Standard output log
+#SBATCH --error=slurm_outputs/orch_%j.err    # Error log
 
 # =============================================================================
-# JOB INFORMATION - Prints debug info at job start
+# JOB INFORMATION
 # =============================================================================
 echo "Job started at: $(date)"
 echo "Job ID: $SLURM_JOB_ID"
@@ -30,46 +31,43 @@ fi
 # =============================================================================
 # ENVIRONMENT SETUP
 # =============================================================================
-# Load conda module (if required by your cluster)
-module load miniconda
+# Determine repo root from script location
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$REPO_DIR"
+echo "Repo directory: $REPO_DIR"
 
-# Activate the conda environment
+# Create slurm output directory (must exist for SLURM logs)
+mkdir -p "$REPO_DIR/slurm_outputs"
+
+# Load conda module and activate environment
+module load miniforge/25.11.0-0
+
 echo "Activating conda environment..."
-source ~/.bashrc
-conda deactivate
-conda activate consortium  # Change to your conda environment name
+source /orcd/data/lhtsai/001/om2/mabdel03/miniforge3/etc/profile.d/conda.sh
+conda deactivate 2>/dev/null || true
+conda activate /home/mabdel03/conda_envs/consortium
 
 # Verify Python environment
 echo "Python version: $(python --version)"
 echo "Python path: $(which python)"
 
 # =============================================================================
-# CUDA/GPU SETUP
+# CONSORTIUM CONFIGURATION
 # =============================================================================
-# Set GPU visibility (helps with multi-GPU systems)
-export CUDA_VISIBLE_DEVICES=$SLURM_LOCALID
-
-# Print GPU information for debugging
-echo "GPU information:"
-nvidia-smi
+# Enable SLURM-based experiment execution (Tier 2 GPU jobs)
+export CONSORTIUM_SLURM_ENABLED=1
+export ENGAGING_CONFIG="$REPO_DIR/engaging_config.yaml"
 
 # =============================================================================
 # RESEARCH TASK DEFINITION
 # =============================================================================
 # Define your research task here - describe what you want the system to do
-RESEARCH_TASK="Complete a full research project on [YOUR RESEARCH TOPIC].
+RESEARCH_TASK="${RESEARCH_TASK:-Complete a full research project on [YOUR RESEARCH TOPIC].
 
 RESEARCH OBJECTIVES: (1) [Objective 1], (2) [Objective 2], (3) [Objective 3], ...
 
-WORKFLOW AUTONOMY: You have full autonomy to iterate between agents if any stage reveals limitations. ..."
-
-# =============================================================================
-# PROJECT DIRECTORY SETUP
-# =============================================================================
-# Automatically determine project directory from script location
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
-echo "Project directory: $SCRIPT_DIR"
+WORKFLOW AUTONOMY: You have full autonomy to iterate between agents if any stage reveals limitations. ...}"
 
 # =============================================================================
 # EXECUTION - Advanced wrapper to prevent process name conflicts
@@ -81,7 +79,7 @@ echo "Starting multiagent system..."
 # Get the active Python interpreter from conda environment
 PYTHON_PATH=$(which python)
 
-# Create temporary runner script (doesn't contain "python" in filename to avoid run_experiment_tool's cleanup routine from accidentally killing the main process)
+# Create temporary runner script
 RUNNER_SCRIPT=$(mktemp /tmp/multiagent_runner_XXXXXX)
 cat > "$RUNNER_SCRIPT" << EOF
 #!/bin/bash

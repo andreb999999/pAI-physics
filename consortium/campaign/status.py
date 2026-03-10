@@ -10,6 +10,7 @@ campaign_status.json schema:
       "status": "pending" | "in_progress" | "completed" | "failed",
       "workspace": str | null,
       "pid": int | null,
+      "slurm_job_id": int | null,
       "started_at": ISO str | null,
       "completed_at": ISO str | null,
       "missing_artifacts": [str],
@@ -24,6 +25,7 @@ from __future__ import annotations
 import json
 import os
 import signal
+import subprocess
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
@@ -81,6 +83,10 @@ class CampaignStatus:
         pid = self._d["stages"].get(stage_id, {}).get("pid")
         return int(pid) if pid is not None else None
 
+    def stage_slurm_job_id(self, stage_id: str) -> Optional[int]:
+        jid = self._d["stages"].get(stage_id, {}).get("slurm_job_id")
+        return int(jid) if jid is not None else None
+
     def is_complete(self, stage_id: str) -> bool:
         return self.stage_status(stage_id) == COMPLETED
 
@@ -100,12 +106,16 @@ class CampaignStatus:
     # Mutations (return new status dict — callers must call write_status)
     # ------------------------------------------------------------------
 
-    def mark_in_progress(self, stage_id: str, workspace: str, pid: int) -> "CampaignStatus":
+    def mark_in_progress(
+        self, stage_id: str, workspace: str, pid: int,
+        slurm_job_id: Optional[int] = None,
+    ) -> "CampaignStatus":
         self._d["stages"].setdefault(stage_id, {})
         self._d["stages"][stage_id].update({
             "status": IN_PROGRESS,
             "workspace": workspace,
             "pid": pid,
+            "slurm_job_id": slurm_job_id,
             "started_at": _now(),
             "completed_at": None,
             "missing_artifacts": [],
@@ -188,6 +198,7 @@ def init_status(campaign_dir: str, spec: "CampaignSpec", spec_file: str) -> Camp
                 "status": PENDING,
                 "workspace": None,
                 "pid": None,
+                "slurm_job_id": None,
                 "started_at": None,
                 "completed_at": None,
                 "missing_artifacts": [],
@@ -235,6 +246,41 @@ def is_pid_alive(pid: int) -> bool:
     except PermissionError:
         # Process exists but we don't have permission to signal it
         return True
+
+
+def is_slurm_job_alive(job_id: int) -> bool:
+    """Return True if a SLURM job is still active (PENDING, RUNNING, etc.).
+
+    Uses squeue for fast lookup — only lists active jobs.
+    Works across nodes (unlike PID-based checking).
+    """
+    if not job_id or job_id <= 0:
+        return False
+    try:
+        result = subprocess.run(
+            ["squeue", "-j", str(job_id), "--noheader", "--format=%T"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        state = result.stdout.strip()
+        return state in ("PENDING", "RUNNING", "CONFIGURING", "COMPLETING", "REQUEUED")
+    except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
+        return False
+
+
+def is_stage_alive(status: "CampaignStatus", stage_id: str) -> bool:
+    """Check if a stage is still running, using SLURM job ID or PID.
+
+    Prefers SLURM job ID check (works across nodes) over PID check (local only).
+    """
+    slurm_jid = status.stage_slurm_job_id(stage_id)
+    if slurm_jid:
+        return is_slurm_job_alive(slurm_jid)
+    pid = status.stage_pid(stage_id)
+    if pid:
+        return is_pid_alive(pid)
+    return False
 
 
 def infer_workspace_from_status_txt(candidate_dir: str) -> Optional[str]:

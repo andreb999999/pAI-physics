@@ -4,6 +4,8 @@ Campaign notifications — dispatch status updates to external channels.
 Supports:
   - Slack incoming webhooks (SLACK_WEBHOOK_URL)
   - Telegram bot API (TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID)
+  - SMS via Twilio (TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN + TWILIO_FROM_NUMBER + SMS_TO_NUMBER)
+  - Push notifications via ntfy.sh (NTFY_TOPIC)
   - stdout fallback (always)
 
 All notification failures are silently swallowed — notifications must never
@@ -49,6 +51,13 @@ def notify(
 
     if config.telegram_bot_token and config.telegram_chat_id:
         _telegram(full_message, config.telegram_bot_token, config.telegram_chat_id)
+
+    if config.ntfy_topic:
+        _ntfy(full_message, config.ntfy_topic, config.ntfy_server)
+
+    if config.twilio_account_sid and config.sms_to_number:
+        _sms(full_message, config.twilio_account_sid, config.twilio_auth_token,
+             config.twilio_from_number, config.sms_to_number)
 
 
 def notify_stage_complete(stage_id: str, workspace: str, config: NotificationConfig) -> None:
@@ -115,3 +124,31 @@ def _telegram(message: str, bot_token: str, chat_id: str) -> None:
         resp.raise_for_status()
     except Exception as e:
         print(f"[campaign:notify] Telegram delivery failed: {e}")
+
+
+def _ntfy(message: str, topic: str, server: Optional[str] = None) -> None:
+    try:
+        base = (server or "https://ntfy.sh").rstrip("/")
+        resp = requests.post(
+            f"{base}/{topic}",
+            data=message.encode("utf-8"),
+            headers={"Title": "OpenClaw Campaign"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+    except Exception as e:
+        print(f"[campaign:notify] ntfy delivery failed: {e}")
+
+
+def _sms(message: str, account_sid: str, auth_token: str,
+         from_number: str, to_number: str) -> None:
+    try:
+        resp = requests.post(
+            f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}/Messages.json",
+            auth=(account_sid, auth_token),
+            data={"From": from_number, "To": to_number, "Body": message[:1600]},
+            timeout=10,
+        )
+        resp.raise_for_status()
+    except Exception as e:
+        print(f"[campaign:notify] SMS delivery failed: {e}")

@@ -30,6 +30,17 @@ if ! has_capability minimal && ! has_capability docs && ! has_capability web && 
   exit 1
 fi
 
+# --- Engaging cluster: auto-source conda if not on PATH ---
+if ! command -v conda >/dev/null 2>&1; then
+  # Try Engaging-specific conda init locations
+  ENGAGING_CONDA_INIT="/orcd/data/lhtsai/001/om2/mabdel03/miniforge3/etc/profile.d/conda.sh"
+  if [[ -f "$ENGAGING_CONDA_INIT" ]]; then
+    echo "Sourcing Engaging conda init: $ENGAGING_CONDA_INIT"
+    # shellcheck disable=SC1090
+    source "$ENGAGING_CONDA_INIT"
+  fi
+fi
+
 if ! command -v conda >/dev/null 2>&1; then
   echo "Error: conda not found. Install Miniconda/Anaconda first."
   exit 1
@@ -39,14 +50,40 @@ CONDA_BASE="$(conda info --base)"
 # shellcheck disable=SC1091
 source "$CONDA_BASE/etc/profile.d/conda.sh"
 
-if conda env list | awk '{print $1}' | grep -qx "$ENV_NAME"; then
-  echo "Using existing conda environment: $ENV_NAME"
-else
-  echo "Creating conda environment: $ENV_NAME"
-  conda create -n "$ENV_NAME" python=3.11 -y
+# --- Detect if we should use --prefix (Engaging/HPC) or named env ---
+# If CONSORTIUM_ENV_PREFIX is set, use prefix-based env (avoids home quota issues).
+# Otherwise, check if a prefix path is defined in engaging_config.yaml.
+ENGAGING_CONFIG="$REPO_ROOT/engaging_config.yaml"
+USE_PREFIX=""
+if [[ -n "${CONSORTIUM_ENV_PREFIX:-}" ]]; then
+  USE_PREFIX="$CONSORTIUM_ENV_PREFIX"
+elif [[ -f "$ENGAGING_CONFIG" ]]; then
+  # Simple yaml extraction — no dependencies required
+  _prefix=$(grep 'conda_env_prefix:' "$ENGAGING_CONFIG" 2>/dev/null | head -1 | sed 's/.*conda_env_prefix:\s*//' | tr -d '[:space:]')
+  if [[ -n "$_prefix" ]]; then
+    USE_PREFIX="$_prefix"
+  fi
 fi
 
-conda activate "$ENV_NAME"
+if [[ -n "$USE_PREFIX" ]]; then
+  # Prefix-based conda environment
+  if [[ -d "$USE_PREFIX" ]]; then
+    echo "Using existing prefix environment: $USE_PREFIX"
+  else
+    echo "Creating prefix-based conda environment at: $USE_PREFIX"
+    conda create --prefix "$USE_PREFIX" python=3.11 -y
+  fi
+  conda activate "$USE_PREFIX"
+else
+  # Standard named environment
+  if conda env list | awk '{print $1}' | grep -qx "$ENV_NAME"; then
+    echo "Using existing conda environment: $ENV_NAME"
+  else
+    echo "Creating conda environment: $ENV_NAME"
+    conda create -n "$ENV_NAME" python=3.11 -y
+  fi
+  conda activate "$ENV_NAME"
+fi
 
 python -m pip install --upgrade pip
 python -m pip install -r "$REPO_ROOT/requirements-minimal.txt"
@@ -63,12 +100,26 @@ if has_capability web; then
 fi
 
 if has_capability experiment; then
+  # Load CUDA modules on HPC clusters (best-effort, not fatal if unavailable)
+  if command -v module >/dev/null 2>&1; then
+    module load cuda/12.4.0 2>/dev/null || true
+    module load cudnn/9.8.0.87-cuda12 2>/dev/null || true
+  fi
   python -m pip install -r "$REPO_ROOT/requirements-experiment.txt"
 fi
 
 if has_capability latex; then
   # Install TeX toolchain in conda env to support pdflatex/bibtex compilation.
-  conda install -n "$ENV_NAME" -c conda-forge texlive-core latexmk -y
+  # Use --prefix or -n depending on env type.
+  if [[ -n "$USE_PREFIX" ]]; then
+    conda install --prefix "$USE_PREFIX" -c conda-forge texlive-core latexmk -y
+  else
+    conda install -n "$ENV_NAME" -c conda-forge texlive-core latexmk -y
+  fi
+  # On Engaging, also try loading system tex-live module as fallback
+  if command -v module >/dev/null 2>&1; then
+    module load tex-live/20251104 2>/dev/null || true
+  fi
   # Best-effort format generation to avoid "can't find pdflatex.fmt".
   if command -v fmtutil-user >/dev/null 2>&1; then
     fmtutil-user --byfmt pdflatex >/dev/null 2>&1 || true

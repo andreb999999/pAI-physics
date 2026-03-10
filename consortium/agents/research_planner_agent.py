@@ -61,7 +61,22 @@ def build_node(
     counsel_models = cfg.get("counsel_models")
     if counsel_models:
         from ..counsel import create_counsel_node
-        return create_counsel_node(system_prompt, tools, "research_planner_agent", workspace_dir, counsel_models)
+        inner_node = create_counsel_node(system_prompt, tools, "research_planner_agent", workspace_dir, counsel_models)
+
+        def counsel_with_track_decomposition(state: dict) -> dict:
+            result = inner_node(state)
+            # Read track_decomposition.json that sandbox agents may have created
+            # (merged back to main workspace by counsel artifact promotion).
+            if workspace_dir:
+                td = read_json(
+                    os.path.join(workspace_dir, "paper_workspace", "track_decomposition.json")
+                )
+                if td is not None:
+                    result["track_decomposition"] = td
+            return result
+
+        counsel_with_track_decomposition.__name__ = "research_planner_agent"
+        return counsel_with_track_decomposition
 
     react_agent = create_react_agent(
         model=_unwrap_model(model),

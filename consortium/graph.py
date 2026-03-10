@@ -38,6 +38,7 @@ from .agents import (
     build_track_merge_node,
     build_writeup_node,
 )
+from .pdf_summary import with_pdf_summary
 from .state import ResearchState
 from .workflow_utils import (
     followup_decision_requires_loop,
@@ -235,32 +236,37 @@ def build_theory_track_subgraph(
     workspace_dir: str,
     authorized_imports: Optional[List[str]] = None,
     counsel_models: Optional[List[Any]] = None,
+    summary_model_id: Optional[str] = "claude-sonnet-4-6",
 ):
     graph = StateGraph(ResearchState)
     counsel_kwargs = {"counsel_models": counsel_models} if counsel_models else {}
+
+    def _wrap(node, name):
+        return with_pdf_summary(node, name, workspace_dir, summary_model_id)
+
     graph.add_node(
         "math_literature_agent",
-        build_math_literature_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+        _wrap(build_math_literature_node(model, workspace_dir, authorized_imports, **counsel_kwargs), "math_literature_agent"),
     )
     graph.add_node(
         "math_proposer_agent",
-        build_math_proposer_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+        _wrap(build_math_proposer_node(model, workspace_dir, authorized_imports, **counsel_kwargs), "math_proposer_agent"),
     )
     graph.add_node(
         "math_prover_agent",
-        build_math_prover_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+        _wrap(build_math_prover_node(model, workspace_dir, authorized_imports, **counsel_kwargs), "math_prover_agent"),
     )
     graph.add_node(
         "math_rigorous_verifier_agent",
-        build_math_rigorous_verifier_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+        _wrap(build_math_rigorous_verifier_node(model, workspace_dir, authorized_imports, **counsel_kwargs), "math_rigorous_verifier_agent"),
     )
     graph.add_node(
         "math_empirical_verifier_agent",
-        build_math_empirical_verifier_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+        _wrap(build_math_empirical_verifier_node(model, workspace_dir, authorized_imports, **counsel_kwargs), "math_empirical_verifier_agent"),
     )
     graph.add_node(
         "proof_transcription_agent",
-        build_proof_transcription_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+        _wrap(build_proof_transcription_node(model, workspace_dir, authorized_imports, **counsel_kwargs), "proof_transcription_agent"),
     )
     graph.set_entry_point("math_literature_agent")
     graph.add_edge("math_literature_agent", "math_proposer_agent")
@@ -277,28 +283,33 @@ def build_experiment_track_subgraph(
     workspace_dir: str,
     authorized_imports: Optional[List[str]] = None,
     counsel_models: Optional[List[Any]] = None,
+    summary_model_id: Optional[str] = "claude-sonnet-4-6",
 ):
     graph = StateGraph(ResearchState)
     counsel_kwargs = {"counsel_models": counsel_models} if counsel_models else {}
+
+    def _wrap(node, name):
+        return with_pdf_summary(node, name, workspace_dir, summary_model_id)
+
     graph.add_node(
         "experiment_literature_agent",
-        build_experiment_literature_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+        _wrap(build_experiment_literature_node(model, workspace_dir, authorized_imports, **counsel_kwargs), "experiment_literature_agent"),
     )
     graph.add_node(
         "experiment_design_agent",
-        build_experiment_design_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+        _wrap(build_experiment_design_node(model, workspace_dir, authorized_imports, **counsel_kwargs), "experiment_design_agent"),
     )
     graph.add_node(
         "experimentation_agent",
-        build_experimentation_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+        _wrap(build_experimentation_node(model, workspace_dir, authorized_imports, **counsel_kwargs), "experimentation_agent"),
     )
     graph.add_node(
         "experiment_verification_agent",
-        build_experiment_verification_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+        _wrap(build_experiment_verification_node(model, workspace_dir, authorized_imports, **counsel_kwargs), "experiment_verification_agent"),
     )
     graph.add_node(
         "experiment_transcription_agent",
-        build_experiment_transcription_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+        _wrap(build_experiment_transcription_node(model, workspace_dir, authorized_imports, **counsel_kwargs), "experiment_transcription_agent"),
     )
     graph.set_entry_point("experiment_literature_agent")
     graph.add_edge("experiment_literature_agent", "experiment_design_agent")
@@ -386,6 +397,7 @@ def build_research_graph(
     authorized_imports: Optional[List[str]] = None,
     checkpointer=None,
     counsel_models: Optional[List[Any]] = None,
+    summary_model_id: Optional[str] = "claude-sonnet-4-6",
 ):
     """
     Build and compile the full LangGraph research pipeline.
@@ -407,11 +419,18 @@ def build_research_graph(
         counsel_models:           List of ChatLiteLLM instances for counsel mode.
                                   When provided, specialist nodes run multi-model debate
                                   instead of a single-model ReAct agent.
+        summary_model_id:         Model used to format stage summary PDFs.
+                                  Set to None to disable automatic PDF summaries.
 
     Returns:
         Compiled LangGraph CompiledGraph.
     """
     counsel_kwargs = {"counsel_models": counsel_models} if counsel_models else {}
+
+    def _wrap(node, name):
+        """Wrap an agent node with automatic PDF summary generation."""
+        return with_pdf_summary(node, name, workspace_dir, summary_model_id)
+
     theory_track_node = build_noop_track_node("theory_track_status")
     if enable_math_agents:
         theory_subgraph = build_theory_track_subgraph(
@@ -419,6 +438,7 @@ def build_research_graph(
             workspace_dir=workspace_dir,
             authorized_imports=authorized_imports,
             counsel_models=counsel_models,
+            summary_model_id=summary_model_id,
         )
         theory_track_node = build_track_subgraph_node(theory_subgraph, "theory_track_status")
     experiment_subgraph = build_experiment_track_subgraph(
@@ -426,24 +446,25 @@ def build_research_graph(
         workspace_dir=workspace_dir,
         authorized_imports=authorized_imports,
         counsel_models=counsel_models,
+        summary_model_id=summary_model_id,
     )
 
     nodes: dict[str, Any] = {
-        "ideation_agent": build_ideation_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
-        "literature_review_agent": build_literature_review_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
-        "research_planner_agent": build_research_planner_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+        "ideation_agent": _wrap(build_ideation_node(model, workspace_dir, authorized_imports, **counsel_kwargs), "ideation_agent"),
+        "literature_review_agent": _wrap(build_literature_review_node(model, workspace_dir, authorized_imports, **counsel_kwargs), "literature_review_agent"),
+        "research_planner_agent": _wrap(build_research_planner_node(model, workspace_dir, authorized_imports, **counsel_kwargs), "research_planner_agent"),
         "theory_track": theory_track_node,
         "experiment_track": build_track_subgraph_node(experiment_subgraph, "experiment_track_status"),
         "track_merge": build_track_merge_node(workspace_dir=workspace_dir),
-        "synthesis_literature_review_agent": build_synthesis_literature_node(
+        "synthesis_literature_review_agent": _wrap(build_synthesis_literature_node(
             model, workspace_dir, authorized_imports, counsel_models
-        ),
-        "results_analysis_agent": build_results_analysis_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+        ), "synthesis_literature_review_agent"),
+        "results_analysis_agent": _wrap(build_results_analysis_node(model, workspace_dir, authorized_imports, **counsel_kwargs), "results_analysis_agent"),
         "followup_gate": build_followup_gate_node(workspace_dir),
-        "resource_preparation_agent": build_resource_preparation_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
-        "writeup_agent": build_writeup_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
-        "proofreading_agent": build_proofreading_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
-        "reviewer_agent": build_reviewer_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+        "resource_preparation_agent": _wrap(build_resource_preparation_node(model, workspace_dir, authorized_imports, **counsel_kwargs), "resource_preparation_agent"),
+        "writeup_agent": _wrap(build_writeup_node(model, workspace_dir, authorized_imports, **counsel_kwargs), "writeup_agent"),
+        "proofreading_agent": _wrap(build_proofreading_node(model, workspace_dir, authorized_imports, **counsel_kwargs), "proofreading_agent"),
+        "reviewer_agent": _wrap(build_reviewer_node(model, workspace_dir, authorized_imports, **counsel_kwargs), "reviewer_agent"),
         "validation_gate": build_validation_gate_node(),
     }
 
