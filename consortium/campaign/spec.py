@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import yaml
 
@@ -85,11 +85,67 @@ class NotificationConfig:
 
 
 @dataclass
+class RepairConfig:
+    """Configuration for autonomous failure repair via Claude Code agents."""
+    enabled: bool = False
+    max_attempts: int = 2
+    launcher: str = "local"             # "local" (blocking) or "slurm" (async)
+    claude_binary: str = "auto"         # "auto" to search, or explicit path
+    model: Optional[str] = "claude-opus-4-6"  # strongest model for repair
+    effort: str = "max"                  # Claude Code effort level (low/medium/high/max)
+    budget_usd: float = 10.0            # per-attempt budget cap
+    timeout_seconds: int = 600           # hard timeout per repair attempt
+    allowed_actions: List[str] = field(default_factory=lambda: [
+        "edit_code",
+        "fix_config",
+        "generate_missing_artifacts",
+        "install_dependencies",
+    ])
+    retry_delay_seconds: int = 10       # pause before retrying after repair
+    # --- Two-phase plan-then-execute settings ---
+    two_phase: bool = True              # enable plan→review→execute flow
+    plan_model: Optional[str] = None    # model for planning (defaults to self.model)
+    plan_effort: Optional[str] = None   # effort for planning (defaults to self.effort)
+    plan_budget_usd: float = 5.0        # budget for the read-only planning phase
+    plan_timeout_seconds: int = 300     # timeout for planning phase
+    review_model: str = "claude-opus-4-6"  # model OpenClaw uses to judge the plan
+    review_temperature: float = 0.2     # low temp for deterministic review
+    min_review_score: int = 7           # plan must score >= this (1-10) to proceed
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "RepairConfig":
+        return cls(
+            enabled=d.get("enabled", False),
+            max_attempts=int(d.get("max_attempts", 2)),
+            launcher=d.get("launcher", "local"),
+            claude_binary=d.get("claude_binary", "auto"),
+            model=d.get("model", "claude-opus-4-6"),
+            effort=d.get("effort", "max"),
+            budget_usd=float(d.get("budget_usd", 10.0)),
+            timeout_seconds=int(d.get("timeout_seconds", 600)),
+            allowed_actions=d.get("allowed_actions", [
+                "edit_code", "fix_config",
+                "generate_missing_artifacts", "install_dependencies",
+            ]),
+            retry_delay_seconds=int(d.get("retry_delay_seconds", 10)),
+            two_phase=d.get("two_phase", True),
+            plan_model=d.get("plan_model"),
+            plan_effort=d.get("plan_effort"),
+            plan_budget_usd=float(d.get("plan_budget_usd", 5.0)),
+            plan_timeout_seconds=int(d.get("plan_timeout_seconds", 300)),
+            review_model=d.get("review_model", "claude-opus-4-6"),
+            review_temperature=float(d.get("review_temperature", 0.2)),
+            min_review_score=int(d.get("min_review_score", 7)),
+        )
+
+
+@dataclass
 class CampaignSpec:
     name: str
     workspace_root: str
     stages: List[Stage]
     notification: NotificationConfig
+    repair: RepairConfig = field(default_factory=RepairConfig)
     heartbeat_interval_minutes: int = 30
 
     def stage(self, stage_id: str) -> Optional[Stage]:
@@ -127,12 +183,14 @@ def load_spec(path: str) -> CampaignSpec:
                 raise ValueError(f"Stage '{s.id}' context_from unknown stage '{ctx}'.")
 
     notification = NotificationConfig.from_dict(raw.get("notification", {}))
+    repair = RepairConfig.from_dict(raw.get("repair", {}))
 
     return CampaignSpec(
         name=name,
         workspace_root=workspace_root,
         stages=stages,
         notification=notification,
+        repair=repair,
         heartbeat_interval_minutes=int(raw.get("heartbeat_interval_minutes", 30)),
     )
 

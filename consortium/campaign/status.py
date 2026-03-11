@@ -61,6 +61,7 @@ PENDING = "pending"
 IN_PROGRESS = "in_progress"
 COMPLETED = "completed"
 FAILED = "failed"
+REPAIRING = "repairing"
 
 
 class CampaignStatus:
@@ -141,6 +142,57 @@ class CampaignStatus:
             "completed_at": _now(),
             "missing_artifacts": missing,
             "fail_reason": reason,
+        })
+        return self
+
+    def mark_repairing(self, stage_id: str) -> "CampaignStatus":
+        """Transition a failed stage into 'repairing' status."""
+        self._d["stages"].setdefault(stage_id, {})
+        self._d["stages"][stage_id]["status"] = REPAIRING
+        return self
+
+    def mark_pending_retry(self, stage_id: str) -> "CampaignStatus":
+        """Reset a repaired stage to pending so it can be relaunched."""
+        self._d["stages"].setdefault(stage_id, {})
+        self._d["stages"][stage_id].update({
+            "status": PENDING,
+            "pid": None,
+            "slurm_job_id": None,
+            "completed_at": None,
+            "missing_artifacts": [],
+            "fail_reason": None,
+        })
+        return self
+
+    # ------------------------------------------------------------------
+    # Repair tracking
+    # ------------------------------------------------------------------
+
+    def repair_attempt_count(self, stage_id: str) -> int:
+        """Number of repair attempts already made for this stage."""
+        return len(self._d["stages"].get(stage_id, {}).get("repair_log", []))
+
+    def add_repair_attempt(
+        self,
+        stage_id: str,
+        success: bool,
+        diagnosis: str,
+        actions: List[str],
+        duration: float,
+        error: Optional[str] = None,
+    ) -> "CampaignStatus":
+        """Record a repair attempt in the stage's repair_log."""
+        self._d["stages"].setdefault(stage_id, {})
+        stage = self._d["stages"][stage_id]
+        stage.setdefault("repair_log", [])
+        stage["repair_log"].append({
+            "attempt": len(stage["repair_log"]) + 1,
+            "timestamp": _now(),
+            "success": success,
+            "diagnosis": diagnosis[:500],
+            "actions": actions[:20],
+            "duration_seconds": round(duration, 1),
+            "error": error,
         })
         return self
 

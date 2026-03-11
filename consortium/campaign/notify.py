@@ -92,6 +92,44 @@ def notify_campaign_complete(campaign_name: str, config: NotificationConfig) -> 
     )
 
 
+def notify_repair_started(
+    stage_id: str, attempt: int, max_attempts: int, config: NotificationConfig,
+) -> None:
+    notify(
+        f"Stage '{stage_id}' repair attempt {attempt}/{max_attempts} — "
+        f"deploying Claude Code agent.",
+        config,
+        level="warning",
+    )
+
+
+def notify_repair_succeeded(
+    stage_id: str, attempt: int, diagnosis: str, config: NotificationConfig,
+) -> None:
+    notify(
+        f"Stage '{stage_id}' repair succeeded (attempt {attempt}). "
+        f"Diagnosis: {diagnosis[:150]}. Retrying stage.",
+        config,
+        level="success",
+    )
+
+
+def notify_repair_failed(
+    stage_id: str, attempt: int, max_attempts: int, error: str, config: NotificationConfig,
+) -> None:
+    remaining = max_attempts - attempt
+    if remaining > 0:
+        suffix = f" {remaining} attempt(s) remaining."
+    else:
+        suffix = " All repair attempts exhausted — human attention required."
+    notify(
+        f"Stage '{stage_id}' repair failed (attempt {attempt}/{max_attempts}): "
+        f"{error[:150]}.{suffix}",
+        config,
+        level="error",
+    )
+
+
 def notify_heartbeat(summary: str, config: NotificationConfig) -> None:
     if config.on_heartbeat:
         notify(summary, config, level="info")

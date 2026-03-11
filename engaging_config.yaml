@@ -26,8 +26,8 @@ cluster:
   # The orchestrator is CPU-only; it makes outbound HTTPS calls to LLM APIs.
   # ---------------------------------------------------------------------------
   orchestrator:
-    partition: sched_mit_hill       # 12hr limit, CPU-only, 66 nodes
-    time: "12:00:00"
+    partition: pi_tpoggio           # 7-day wall-time, dedicated node
+    time: "7-00:00:00"
     cpus: 4
     mem: "32G"
 
@@ -56,6 +56,17 @@ cluster:
     cpus: 8
     mem: "64G"
     gres: "gpu:1"
+
+  # ---------------------------------------------------------------------------
+  # Repair agent — Claude Code on Engaging compute nodes
+  # Repair jobs use the orchestrator partition (CPU-only, outbound HTTPS)
+  # ---------------------------------------------------------------------------
+  repair:
+    partition: pi_tpoggio             # 7-day wall-time for long repair agents
+    time: "01:00:00"
+    cpus: 2
+    mem: "8G"
+    claude_binary: auto               # auto-detect from ~/.cursor-server/
 
   # ---------------------------------------------------------------------------
   # Paths

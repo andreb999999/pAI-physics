@@ -1,8 +1,8 @@
 """Agentic tree search for phdlabor-1.
 
-Implements DAG-layered best-first search for the theory track (proof stage).
-Inspired by AI Scientist-v2 progressive agentic tree search, adapted for
-mathematical research with claim-graph-aware branching.
+Implements DAG-layered best-first search for both theory (proof stage) and
+experiment tracks. Inspired by AI Scientist-v2 progressive agentic tree search,
+adapted for mathematical research with claim-graph-aware branching.
 """
 
 from consortium.tree_search.tree_state import (
@@ -34,10 +34,18 @@ from consortium.tree_search.workspace_fork import (
     retarget_tools,
 )
 from consortium.tree_search.budget_allocator import TreeBudgetAllocator
+from consortium.tree_search.failure_memory import FailureMemory, FailureRecord
+from consortium.tree_search.node_evaluator import ScoreCalibrator
 from consortium.tree_search.tree_visualization import (
     ascii_tree,
     mermaid_diagram,
     summary_table,
+)
+from consortium.tree_search.experiment_tree_integration import (
+    ExperimentStrategy,
+    build_experiment_tree_controller,
+    build_tree_search_experiment_track,
+    generate_experiment_strategies,
 )
 
 __all__ = [
@@ -67,8 +75,17 @@ __all__ = [
     "retarget_tools",
     # Budget
     "TreeBudgetAllocator",
+    # Failure memory & calibration
+    "FailureMemory",
+    "FailureRecord",
+    "ScoreCalibrator",
     # Visualization
     "ascii_tree",
     "mermaid_diagram",
     "summary_table",
+    # Experiment tree search
+    "ExperimentStrategy",
+    "build_experiment_tree_controller",
+    "build_tree_search_experiment_track",
+    "generate_experiment_strategies",
 ]

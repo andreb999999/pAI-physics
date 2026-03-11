@@ -182,6 +182,83 @@ def score_node(
     return round(score, 4)
 
 
+# ---------------------------------------------------------------------------
+# Score calibration — feedback loop on LLM promise accuracy
+# ---------------------------------------------------------------------------
+
+class ScoreCalibrator:
+    """Track predicted scores vs actual outcomes to calibrate LLM promise scoring.
+
+    Records (predicted_score, actual_success) pairs and computes a correction
+    factor.  When the LLM systematically overestimates, the correction factor
+    will be < 1.0; when it underestimates, > 1.0.
+
+    Persisted to ``{workspace_dir}/score_calibration.json``.
+    """
+
+    def __init__(self) -> None:
+        self.outcomes: list[tuple[float, bool]] = []
+
+    def record_outcome(self, predicted: float, success: bool) -> None:
+        self.outcomes.append((predicted, success))
+
+    @property
+    def correction_factor(self) -> float:
+        """Ratio of actual success rate to average predicted score.
+
+        Returns 1.0 when no data or when predictions are well-calibrated.
+        """
+        if len(self.outcomes) < 3:
+            return 1.0
+        avg_predicted = sum(p for p, _ in self.outcomes) / len(self.outcomes)
+        actual_rate = sum(1 for _, s in self.outcomes if s) / len(self.outcomes)
+        if avg_predicted < 0.01:
+            return 1.0
+        return actual_rate / avg_predicted
+
+    def adjusted_weights(self) -> dict[str, float]:
+        """Return adjusted scoring weights based on calibration.
+
+        If the LLM is poorly calibrated (correction far from 1.0), reduce
+        W_LLM_PROMISE and redistribute to W_IMPACT and W_EFFICIENCY.
+        """
+        cf = self.correction_factor
+        calibration_quality = 1.0 - min(abs(cf - 1.0), 0.5)  # 1.0 = perfect, 0.5 = terrible
+
+        # Scale LLM weight by calibration quality
+        llm_w = W_LLM_PROMISE * calibration_quality
+        redistribution = W_LLM_PROMISE - llm_w
+        return {
+            "W_LLM_PROMISE": round(llm_w, 4),
+            "W_IMPACT": round(W_IMPACT + redistribution * 0.6, 4),
+            "W_EFFICIENCY": round(W_EFFICIENCY + redistribution * 0.4, 4),
+            "W_DEPTH": W_DEPTH,
+            "W_DIVERSITY": W_DIVERSITY,
+        }
+
+    def save(self, path: str) -> None:
+        import os
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "w") as f:
+            json.dump(
+                {"outcomes": [{"predicted": p, "success": s} for p, s in self.outcomes]},
+                f, indent=2,
+            )
+
+    @classmethod
+    def load(cls, path: str) -> "ScoreCalibrator":
+        import os
+        cal = cls()
+        if os.path.exists(path):
+            try:
+                with open(path) as f:
+                    data = json.load(f)
+                cal.outcomes = [(o["predicted"], o["success"]) for o in data.get("outcomes", [])]
+            except Exception:
+                pass
+        return cal
+
+
 def rescore_all(
     tree_state: TreeSearchState,
     claim_graph: dict[str, Any],

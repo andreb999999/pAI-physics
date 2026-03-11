@@ -32,6 +32,11 @@ class NodeType(str, Enum):
     INDEPENDENT_VERIFICATION = "independent_verification"
     COMPONENT_ABLATION = "component_ablation"
 
+    # Experiment exploration
+    EXPERIMENT_DESIGN = "experiment_design"
+    HYPERPARAMETER_VARIANT = "hyperparameter_variant"
+    ABLATION_STUDY = "ablation_study"
+
 
 class NodeStatus(str, Enum):
     """Lifecycle status of a tree node."""
@@ -172,6 +177,7 @@ class TreeSearchConfig:
         default_factory=lambda: [
             NodeType.PROOF_STRATEGY.value,
             NodeType.LEMMA_DECOMPOSITION.value,
+            NodeType.EXPERIMENT_DESIGN.value,
         ]
     )
 

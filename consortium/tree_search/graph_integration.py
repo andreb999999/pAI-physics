@@ -5,6 +5,13 @@ Provides:
   that inserts a tree search controller between the proposer and prover.
 - ``build_tree_search_controller``: the LangGraph node that orchestrates
   branching, scoring, and merging for the proof stage.
+
+Counsel integration:
+  When ``counsel_models`` is provided and ``tree_config.should_counsel(node)``
+  returns True for a given branch, each agent stage (prover, rigorous verifier,
+  empirical verifier) runs as a full multi-model counsel debate instead of a
+  single-model ReAct agent.  Tools are retargeted to the branch workspace so
+  that counsel sandboxes operate on the correct files.
 """
 
 from __future__ import annotations
@@ -31,7 +38,48 @@ from consortium.tree_search.tree_state import (
     TreeSearchConfig,
     TreeSearchState,
 )
-from consortium.tree_search.workspace_fork import promote_branch
+from consortium.tree_search.workspace_fork import promote_branch, retarget_tools
+
+
+# ---------------------------------------------------------------------------
+# Agent descriptor — carries the information needed to re-build an agent
+# for any branch workspace, with or without counsel.
+# ---------------------------------------------------------------------------
+
+class _AgentDescriptor:
+    """Lightweight bundle of prompt + tool-factory + fallback node callable.
+
+    Used by the tree search controller to construct per-branch agents that
+    have their tools correctly retargeted to the branch workspace.
+    """
+
+    __slots__ = ("agent_name", "get_system_prompt", "get_tools", "fallback_node",
+                 "model", "authorized_imports")
+
+    def __init__(
+        self,
+        agent_name: str,
+        get_system_prompt: Callable,
+        get_tools: Callable,
+        fallback_node: Callable,
+        model: Any = None,
+        authorized_imports: Optional[List[str]] = None,
+    ):
+        self.agent_name = agent_name
+        self.get_system_prompt = get_system_prompt
+        self.get_tools = get_tools
+        self.fallback_node = fallback_node
+        self.model = model
+        self.authorized_imports = authorized_imports
+
+    def build_tools(self, workspace_dir: str) -> list:
+        """Instantiate tools pointing at *workspace_dir*."""
+        return self.get_tools(workspace_dir)
+
+    def build_prompt(self, workspace_dir: str) -> str:
+        """Build system prompt (some prompts depend on tools)."""
+        tools = self.build_tools(workspace_dir)
+        return self.get_system_prompt(tools=tools, managed_agents=None)
 
 
 # ---------------------------------------------------------------------------
@@ -46,6 +94,13 @@ def build_tree_search_controller(
     tree_config: TreeSearchConfig,
     *,
     model_id: str = "claude-sonnet-4-6",
+    counsel_models: Optional[List[Any]] = None,
+    model_specs: Optional[List[dict]] = None,
+    prover_descriptor: Optional[_AgentDescriptor] = None,
+    rigorous_verifier_descriptor: Optional[_AgentDescriptor] = None,
+    empirical_verifier_descriptor: Optional[_AgentDescriptor] = None,
+    adversarial_verification: bool = False,
+    adversarial_model: Optional[Any] = None,
 ) -> Callable:
     """Build a LangGraph node that runs the tree search loop for the theory track.
 
@@ -90,6 +145,14 @@ def build_tree_search_controller(
                 claim_graph=claim_graph,
                 workspace_dir=ws,
                 max_parallel=tree_config.max_parallel,
+                tree_config=tree_config,
+                counsel_models=counsel_models,
+                model_specs=model_specs,
+                prover_descriptor=prover_descriptor,
+                rigorous_verifier_descriptor=rigorous_verifier_descriptor,
+                empirical_verifier_descriptor=empirical_verifier_descriptor,
+                adversarial_verification=adversarial_verification,
+                adversarial_model=adversarial_model,
             )
 
             # Process results
@@ -130,6 +193,56 @@ def build_tree_search_controller(
     return tree_search_node
 
 
+def _run_agent_stage(
+    descriptor: Optional[_AgentDescriptor],
+    fallback_node: Callable,
+    branch_state: dict,
+    branch_workspace: str,
+    node: TreeNode,
+    tree_config: TreeSearchConfig,
+    counsel_models: Optional[List[Any]],
+    model_specs: Optional[List[dict]],
+) -> dict:
+    """Run a single agent stage, optionally with counsel.
+
+    If ``counsel_models`` is provided and ``tree_config.should_counsel(node)``
+    is True, runs a full multi-model counsel debate with tools retargeted to
+    the branch workspace.  Otherwise falls back to the raw node callable.
+
+    Returns the agent's state-update dict.
+    """
+    use_counsel = (
+        counsel_models
+        and descriptor is not None
+        and tree_config.should_counsel(node)
+    )
+
+    if use_counsel:
+        from consortium.counsel import run_counsel_stage
+        tools = descriptor.build_tools(branch_workspace)
+        system_prompt = descriptor.build_prompt(branch_workspace)
+        task = branch_state.get("agent_task", "")
+        output = run_counsel_stage(
+            task=task,
+            system_prompt=system_prompt,
+            tools=tools,
+            workspace_dir=branch_workspace,
+            counsel_models=counsel_models,
+            agent_name=descriptor.agent_name,
+            model_specs=model_specs,
+        )
+        return {
+            "agent_outputs": {
+                **branch_state.get("agent_outputs", {}),
+                descriptor.agent_name: output,
+            },
+            "agent_task": None,
+        }
+
+    # Fallback: run the raw node callable directly
+    return fallback_node(branch_state)
+
+
 def _execute_branches_parallel(
     branches: list[TreeNode],
     *,
@@ -141,15 +254,31 @@ def _execute_branches_parallel(
     claim_graph: dict,
     workspace_dir: str,
     max_parallel: int = 6,
+    tree_config: Optional[TreeSearchConfig] = None,
+    counsel_models: Optional[List[Any]] = None,
+    model_specs: Optional[List[dict]] = None,
+    prover_descriptor: Optional[_AgentDescriptor] = None,
+    rigorous_verifier_descriptor: Optional[_AgentDescriptor] = None,
+    empirical_verifier_descriptor: Optional[_AgentDescriptor] = None,
+    adversarial_verification: bool = False,
+    adversarial_model: Optional[Any] = None,
 ) -> list[tuple[TreeNode, bool, str]]:
     """Execute proof branches in parallel.
 
     Each branch runs the prover → rigorous_verifier → empirical_verifier
-    pipeline in its own forked workspace.
+    pipeline in its own forked workspace.  When counsel is enabled for a
+    branch (per ``tree_config.should_counsel``), each agent stage runs as
+    a multi-model debate with fresh tools targeting the branch workspace.
+
+    When ``adversarial_verification`` is True, branches that pass cooperative
+    verification are additionally subjected to an adversarial verifier that
+    attempts to break the proof. Branches only succeed if the adversarial
+    verifier finds no CRITICAL issues.
 
     Returns a list of (node, success, failure_reason) tuples.
     """
     results: list[tuple[TreeNode, bool, str]] = []
+    _tree_config = tree_config or TreeSearchConfig()
 
     def _run_branch(node: TreeNode) -> tuple[TreeNode, bool, str]:
         node.mark_running()
@@ -174,9 +303,17 @@ def _execute_branches_parallel(
             "active_branch_id": node.id,
         }
 
+        use_counsel = counsel_models and _tree_config.should_counsel(node)
+        counsel_label = " [counsel]" if use_counsel else ""
+        print(f"[tree_search] branch {node.id}{counsel_label}: starting prover for {claim_id}")
+
         try:
             # Run prover
-            prover_result = prover_node(branch_state)
+            prover_result = _run_agent_stage(
+                prover_descriptor, prover_node, branch_state,
+                node.workspace_path, node, _tree_config,
+                counsel_models, model_specs,
+            )
             branch_state = {**branch_state, **prover_result}
 
             # Run rigorous verifier
@@ -184,7 +321,11 @@ def _execute_branches_parallel(
                 f"Verify the proof of claim '{claim_id}' that was just drafted. "
                 f"Check for logical gaps, missing steps, and mathematical correctness."
             )
-            verifier_result = rigorous_verifier_node(branch_state)
+            verifier_result = _run_agent_stage(
+                rigorous_verifier_descriptor, rigorous_verifier_node, branch_state,
+                node.workspace_path, node, _tree_config,
+                counsel_models, model_specs,
+            )
             branch_state = {**branch_state, **verifier_result}
 
             # Run empirical verifier
@@ -192,22 +333,62 @@ def _execute_branches_parallel(
                 f"Numerically verify claim '{claim_id}'. "
                 f"Check that the theoretical predictions match numerical experiments."
             )
-            empirical_result = empirical_verifier_node(branch_state)
+            _run_agent_stage(
+                empirical_verifier_descriptor, empirical_verifier_node, branch_state,
+                node.workspace_path, node, _tree_config,
+                counsel_models, model_specs,
+            )
 
             # Check if the claim was successfully verified
             branch_claim_graph = _load_claim_graph(node.workspace_path)
             claim_status = _get_claim_status(branch_claim_graph, claim_id)
 
             if claim_status in ("verified_symbolic", "verified_numeric", "accepted"):
+                # Adversarial verification: attempt to break the proof
+                if adversarial_verification:
+                    print(f"[tree_search] branch {node.id}: cooperative PASSED, running adversarial check...")
+                    try:
+                        from consortium.agents.math_rigorous_verifier_agent import build_node as build_adv_verifier
+                        adv_node_fn = build_adv_verifier(
+                            adversarial_model or prover_node,  # use provided model or fallback
+                            node.workspace_path,
+                            adversarial=True,
+                        )
+                        adv_state = {
+                            **branch_state,
+                            "agent_task": (
+                                f"ADVERSARIAL REVIEW: Attempt to break the proof of claim '{claim_id}'. "
+                                f"Find every logical gap, unjustified step, and implicit assumption. "
+                                f"Rate issues as CRITICAL, MAJOR, or MINOR."
+                            ),
+                        }
+                        adv_result = adv_node_fn(adv_state)
+                        adv_output = adv_result.get("agent_outputs", {}).get(
+                            "math_rigorous_verifier_agent", ""
+                        )
+                        node.metadata["adversarial_report"] = adv_output[:2000]
+
+                        if "CRITICAL" in adv_output.upper():
+                            print(f"[tree_search] branch {node.id}: ADVERSARIAL found CRITICAL issues")
+                            return (node, False, f"Adversarial verification failed: {adv_output[:500]}")
+                        else:
+                            print(f"[tree_search] branch {node.id}: ADVERSARIAL passed (no critical issues)")
+                    except Exception as adv_err:
+                        print(f"[tree_search] branch {node.id}: adversarial check error: {adv_err}")
+                        # Don't block on adversarial errors — log and proceed
+
+                print(f"[tree_search] branch {node.id}: SUCCEEDED ({claim_status})")
                 return (node, True, "")
             else:
                 # Check verification output for gap information
                 verifier_output = branch_state.get("agent_outputs", {}).get(
                     "math_rigorous_verifier_agent", ""
                 )
+                print(f"[tree_search] branch {node.id}: FAILED ({claim_status})")
                 return (node, False, f"Claim status: {claim_status}. {verifier_output[:500]}")
 
         except Exception as exc:
+            print(f"[tree_search] branch {node.id}: ERROR ({exc})")
             return (node, False, f"Branch execution error: {exc}")
 
     with ThreadPoolExecutor(max_workers=min(len(branches), max_parallel)) as executor:
@@ -254,6 +435,7 @@ def build_tree_search_theory_track(
     summary_model_id: Optional[str] = "claude-sonnet-4-6",
     tree_config: Optional[TreeSearchConfig] = None,
     model_id: str = "claude-sonnet-4-6",
+    adversarial_verification: bool = False,
 ) -> Any:
     """Build the theory track subgraph with tree search integration.
 
@@ -298,13 +480,61 @@ def build_tree_search_theory_track(
     )
 
     if tree_config and tree_config.enabled:
-        # Build the raw agent nodes (unwrapped) for use inside the tree controller
-        prover = build_math_prover_node(model, workspace_dir, authorized_imports, **counsel_kwargs)
+        # Build raw agent nodes WITHOUT counsel — counsel is handled
+        # dynamically per-branch by the tree controller via descriptors.
+        prover = build_math_prover_node(model, workspace_dir, authorized_imports)
         rigorous_verifier = build_math_rigorous_verifier_node(
-            model, workspace_dir, authorized_imports, **counsel_kwargs
+            model, workspace_dir, authorized_imports
         )
         empirical_verifier = build_math_empirical_verifier_node(
-            model, workspace_dir, authorized_imports, **counsel_kwargs
+            model, workspace_dir, authorized_imports
+        )
+
+        # Build agent descriptors for counsel-capable branch execution.
+        # Each descriptor carries the get_tools / get_prompt factories so
+        # the controller can build fresh, correctly-targeted agents per branch.
+        from consortium.agents.math_prover_agent import (
+            get_tools as prover_get_tools,
+        )
+        from consortium.agents.math_rigorous_verifier_agent import (
+            get_tools as rigorous_get_tools,
+        )
+        from consortium.agents.math_empirical_verifier_agent import (
+            get_tools as empirical_get_tools,
+        )
+        from consortium.prompts.math_prover_instructions import (
+            get_math_prover_system_prompt,
+        )
+        from consortium.prompts.math_rigorous_verifier_instructions import (
+            get_math_rigorous_verifier_system_prompt,
+        )
+        from consortium.prompts.math_empirical_verifier_instructions import (
+            get_math_empirical_verifier_system_prompt,
+        )
+
+        prover_desc = _AgentDescriptor(
+            agent_name="math_prover_agent",
+            get_system_prompt=get_math_prover_system_prompt,
+            get_tools=prover_get_tools,
+            fallback_node=prover,
+            model=model,
+            authorized_imports=authorized_imports,
+        )
+        rigorous_desc = _AgentDescriptor(
+            agent_name="math_rigorous_verifier_agent",
+            get_system_prompt=get_math_rigorous_verifier_system_prompt,
+            get_tools=rigorous_get_tools,
+            fallback_node=rigorous_verifier,
+            model=model,
+            authorized_imports=authorized_imports,
+        )
+        empirical_desc = _AgentDescriptor(
+            agent_name="math_empirical_verifier_agent",
+            get_system_prompt=get_math_empirical_verifier_system_prompt,
+            get_tools=empirical_get_tools,
+            fallback_node=empirical_verifier,
+            model=model,
+            authorized_imports=authorized_imports,
         )
 
         tree_controller = build_tree_search_controller(
@@ -314,6 +544,12 @@ def build_tree_search_theory_track(
             workspace_dir=workspace_dir,
             tree_config=tree_config,
             model_id=model_id,
+            counsel_models=counsel_models,
+            prover_descriptor=prover_desc,
+            rigorous_verifier_descriptor=rigorous_desc,
+            empirical_verifier_descriptor=empirical_desc,
+            adversarial_verification=adversarial_verification,
+            adversarial_model=model,
         )
 
         graph.add_node("tree_search_controller", tree_controller)

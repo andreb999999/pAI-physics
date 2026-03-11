@@ -14,6 +14,32 @@ workspace_root: "results/muon_campaign"
 # How often (minutes) to tick the heartbeat.
 heartbeat_interval_minutes: 30
 
+# --- Autonomous Repair (deploys Claude Code agents on failure) ---
+repair:
+  enabled: true
+  max_attempts: 2                     # repair tries per stage before escalating to human
+  launcher: slurm                     # "local" (blocking) or "slurm" (async on Engaging)
+  claude_binary: auto                 # "auto" finds claude from conda env PATH
+  model: claude-opus-4-6              # strongest model for repair
+  effort: max                         # maximum thinking/reasoning effort
+  budget_usd: 10.0                    # max spend per repair attempt (opus is pricier)
+  timeout_seconds: 600                # hard timeout per repair agent (10 min)
+  retry_delay_seconds: 10             # pause before relaunching after successful repair
+  allowed_actions:
+    - edit_code                       # fix Python/LaTeX/config bugs
+    - fix_config                      # repair YAML/JSON configs
+    - generate_missing_artifacts      # create files the stage failed to produce
+    - install_dependencies            # note missing packages (no global pip)
+  # --- Two-phase plan→review→execute flow ---
+  two_phase: true                     # Phase 1: plan (read-only) → review → Phase 2: execute
+  plan_model: claude-opus-4-6         # opus for planning too (strongest reasoning)
+  plan_effort: max                    # max effort for planning phase
+  plan_budget_usd: 5.0                # budget for planning phase only
+  plan_timeout_seconds: 300           # planning phase timeout (5 min)
+  review_model: claude-opus-4-6      # OpenClaw reviewer model (judges the plan)
+  review_temperature: 0.2            # low temp for deterministic review
+  min_review_score: 7                # plan must score >= 7/10 to proceed to execution
+
 # --- Notifications (all optional) ---
 notification:
   # ntfy.sh push notifications — install the ntfy app and subscribe to your topic.
@@ -100,5 +126,7 @@ stages:
         - final_paper.tex
         - final_paper.pdf
       optional:
+        - paper_workspace/final_paper.tex
+        - paper_workspace/final_paper.pdf
         - analysis_connection.md
         - artifacts_index.md

@@ -165,6 +165,8 @@ def build_research_graph(
     counsel_models=None,
     summary_model_id="claude-sonnet-4-6",
     tree_search_config=None,
+    enable_milestone_gates=False,
+    adversarial_verification=False,
 ):
     """
     Build and return the compiled LangGraph research pipeline.
@@ -190,6 +192,8 @@ def build_research_graph(
         manager_max_steps:        Kept for call-site compatibility
         summary_model_id:         Model for stage summary PDF generation.
                                   Set to None to disable.
+        enable_milestone_gates:   Pause at milestone points for human review.
+        adversarial_verification: Run adversarial red-team verifiers after cooperative pass.
 
     Returns:
         (compiled_graph, checkpointer) tuple.
@@ -217,6 +221,8 @@ def build_research_graph(
         counsel_models=counsel_models,
         summary_model_id=summary_model_id,
         tree_search_config=tree_search_config,
+        enable_milestone_gates=enable_milestone_gates,
+        adversarial_verification=adversarial_verification,
     )
     logger.info("LangGraph pipeline ready.")
     return compiled, checkpointer

@@ -28,13 +28,18 @@ import json
 import os
 import sys
 
+# Ensure tex-live is available for paper/editorial stages
+_TEX_LIVE_BIN = "/orcd/software/community/001/pkg/tex-live/20251104/bin/x86_64-linux"
+if _TEX_LIVE_BIN not in os.environ.get("PATH", ""):
+    os.environ["PATH"] = _TEX_LIVE_BIN + ":" + os.environ.get("PATH", "")
+
 # Ensure consortium is importable from repo root
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(_HERE))
 
 from consortium.campaign.spec import load_spec
 from consortium.campaign.status import (
-    COMPLETED, FAILED, IN_PROGRESS, PENDING,
+    COMPLETED, FAILED, IN_PROGRESS, PENDING, REPAIRING,
     check_stage_artifacts, init_status, is_pid_alive,
     read_status, write_status,
 )
@@ -43,6 +48,10 @@ from consortium.campaign.memory import distill_stage_memory
 from consortium.campaign.notify import (
     notify, notify_campaign_complete, notify_heartbeat,
     notify_stage_complete, notify_stage_failed, notify_stage_launched,
+    notify_repair_started, notify_repair_succeeded, notify_repair_failed,
+)
+from consortium.campaign.repair_agent import (
+    attempt_repair, submit_slurm_repair, poll_slurm_repair,
 )
 
 
@@ -98,6 +107,18 @@ def run_heartbeat(
     Core heartbeat logic. Returns exit code.
     """
     # ----------------------------------------------------------------
+    # 0. Check any stage with a SLURM repair job in progress
+    # ----------------------------------------------------------------
+    for stage in spec.stages:
+        sid = stage.id
+        if status.stage_status(sid) == REPAIRING:
+            print(f"[heartbeat] Stage '{sid}' has a repair in progress — polling...")
+            repair_exit = _try_repair(stage, spec, status, campaign_dir)
+            if repair_exit is not None:
+                return repair_exit
+            # If None, repair exhausted — fall through to normal failure handling
+
+    # ----------------------------------------------------------------
     # 1. Check any in-progress stage
     # ----------------------------------------------------------------
     for stage in spec.stages:
@@ -137,15 +158,29 @@ def run_heartbeat(
             print(f"[heartbeat] Stage '{sid}' FAILED: {reason}")
             status.mark_failed(sid, reason, missing)
             write_status(campaign_dir, status)
+
+            # --- Autonomous repair attempt ---
+            repair_exit = _try_repair(stage, spec, status, campaign_dir)
+            if repair_exit is not None:
+                return repair_exit
+
+            # No repair attempted or repair exhausted — escalate
             notify_stage_failed(sid, reason, spec.notification)
             return 2
 
         break  # Only process one in-progress stage per tick
 
     # ----------------------------------------------------------------
-    # 2. Check for overall failure
+    # 2. Check for overall failure (with repair opportunity)
     # ----------------------------------------------------------------
     if status.campaign_failed(spec):
+        # Find the failed stage and try repair before giving up
+        for stage in spec.stages:
+            if status.stage_status(stage.id) == FAILED:
+                repair_exit = _try_repair(stage, spec, status, campaign_dir)
+                if repair_exit is not None:
+                    return repair_exit
+                break  # only handle one failed stage per tick
         print("[heartbeat] Campaign has a failed stage. Human attention required.")
         return 2
 
@@ -184,6 +219,218 @@ def run_heartbeat(
     # No stage to launch and no active stage — waiting for a dependency
     print("[heartbeat] No action taken — waiting for dependencies.")
     return 1
+
+
+def _try_repair(
+    stage,
+    spec,
+    status,
+    campaign_dir: str,
+) -> "int | None":
+    """
+    Attempt autonomous repair of a failed stage.
+
+    Supports two launcher modes:
+      - "local": runs Claude Code inline (blocks this tick, ~10min max)
+      - "slurm": submits a SLURM job and returns immediately; the next
+        heartbeat tick polls for the result.
+
+    Returns:
+        - 3 if the stage was repaired and relaunched (same as "stage launched")
+        - 1 if repair is in progress (SLURM job running, or retrying next tick)
+        - None if repair is not enabled, exhausted, or failed
+    """
+    import time as _time
+    from consortium.campaign.status import is_slurm_job_alive
+
+    sid = stage.id
+    repair_config = spec.repair
+
+    if not repair_config.enabled:
+        return None
+
+    # ------------------------------------------------------------------
+    # SLURM mode: check if a repair job is already running
+    # ------------------------------------------------------------------
+    if repair_config.launcher == "slurm":
+        stage_data = status.raw()["stages"].get(sid, {})
+        repair_slurm_jid = stage_data.get("repair_slurm_job_id")
+
+        if repair_slurm_jid and status.stage_status(sid) == REPAIRING:
+            # A repair job was previously submitted — poll for result
+            if is_slurm_job_alive(repair_slurm_jid):
+                print(
+                    f"[heartbeat] Repair SLURM job {repair_slurm_jid} for '{sid}' "
+                    f"still running. Will check next tick."
+                )
+                return 1  # come back later
+
+            # Job finished — poll the sentinel
+            result = poll_slurm_repair(stage, status, campaign_dir)
+            if result is None:
+                print(
+                    f"[heartbeat] Repair SLURM job {repair_slurm_jid} for '{sid}' "
+                    f"finished but no sentinel found. Treating as failure."
+                )
+                result_success = False
+                result_diagnosis = "SLURM repair job completed but produced no result sentinel."
+                result_actions = []
+                result_duration = 0.0
+                result_error = "No sentinel file"
+            else:
+                result_success = result.success
+                result_diagnosis = result.diagnosis
+                result_actions = result.actions_taken
+                result_duration = result.duration_seconds
+                result_error = result.error
+
+            # Record the attempt
+            status.add_repair_attempt(
+                sid,
+                success=result_success,
+                diagnosis=result_diagnosis,
+                actions=result_actions,
+                duration=result_duration,
+                error=result_error,
+            )
+
+            return _handle_repair_result(
+                sid, result_success, result_diagnosis, result_actions,
+                result_error, status, spec, stage, campaign_dir,
+            )
+
+    # ------------------------------------------------------------------
+    # Check attempt budget
+    # ------------------------------------------------------------------
+    attempts_so_far = status.repair_attempt_count(sid)
+    if attempts_so_far >= repair_config.max_attempts:
+        print(
+            f"[heartbeat] Repair attempts exhausted for '{sid}' "
+            f"({attempts_so_far}/{repair_config.max_attempts})."
+        )
+        return None
+
+    attempt_num = attempts_so_far + 1
+    print(
+        f"[heartbeat] Attempting autonomous repair for '{sid}' "
+        f"(attempt {attempt_num}/{repair_config.max_attempts})..."
+    )
+
+    # Notify
+    notify_repair_started(sid, attempt_num, repair_config.max_attempts, spec.notification)
+
+    # Mark as repairing
+    status.mark_repairing(sid)
+    write_status(campaign_dir, status)
+
+    # ------------------------------------------------------------------
+    # SLURM mode: submit job and return immediately
+    # ------------------------------------------------------------------
+    if repair_config.launcher == "slurm":
+        job_id = submit_slurm_repair(stage, spec, status, campaign_dir)
+        if job_id is None:
+            print(f"[heartbeat] SLURM repair submission failed for '{sid}'. Falling back to local.")
+            # Fall through to local mode
+        else:
+            # Store SLURM job ID in status so we can poll it next tick
+            status.raw()["stages"][sid]["repair_slurm_job_id"] = job_id
+            write_status(campaign_dir, status)
+            print(
+                f"[heartbeat] Repair SLURM job {job_id} submitted for '{sid}'. "
+                f"Will poll on next heartbeat tick."
+            )
+            return 1  # in progress — come back next tick
+
+    # ------------------------------------------------------------------
+    # Local mode: run Claude Code inline (blocking)
+    # ------------------------------------------------------------------
+    result = attempt_repair(stage, spec, status, campaign_dir)
+
+    # Record the attempt
+    status.add_repair_attempt(
+        sid,
+        success=result.success,
+        diagnosis=result.diagnosis,
+        actions=result.actions_taken,
+        duration=result.duration_seconds,
+        error=result.error,
+    )
+
+    return _handle_repair_result(
+        sid, result.success, result.diagnosis, result.actions_taken,
+        result.error, status, spec, stage, campaign_dir,
+    )
+
+
+def _handle_repair_result(
+    sid: str,
+    success: bool,
+    diagnosis: str,
+    actions: list,
+    error: "str | None",
+    status,
+    spec,
+    stage,
+    campaign_dir: str,
+) -> "int | None":
+    """
+    Common handler for repair results (both local and SLURM modes).
+
+    Returns exit code for the heartbeat.
+    """
+    import time as _time
+
+    repair_config = spec.repair
+    attempt_num = status.repair_attempt_count(sid)  # already incremented
+
+    if success:
+        print(f"[heartbeat] Repair succeeded for '{sid}'. Relaunching stage.")
+        notify_repair_succeeded(sid, attempt_num, diagnosis, spec.notification)
+
+        # Reset to pending and relaunch
+        status.mark_pending_retry(sid)
+        write_status(campaign_dir, status)
+
+        # Brief pause before retry
+        if repair_config.retry_delay_seconds > 0:
+            _time.sleep(repair_config.retry_delay_seconds)
+
+        # Relaunch the stage
+        proc = launch_stage(stage, spec, status, campaign_dir)
+        from consortium.campaign.runner import build_stage_workspace
+        workspace = build_stage_workspace(stage, spec, status)
+        status.mark_in_progress(sid, workspace, proc.pid)
+        write_status(campaign_dir, status)
+        notify_stage_launched(sid, proc.pid, workspace, spec.notification)
+        return 3  # stage relaunched
+
+    else:
+        print(f"[heartbeat] Repair failed for '{sid}': {error or diagnosis[:200]}")
+        notify_repair_failed(
+            sid, attempt_num, repair_config.max_attempts,
+            error or diagnosis[:150],
+            spec.notification,
+        )
+
+        # Mark back as failed (repair didn't help)
+        stage_data = status.raw()["stages"].get(sid, {})
+        status.mark_failed(
+            sid,
+            stage_data.get("fail_reason", "Repair failed"),
+            stage_data.get("missing_artifacts", []),
+        )
+        write_status(campaign_dir, status)
+
+        # If we still have attempts left, return 1 so the next heartbeat
+        # tick can try again
+        if attempt_num < repair_config.max_attempts:
+            print(
+                f"[heartbeat] Will retry repair on next heartbeat tick "
+                f"({repair_config.max_attempts - attempt_num} attempt(s) remaining)."
+            )
+            return 1  # in progress — come back next tick
+
+        return None  # exhausted
 
 
 def _build_summary(spec, status) -> str:

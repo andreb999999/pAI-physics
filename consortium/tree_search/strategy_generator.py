@@ -77,6 +77,7 @@ def generate_proof_strategies(
     verification_gaps: Optional[list[dict]] = None,
     claim_graph_context: Optional[str] = None,
     model: str = "claude-sonnet-4-6",
+    failure_memory: Optional[Any] = None,
 ) -> list[ProofStrategy]:
     """Ask an LLM to propose *n* distinct proof strategies for *claim*.
 
@@ -94,6 +95,10 @@ def generate_proof_strategies(
         Summary of the broader claim graph for context.
     model : str
         LLM model ID for the strategy generation call.
+    failure_memory : FailureMemory, optional
+        Cross-branch failure records.  When provided, failed strategies and
+        common failure patterns are included in the prompt so the LLM avoids
+        repeating them.
     """
     user_parts = [f"## Claim\n```json\n{json.dumps(claim, indent=2)}\n```"]
 
@@ -105,6 +110,12 @@ def generate_proof_strategies(
         )
     if claim_graph_context:
         user_parts.append(f"## Claim Graph Context\n{claim_graph_context}")
+
+    # Inject failure memory so the LLM avoids repeating failed strategies
+    if failure_memory is not None:
+        failure_text = failure_memory.format_for_strategy_prompt(claim.get("id", ""))
+        if failure_text:
+            user_parts.append(f"## FAILED STRATEGIES — DO NOT REPEAT\n{failure_text}")
 
     user_msg = "\n\n".join(user_parts)
 

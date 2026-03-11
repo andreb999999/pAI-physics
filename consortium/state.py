@@ -94,6 +94,19 @@ class ResearchState(TypedDict):
     active_branch_id: Optional[str]          # currently executing branch node ID
 
     # -----------------------------------------------------------------
+    # Milestone reports & human-in-the-loop gates
+    # -----------------------------------------------------------------
+    milestone_reports: list[str]             # paths to generated milestone report PDFs
+    human_feedback: Optional[dict]           # latest human feedback from milestone gate
+    enable_milestone_gates: bool             # pause at milestones for human input
+    milestone_timeout: int                   # seconds to wait for human (default 3600)
+
+    # -----------------------------------------------------------------
+    # Intermediate validation checkpoints
+    # -----------------------------------------------------------------
+    intermediate_validation_log: list[dict]  # [{checkpoint, timestamp, results}]
+
+    # -----------------------------------------------------------------
     # Terminal flag
     # -----------------------------------------------------------------
     finished: bool

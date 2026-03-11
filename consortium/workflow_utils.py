@@ -8,12 +8,16 @@ import json
 import os
 from typing import Any, Optional
 
+from datetime import datetime, timezone
+
 from .supervision import (
     validate_claim_traceability,
+    validate_cross_track_consistency,
     validate_math_acceptance,
     validate_paper_quality,
     validate_result_artifacts,
     validate_review_verdict,
+    save_cross_track_report,
 )
 
 
@@ -258,6 +262,99 @@ _THEORY_KEYWORDS = frozenset({
     "proof", "theorem", "lemma", "mathematical", "formal",
     "derivation", "bound", "convergence", "assumption", "rigor",
 })
+
+
+def run_intermediate_validation(
+    state: dict,
+    checkpoint_name: str,
+) -> dict:
+    """Run lightweight validation gates at intermediate pipeline points.
+
+    Unlike the final ``run_validation_gates`` which blocks on failure, these
+    checkpoints are *advisory*: results accumulate in
+    ``state["intermediate_validation_log"]`` and surface as warnings in
+    milestone reports.  They never block the pipeline.
+
+    Supported checkpoints:
+        post_theory   — run ``validate_math_acceptance`` if claims exist
+        post_experiment — check experiment artifact existence
+        post_merge    — run cross-track consistency check
+        post_analysis — early ``validate_claim_traceability``
+
+    Returns a dict suitable for merging into state:
+        ``{"intermediate_validation_log": [...existing..., new_entry]}``
+    """
+    workspace = state.get("workspace_dir") or "."
+    results: dict[str, dict] = {}
+
+    if checkpoint_name == "post_theory":
+        if state.get("math_enabled", False):
+            math_summary = validate_math_acceptance(workspace_dir=workspace)
+            if math_summary.get("graph_present"):
+                results["math_acceptance"] = {
+                    "is_valid": math_summary.get("is_valid", True),
+                    "errors": math_summary.get("errors", []),
+                }
+
+    elif checkpoint_name == "post_experiment":
+        # Check for key experiment artifacts
+        exp_artifacts = [
+            "paper_workspace/experiment_results.json",
+            "paper_workspace/experiment_design.json",
+        ]
+        missing = [
+            a for a in exp_artifacts
+            if not os.path.exists(os.path.join(workspace, a))
+        ]
+        results["experiment_artifacts"] = {
+            "is_valid": len(missing) == 0,
+            "errors": [f"Missing: {', '.join(missing)}"] if missing else [],
+        }
+
+    elif checkpoint_name == "post_merge":
+        # Cross-track consistency (only if both tracks ran)
+        theory_ran = state.get("theory_track_status") in ("completed", "in_progress")
+        experiment_ran = state.get("experiment_track_status") in ("completed", "in_progress")
+        if theory_ran and experiment_ran:
+            consistency = validate_cross_track_consistency(workspace_dir=workspace)
+            save_cross_track_report(workspace, consistency)
+            results["cross_track_consistency"] = {
+                "is_valid": consistency["is_valid"],
+                "errors": [
+                    f"{i['severity']}: {i['description']}"
+                    for i in consistency.get("inconsistencies", [])
+                    if i.get("severity") in ("critical", "major")
+                ],
+            }
+
+    elif checkpoint_name == "post_analysis":
+        if state.get("math_enabled", False) and state.get("enforce_editorial_artifacts", False):
+            traceability = validate_claim_traceability(workspace_dir=workspace)
+            results["claim_traceability"] = {
+                "is_valid": traceability.get("is_valid", True),
+                "errors": traceability.get("errors", []),
+            }
+
+    # Build log entry
+    entry = {
+        "checkpoint": checkpoint_name,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "results": results,
+    }
+
+    prev_log = list(state.get("intermediate_validation_log") or [])
+    prev_log.append(entry)
+
+    # Print summary
+    for gate, result in results.items():
+        status = "PASS" if result.get("is_valid") else "WARN"
+        errors = result.get("errors", [])
+        msg = f"[intermediate:{checkpoint_name}] {gate}: {status}"
+        if errors:
+            msg += f" ({'; '.join(errors[:2])})"
+        print(msg)
+
+    return {"intermediate_validation_log": prev_log}
 
 
 def classify_review_fixes(workspace_dir: str) -> str:

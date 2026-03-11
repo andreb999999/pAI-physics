@@ -39,10 +39,15 @@ from .agents import (
     build_track_merge_node,
     build_writeup_node,
 )
+from .milestone_report import (
+    generate_milestone_report,
+    wait_for_human_response,
+)
 from .pdf_summary import with_pdf_summary
 from .state import ResearchState
 from .workflow_utils import (
     followup_decision_requires_loop,
+    run_intermediate_validation,
     run_validation_gates,
     safe_int,
 )
@@ -283,6 +288,80 @@ def build_novelty_gate_node(workspace_dir: str) -> Any:
     return novelty_gate_node
 
 
+def build_milestone_gate_node(phase_name: str, workspace_dir: str) -> Any:
+    """Build a milestone gate node that generates a report and optionally pauses.
+
+    When ``enable_milestone_gates`` is True in state, the node blocks until a
+    human responds via ``POST /milestone_response`` or the timeout expires.
+    When disabled, it generates the PDF report but does not pause.
+    """
+
+    # Map milestone phase names to intermediate validation checkpoint names
+    _PHASE_TO_CHECKPOINT = {
+        "research_plan": None,           # no validation yet at planning stage
+        "track_results": "post_merge",   # cross-track consistency
+        "analysis": "post_analysis",     # early claim traceability
+        "review": None,                  # final validation handles this
+    }
+
+    def milestone_gate_node(state: dict) -> dict:
+        # Run intermediate validation if applicable for this phase
+        checkpoint = _PHASE_TO_CHECKPOINT.get(phase_name)
+        validation_update = {}
+        if checkpoint:
+            validation_update = run_intermediate_validation(state, checkpoint)
+
+        budget_status = None
+        budget_path = os.path.join(workspace_dir, "budget_state.json")
+        if os.path.exists(budget_path):
+            try:
+                with open(budget_path) as f:
+                    import json as _json
+                    bd = _json.load(f)
+                total = bd.get("total_usd", bd.get("total_cost_usd"))
+                limit = bd.get("usd_limit")
+                if total is not None and limit is not None:
+                    budget_status = f"Budget: ${total:.2f} / ${limit:.2f} ({total / limit * 100:.0f}%)"
+                elif total is not None:
+                    budget_status = f"Budget spent: ${total:.2f}"
+            except Exception:
+                pass
+
+        # Merge validation log into state before generating report
+        # so the milestone report can display intermediate results
+        merged_state = {**state, **validation_update}
+
+        report_path = generate_milestone_report(
+            phase=phase_name,
+            state=merged_state,
+            workspace_dir=workspace_dir,
+            budget_status=budget_status,
+        )
+
+        prev_reports = list(state.get("milestone_reports") or [])
+        if report_path:
+            prev_reports.append(report_path)
+
+        update: dict = {"milestone_reports": prev_reports}
+        update.update(validation_update)
+
+        if state.get("enable_milestone_gates"):
+            timeout = state.get("milestone_timeout", 3600)
+            feedback = wait_for_human_response(timeout=timeout)
+            if feedback:
+                update["human_feedback"] = feedback
+                action = feedback.get("action", "approve")
+                if action == "modify":
+                    update["agent_task"] = feedback.get("feedback", "")
+                elif action == "abort":
+                    update["finished"] = True
+
+        return update
+
+    milestone_gate_node.__name__ = f"milestone_{phase_name}"
+    return milestone_gate_node
+
+
 def novelty_router(state: ResearchState) -> str:
     """Route based on novelty gate decision."""
     return state.get("current_agent") or "literature_review_agent"
@@ -456,6 +535,8 @@ def build_research_graph(
     counsel_models: Optional[List[Any]] = None,
     summary_model_id: Optional[str] = "claude-sonnet-4-6",
     tree_search_config: Optional[Any] = None,
+    enable_milestone_gates: bool = False,
+    adversarial_verification: bool = False,
 ):
     """
     Build and compile the full LangGraph research pipeline.
@@ -507,6 +588,7 @@ def build_research_graph(
                 counsel_models=counsel_models,
                 summary_model_id=summary_model_id,
                 tree_config=tree_search_config,
+                adversarial_verification=adversarial_verification,
             )
         else:
             theory_subgraph = build_theory_track_subgraph(
@@ -517,13 +599,27 @@ def build_research_graph(
                 summary_model_id=summary_model_id,
             )
         theory_track_node = build_track_subgraph_node(theory_subgraph, "theory_track_status")
-    experiment_subgraph = build_experiment_track_subgraph(
-        model=model,
-        workspace_dir=workspace_dir,
-        authorized_imports=authorized_imports,
-        counsel_models=counsel_models,
-        summary_model_id=summary_model_id,
-    )
+    if tree_search_config and getattr(tree_search_config, "enabled", False):
+        from consortium.tree_search.experiment_tree_integration import (
+            build_tree_search_experiment_track,
+        )
+        experiment_subgraph = build_tree_search_experiment_track(
+            model=model,
+            workspace_dir=workspace_dir,
+            authorized_imports=authorized_imports,
+            counsel_models=counsel_models,
+            summary_model_id=summary_model_id,
+            tree_config=tree_search_config,
+            adversarial_verification=adversarial_verification,
+        )
+    else:
+        experiment_subgraph = build_experiment_track_subgraph(
+            model=model,
+            workspace_dir=workspace_dir,
+            authorized_imports=authorized_imports,
+            counsel_models=counsel_models,
+            summary_model_id=summary_model_id,
+        )
 
     nodes: dict[str, Any] = {
         "ideation_agent": _wrap(build_ideation_node(model, workspace_dir, authorized_imports, **counsel_kwargs), "ideation_agent"),
@@ -543,6 +639,11 @@ def build_research_graph(
         "reviewer_agent": _wrap(build_reviewer_node(model, workspace_dir, authorized_imports, **counsel_kwargs), "reviewer_agent"),
         "validation_gate": build_validation_gate_node(),
         "novelty_gate": build_novelty_gate_node(workspace_dir),
+        # Milestone gates — generate structured reports; optionally pause for human input
+        "milestone_research_plan": build_milestone_gate_node("research_plan", workspace_dir),
+        "milestone_track_results": build_milestone_gate_node("track_results", workspace_dir),
+        "milestone_analysis": build_milestone_gate_node("analysis", workspace_dir),
+        "milestone_review": build_milestone_gate_node("review", workspace_dir),
     }
 
     graph = StateGraph(ResearchState)
@@ -560,12 +661,24 @@ def build_research_graph(
         },
     )
     graph.add_edge("literature_review_agent", "research_planner_agent")
-    graph.add_conditional_edges("research_planner_agent", track_router)
+
+    # Milestone 1: after research_planner, before track execution
+    graph.add_edge("research_planner_agent", "milestone_research_plan")
+    graph.add_conditional_edges("milestone_research_plan", track_router)
+
     graph.add_edge("theory_track", "track_merge")
     graph.add_edge("experiment_track", "track_merge")
-    graph.add_edge("track_merge", "synthesis_literature_review_agent")
+
+    # Milestone 2: after track_merge, before synthesis
+    graph.add_edge("track_merge", "milestone_track_results")
+    graph.add_edge("milestone_track_results", "synthesis_literature_review_agent")
+
     graph.add_edge("synthesis_literature_review_agent", "results_analysis_agent")
-    graph.add_edge("results_analysis_agent", "followup_gate")
+
+    # Milestone 3: after results_analysis, before followup decision
+    graph.add_edge("results_analysis_agent", "milestone_analysis")
+    graph.add_edge("milestone_analysis", "followup_gate")
+
     graph.add_conditional_edges(
         "followup_gate",
         followup_router,
@@ -577,7 +690,11 @@ def build_research_graph(
     graph.add_edge("resource_preparation_agent", "writeup_agent")
     graph.add_edge("writeup_agent", "proofreading_agent")
     graph.add_edge("proofreading_agent", "reviewer_agent")
-    graph.add_edge("reviewer_agent", "validation_gate")
+
+    # Milestone 4: after reviewer, before validation gate
+    graph.add_edge("reviewer_agent", "milestone_review")
+    graph.add_edge("milestone_review", "validation_gate")
+
     graph.add_conditional_edges(
         "validation_gate",
         validation_router,

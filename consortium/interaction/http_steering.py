@@ -67,6 +67,22 @@ def add_http_steering(
                     "queue_depth": self.queue.qsize(),
                 }).encode()
                 self._respond(200, body)
+            elif self.path == "/milestone":
+                from consortium.milestone_report import get_milestone_status
+                body = json.dumps(get_milestone_status()).encode()
+                self._respond(200, body)
+            elif self.path == "/budget":
+                # Campaign budget endpoint — reads from env-specified campaign dir
+                import os as _os
+                campaign_dir = _os.environ.get("CAMPAIGN_BUDGET_DIR", "")
+                if campaign_dir:
+                    from consortium.campaign.budget_manager import CampaignBudgetManager
+                    usd_limit = float(_os.environ.get("CAMPAIGN_BUDGET_USD", "2000"))
+                    mgr = CampaignBudgetManager(campaign_dir, usd_limit)
+                    body = json.dumps(mgr.to_dict()).encode()
+                    self._respond(200, body)
+                else:
+                    self._respond(200, b'{"error":"no campaign budget configured"}')
             else:
                 self._respond(404, b'{"error":"not found"}')
 
@@ -75,6 +91,23 @@ def add_http_steering(
                 self.queue.put("interrupt")
                 _Handler._paused = True
                 print("[http_steering] Interrupt enqueued.")
+                self._respond(200, b'{"ok":true}')
+
+            elif self.path == "/milestone_response":
+                length = int(self.headers.get("Content-Length", 0))
+                raw = self.rfile.read(length)
+                try:
+                    payload = json.loads(raw)
+                    action = payload.get("action", "").strip().lower()
+                    if action not in ("approve", "modify", "abort"):
+                        raise ValueError(f"action must be 'approve', 'modify', or 'abort', got '{action}'")
+                except (json.JSONDecodeError, ValueError) as e:
+                    self._respond(400, json.dumps({"error": str(e)}).encode())
+                    return
+
+                from consortium.milestone_report import set_milestone_response
+                set_milestone_response(payload)
+                print(f"[http_steering] Milestone response: {action}")
                 self._respond(200, b'{"ok":true}')
 
             elif self.path == "/instruction":

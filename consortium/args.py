@@ -289,4 +289,34 @@ Examples:
              "'all_nodes' (default, maximum quality), 'final_only', 'by_depth', 'by_node_type'.",
     )
 
+    # -----------------------------------------------------------------
+    # Adversarial verification
+    # -----------------------------------------------------------------
+    parser.add_argument(
+        "--adversarial-verification",
+        action="store_true",
+        default=False,
+        help="Enable adversarial verification: after cooperative verifiers pass, "
+             "run a hostile red-team verifier that tries to break proofs and experiments. "
+             "Branches only succeed if the adversarial verifier finds no CRITICAL issues.",
+    )
+
+    # -----------------------------------------------------------------
+    # Milestone gates (human-in-the-loop)
+    # -----------------------------------------------------------------
+    parser.add_argument(
+        "--enable-milestone-gates",
+        action="store_true",
+        default=False,
+        help="Pause the pipeline at strategic milestone points (after research plan, "
+             "track merge, results analysis, reviewer) and wait for human input via HTTP.",
+    )
+
+    parser.add_argument(
+        "--milestone-timeout",
+        type=int,
+        default=3600,
+        help="Seconds to wait for human response at milestone gates before auto-proceeding (default: 3600).",
+    )
+
     return parser.parse_args()

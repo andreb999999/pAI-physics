@@ -23,6 +23,10 @@ from .review_verdict_validation import validate_review_verdict
 from .math_acceptance_validation import validate_math_acceptance
 from .paper_traceability_validation import validate_claim_traceability
 from .paper_quality_validation import validate_paper_quality
+from .cross_track_validation import (
+    validate_cross_track_consistency,
+    save_cross_track_report,
+)
 
 __all__ = [
     "AgentSupervisionManager",
@@ -39,4 +43,6 @@ __all__ = [
     "validate_math_acceptance",
     "validate_claim_traceability",
     "validate_paper_quality",
+    "validate_cross_track_consistency",
+    "save_cross_track_report",
 ]

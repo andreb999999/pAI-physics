@@ -62,7 +62,14 @@ After the run, look in `results/consortium_<timestamp>/` for:
 - [Resume and Stage-Based Resume](#resume-and-stage-based-resume)
 - [Stable Task Templates](#stable-task-templates)
 - [Live Steering During a Run](#live-steering-during-a-run)
-- [OpenClaw / Campaign Orchestration](#openclaw-campaign-orchestration)
+- [OpenClaw Campaign Orchestration](#openclaw-campaign-orchestration)
+  - [Stage State Machine](#stage-state-machine)
+  - [Autonomous Repair Agent](#autonomous-repair-agent)
+  - [Memory Distillation](#memory-distillation)
+  - [Campaign Budget Management](#campaign-budget-management)
+  - [Notifications](#notifications)
+  - [Campaign Stage DAG](#campaign-stage-dag)
+  - [SLURM / HPC Deployment](#slurm--hpc-deployment)
 - [CLI Reference](#cli-reference)
 - [Understanding Outputs](#understanding-outputs)
 - [Quality Gates and Artifact Contracts](#quality-gates-and-artifact-contracts)
@@ -181,10 +188,10 @@ flowchart TD
     litReview --> planner[ResearchPlannerAgent]
     planner --> trackRouter{TrackRouter}
 
-    subgraph theoryTrack [TheoryTrack]
+    subgraph theoryTrack ["TheoryTrack (--enable-math-agents)"]
         mathLit[MathLiterature]
         mathProp[MathProposer]
-        mathProver[MathProver]
+        mathProver["MathProver\n(or TreeSearch controller)"]
         mathRigorous[MathRigorousVerifier]
         mathEmpirical[MathEmpiricalVerifier]
         proofTrans[ProofTranscription]
@@ -215,13 +222,16 @@ flowchart TD
     reviewer --> validationGate{ValidationGate}
     validationGate -->|pass| endNode((END))
     validationGate -->|fail| writeup
+
+    classDef counselNode stroke:#6366f1,stroke-width:2px,stroke-dasharray:5
+    class ideation,litReview,planner,mathLit,mathProp,mathProver,mathRigorous,mathEmpirical,proofTrans,expLit,expDesign,expExec,expVerify,expTrans,synthLit,resultsAnalysis,resourcePrep,writeup,proofread,reviewer counselNode
 ```
 
 If the planner selects no execution tracks, the graph falls through directly to `track_merge`, then continues through synthesis and results analysis.
 
-When counsel is enabled, each specialist node runs multiple independent model executions, then a debate + synthesis round before promoting consensus artifacts.
+**Counsel mode** (`--enable-counsel`): Nodes with dashed purple borders run multi-model debate when counsel is enabled. Each specialist node runs four independent model executions (Opus, Sonnet, GPT-5.2, Gemini 3.0 Pro), then a debate + synthesis round before promoting consensus artifacts. See [Counsel Mode](#counsel-mode-multi-model-debate).
 
-When tree search is enabled (`--enable-tree-search`), the theory track replaces the linear prover stage with a tree search controller that explores multiple proof strategies in parallel (see [Agentic Tree Search](#agentic-tree-search)).
+**Tree search** (`--enable-tree-search`): In the theory track, the linear `MathProver` stage is replaced by a tree search controller that explores multiple proof strategies in parallel via DAG-layered best-first search. See [Agentic Tree Search](#agentic-tree-search).
 
 ## Quick Start
 
@@ -560,23 +570,48 @@ curl -s http://127.0.0.1:5002/status
 
 ## OpenClaw Campaign Orchestration
 
-OpenClaw is an external scheduler/orchestrator for running `consortium` as a multi-stage campaign. In practice, OpenClaw (or cron) repeatedly calls `scripts/campaign_heartbeat.py`, and that heartbeat script manages stage launches, completion checks, and transitions.
+OpenClaw is the campaign orchestrator for running `consortium` as a multi-stage research pipeline. It (or cron, or a SLURM heartbeat loop) repeatedly calls `scripts/campaign_heartbeat.py`, which manages stage launches, artifact validation, cross-stage memory distillation, autonomous failure repair, budget tracking, and push notifications. For the full guide on campaign configuration, task file authoring, and failure recovery, see [`OpenClaw_Use_Guide.md`](OpenClaw_Use_Guide.md).
+
+### Campaign Lifecycle
 
 ```mermaid
 flowchart TD
-    openClaw["OpenClaw / cron"] -->|"every N min"| heartbeat["campaign_heartbeat.py"]
-    heartbeat -->|"subprocess"| launcher["launch_multiagent.py"]
-    heartbeat <-->|"read/write"| statusFile["campaign_status.json"]
-    launcher -->|"artifacts"| stageWorkspace["stage workspace"]
+    scheduler["SLURM heartbeat loop / cron"] -->|"every 30 min"| heartbeat["campaign_heartbeat.py"]
+    heartbeat <-->|"read / write"| statusFile[("campaign_status.json")]
+
+    heartbeat --> checkStage{"Stage\nin progress?"}
+    checkStage -->|"PID alive"| wait["Wait for next tick"]
+    checkStage -->|"PID dead"| checkArtifacts{"Required artifacts\npresent?"}
+
+    checkArtifacts -->|"yes"| markComplete["Mark COMPLETED"]
+    markComplete --> distill["distill_stage_memory()\n→ memory/stage_summary.md"]
+    distill --> launchNext
+
+    checkArtifacts -->|"no"| markFailed["Mark FAILED"]
+    markFailed --> repairCheck{"Repair\nenabled?"}
+    repairCheck -->|"yes"| repair["Repair Agent\n(Claude Code)"]
+    repair -->|"fix applied"| relaunch["Reset to PENDING\n+ relaunch"]
+    repair -->|"repair failed"| escalate["Escalate to human\n+ notify"]
+    repairCheck -->|"no"| escalate
+
+    heartbeat --> launchNext{"Next PENDING\nstage ready?"}
+    launchNext -->|"yes"| buildPrompt["Build enriched prompt\n(task + memory summaries)"]
+    buildPrompt --> launch["launch_multiagent.py\n(Consortium 24-agent pipeline)"]
+    launchNext -->|"no"| wait
+
+    heartbeat -.->|"on events"| notify["Notifications\n(ntfy / Slack / Telegram / SMS)"]
 ```
 
 ### Integration Surfaces
 
-1. **Campaign heartbeat (scheduling + stage advancement)**  
+1. **Campaign heartbeat (scheduling + stage advancement)**
    OpenClaw calls `scripts/campaign_heartbeat.py` on an interval.
 
-2. **HTTP steering API (mid-run control)**  
+2. **HTTP steering API (mid-run control)**
    While a stage is running, OpenClaw can pause and inject instructions through the REST API (`/interrupt`, `/instruction`, `/status`) on `callback_port + 1` (default `5002`).
+
+3. **Autonomous repair agent (failure recovery)**
+   When a stage fails, the heartbeat can deploy a Claude Code agent to diagnose and fix the issue before escalating to a human. See [Autonomous Repair Agent](#autonomous-repair-agent).
 
 ### Heartbeat Commands
 
@@ -590,7 +625,7 @@ python scripts/campaign_heartbeat.py --campaign campaign.yaml
 # Show status
 python scripts/campaign_heartbeat.py --campaign campaign.yaml --status
 
-# Optional: force advance
+# Optional: force advance past a stuck/failed stage
 python scripts/campaign_heartbeat.py --campaign campaign.yaml --force-advance
 ```
 
@@ -600,8 +635,131 @@ python scripts/campaign_heartbeat.py --campaign campaign.yaml --force-advance
 |---|---|---|
 | `0` | Campaign complete | Stop scheduling |
 | `1` | In progress / no action this tick | Keep scheduling |
-| `2` | Stage failed | Pause scheduling and alert operator |
+| `2` | Stage failed (repair exhausted) | Pause scheduling and alert operator |
 | `3` | Stage advanced this tick | Continue scheduling (often with a shorter next interval) |
+
+### Stage State Machine
+
+Each campaign stage transitions through a state machine tracked in `campaign_status.json`. The `repairing` state is entered when the autonomous repair agent is attempting to fix a failed stage.
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending
+    pending --> in_progress : heartbeat launches stage
+    in_progress --> completed : PID exits + artifacts present
+    in_progress --> failed : PID exits + artifacts missing
+    failed --> repairing : repair agent deployed
+    repairing --> pending : repair succeeded
+    repairing --> failed : repair failed
+    failed --> pending : manual reset
+    completed --> [*]
+    failed --> [*] : max attempts exceeded
+```
+
+| State | Meaning |
+|---|---|
+| `pending` | Waiting for dependencies to complete or for first launch |
+| `in_progress` | Stage subprocess is running (PID tracked) |
+| `completed` | Process exited and all required artifacts are present |
+| `failed` | Process exited but required artifacts are missing |
+| `repairing` | Autonomous repair agent is attempting to fix the failure |
+
+States are defined as constants in `consortium/campaign/status.py`.
+
+### Autonomous Repair Agent
+
+When a stage fails, the heartbeat can deploy a **Claude Code coding agent** (`claude -p`) to diagnose and fix the issue autonomously. The repair agent uses a two-phase plan-then-execute flow with an LLM judge gate between phases.
+
+```mermaid
+flowchart LR
+    fail["Stage FAILED"] --> plan["Phase 1: Plan\n(read-only Claude Code)"]
+    plan --> review{"LLM Judge Review\nscore >= 7/10?"}
+    review -->|"approved"| execute["Phase 2: Execute\n(full-access Claude Code)"]
+    review -->|"rejected"| escalate["Escalate / retry"]
+    execute --> recheck{"Artifacts\nnow present?"}
+    recheck -->|"yes"| relaunch["Mark PENDING\n+ relaunch stage"]
+    recheck -->|"no"| retry{"Attempts\nremaining?"}
+    retry -->|"yes"| plan
+    retry -->|"no"| human["Escalate to human"]
+```
+
+**Phase 1 (Plan)**: Claude Code runs in read-only mode (`--permission-mode plan`) with only `Read`, `Glob`, `Grep`, and `Bash` tools. It produces a structured diagnosis and repair plan.
+
+**Plan Review**: An LLM judge (via litellm) scores the plan on 5 dimensions (correctness, completeness, safety, minimality, feasibility). Plans scoring below `min_review_score` (default 7/10) are rejected.
+
+**Phase 2 (Execute)**: If approved, Claude Code runs with full access (`--permission-mode bypassPermissions`) to implement the approved plan.
+
+**Launcher modes**: `local` runs Claude Code as a blocking subprocess (~10 min max). `slurm` submits the repair as a SLURM batch job and polls for completion on subsequent heartbeat ticks via a JSON sentinel file.
+
+Configuration (in `campaign.yaml`):
+
+```yaml
+repair:
+  enabled: true
+  max_attempts: 2               # repair tries per stage before escalating
+  launcher: slurm               # "local" (blocking) or "slurm" (async)
+  model: claude-opus-4-6        # strongest model for repair
+  effort: max                   # maximum thinking effort
+  two_phase: true               # plan→review→execute flow
+  min_review_score: 7           # plan must score >= 7/10 to proceed
+  budget_usd: 10.0              # per-attempt spend cap
+```
+
+Full configuration schema is in `consortium/campaign/spec.py` (`RepairConfig` dataclass).
+
+### Memory Distillation
+
+After each stage completes, `distill_stage_memory()` reads key output files from the workspace and writes a concise markdown summary to `campaign_dir/memory/<stage_id>_summary.md`. The summary includes excerpts of required artifacts (up to 4000 chars each), files from `memory_dirs` (up to 1500 chars, 20 files max), budget totals, token counts, and pipeline status.
+
+This summary is automatically prepended to the next stage's task prompt via `context_from`, giving downstream agents cross-stage context without inflating their full context windows. Controlled by the `memory_dirs` and `context_from` fields in stage definitions — see [`OpenClaw_Use_Guide.md`](OpenClaw_Use_Guide.md) for details.
+
+### Campaign Budget Management
+
+`CampaignBudgetManager` tracks total spend across all stages by summing per-stage `budget_state.json` files. As the campaign approaches its budget limit, the manager recommends progressively reduced rigor levels to prevent budget exhaustion before completion.
+
+| Rigor Level | Counsel Models | Debate Rounds | Tree Breadth | Budget Spent |
+|---|---|---|---|---|
+| `maximum` | 4 (all frontier) | 3 | 3 | < 50% |
+| `high` | 4 | 2 | 2 | 50–70% |
+| `standard` | 2 (Opus + Sonnet) | 2 | 2 | 70–85% |
+| `reduced` | 1 (Opus only) | 0 | 1 (linear) | 85–95% |
+| `minimal` | 0 (no counsel) | 0 | 1 | >= 95% |
+
+Profiles are defined in `consortium/campaign/budget_manager.py` (`DEGRADATION_PROFILES`). Each profile also controls compute tier, adversarial verification, and milestone PDF generation.
+
+### Notifications
+
+The campaign heartbeat dispatches push notifications on stage launch, completion, failure, repair attempts, and (optionally) every heartbeat tick. All channels are optional and notification failures are silently swallowed — they never crash the campaign.
+
+| Channel | Config field | Notes |
+|---|---|---|
+| ntfy.sh | `ntfy_topic` | Push notifications via the ntfy app; default server `https://ntfy.sh` |
+| Slack | `slack_webhook` | Incoming webhook URL (or `${ENV_VAR}` reference) |
+| Telegram | `telegram_bot_token` + `telegram_chat_id` | Bot API |
+| SMS (Twilio) | `twilio_account_sid` + `sms_to_number` | Via Twilio REST API |
+
+See [`OpenClaw_Use_Guide.md`](OpenClaw_Use_Guide.md) for detailed setup instructions for each channel.
+
+### Campaign Stage DAG
+
+Stages form a dependency DAG defined by `depends_on` and `context_from` in `campaign.yaml`. The current muon campaign has this structure:
+
+```mermaid
+flowchart LR
+    theory1["theory1\n(math agents)"]
+    experiments["experiments"]
+    theory2["theory2\n(scaling theory)"]
+    paper["paper\n(PDF required)"]
+
+    theory1 -->|"depends_on + context_from"| experiments
+    experiments -->|"depends_on + context_from"| theory2
+    theory1 -->|"context_from"| theory2
+    theory1 -->|"depends_on"| paper
+    experiments -->|"depends_on + context_from"| paper
+    theory2 -->|"depends_on + context_from"| paper
+```
+
+`depends_on` is an ordering gate — the downstream stage will not launch until all listed stages are `completed`. `context_from` additionally resumes the upstream workspace and injects its memory summary into the task prompt.
 
 ### HTTP Steering Quick Reference
 
@@ -618,19 +776,27 @@ curl -s -X POST http://127.0.0.1:5002/instruction \
 curl -s http://127.0.0.1:5002/status
 ```
 
-For complete campaign configuration, task file authoring, failure recovery, and notification setup, see `OpenClaw_Use_Guide.md`.
+### SLURM / HPC Deployment
 
-The included `campaign.yaml` may contain legacy `--pipeline-mode` args; they are accepted for compatibility but ignored by current launcher behavior.
+The `scripts/campaign_heartbeat_slurm.sh` script runs as a 7-day SLURM job on `pi_tpoggio` that ticks every 30 minutes (332 ticks with a 2-hour buffer before wall-time expiry). It tolerates up to 3 consecutive failure ticks to allow repair agents time to fix issues before giving up.
 
-OpenClaw sequencing is at the **campaign/workspace** level. Each launched run still uses the internal single-run graph documented above, including parallel track routing, follow-up replanning, and the final validation loop.
-
-### SLURM / HPC
-
-Use `scripts/launch_multiagent_slurm.sh` as a template:
+All cluster-specific settings — partitions, GPU types, conda paths, module loads — are centralized in `engaging_config.yaml`. The heartbeat runs on a CPU partition; experiment GPU jobs and repair agents are submitted as separate SLURM jobs.
 
 ```bash
+# Submit the 7-day heartbeat loop on Engaging
+sbatch scripts/campaign_heartbeat_slurm.sh
+
+# Check heartbeat job status
+squeue -u $USER --name=openclaw-heartbeat
+
+# For individual stage GPU jobs, use the campaign runner's SLURM integration
+# or submit manually:
 sbatch scripts/launch_multiagent_slurm.sh [optional_launch_args]
 ```
+
+See `engaging_config.yaml` for cluster partition/resource definitions and [`OpenClaw_Use_Guide.md`](OpenClaw_Use_Guide.md) for scheduling alternatives (cron, shell loop).
+
+OpenClaw sequencing is at the **campaign/workspace** level. Each launched run still uses the internal single-run graph documented above, including parallel track routing, follow-up replanning, and the final validation loop.
 
 ## CLI Reference
 
@@ -846,7 +1012,7 @@ Major package areas:
 - `consortium/toolkits/ideation/`: idea generation, refinement, novelty checking, paper search
 - `consortium/toolkits/communication/`: user messaging
 - `consortium/tree_search/`: agentic tree search — DAG-layered best-first search for parallel proof strategies in the theory track (see [Agentic Tree Search](#agentic-tree-search))
-- `consortium/campaign/`: autonomous multi-stage campaign engine (spec, runner, memory, status, notifications)
+- `consortium/campaign/`: autonomous multi-stage campaign engine (spec, runner, memory, status, notifications, budget management, autonomous repair agent)
 - `consortium/interaction/`: TCP + HTTP steering
 - `consortium/external_tools/`: AI Scientist v2 integration for experiment execution
 

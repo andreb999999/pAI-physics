@@ -613,6 +613,10 @@ def main():
         )
 
     try:
+        enable_milestone_gates = getattr(args, "enable_milestone_gates", False)
+        milestone_timeout = getattr(args, "milestone_timeout", 3600)
+        adversarial_verification = getattr(args, "adversarial_verification", False)
+
         graph, checkpointer = build_research_graph(
             model=model,
             workspace_dir=results_base_dir,
@@ -628,7 +632,17 @@ def main():
             manager_max_steps=args.manager_max_steps if args.manager_max_steps else 50,
             counsel_models=counsel_models_list,
             tree_search_config=tree_search_config,
+            enable_milestone_gates=enable_milestone_gates,
+            adversarial_verification=adversarial_verification,
         )
+
+        if adversarial_verification:
+            print("Adversarial verification enabled — red-team verifiers will "
+                  "challenge proofs and experiments after cooperative verification passes.")
+
+        if enable_milestone_gates:
+            print(f"Milestone gates enabled (timeout={milestone_timeout}s). "
+                  f"POST /milestone_response to approve/modify/abort at each gate.")
 
         # Build initial state
         initial_state = {
@@ -665,6 +679,11 @@ def main():
             "tree_search_enabled": getattr(args, "enable_tree_search", False),
             "tree_state_path": None,
             "active_branch_id": None,
+            "milestone_reports": [],
+            "human_feedback": None,
+            "enable_milestone_gates": enable_milestone_gates,
+            "milestone_timeout": milestone_timeout,
+            "intermediate_validation_log": [],
             "finished": False,
         }
 
