@@ -229,7 +229,7 @@ flowchart TD
 
 If the planner selects no execution tracks, the graph falls through directly to `track_merge`, then continues through synthesis and results analysis.
 
-**Counsel mode** (`--enable-counsel`): Nodes with dashed purple borders run multi-model debate when counsel is enabled. Each specialist node runs four independent model executions (Opus, Sonnet, GPT-5.2, Gemini 3.0 Pro), then a debate + synthesis round before promoting consensus artifacts. See [Counsel Mode](#counsel-mode-multi-model-debate).
+**Counsel mode** (`--enable-counsel`): Nodes with dashed purple borders run multi-model debate when counsel is enabled. Each specialist node runs four independent model executions (Opus, Sonnet, GPT-5.4, Gemini 3.0 Pro), then a debate + synthesis round before promoting consensus artifacts. See [Counsel Mode](#counsel-mode-multi-model-debate).
 
 **Tree search** (`--enable-tree-search`): In the theory track, the linear `MathProver` stage is replaced by a tree search controller that explores multiple proof strategies in parallel via DAG-layered best-first search. See [Agentic Tree Search](#agentic-tree-search).
 
@@ -335,14 +335,13 @@ Model settings are resolved in this order:
 Current values in this repo:
 
 - `main_agents.model`: `claude-opus-4-6`
-- `main_agents.reasoning_effort`: `high`
-- `main_agents.verbosity`: `medium`
-- `main_agents.effort`: currently commented out in config
-- `run_experiment_tool.code_model`: `gpt-5.2`
-- `run_experiment_tool.feedback_model`: `claude-sonnet-4-6`
-- `run_experiment_tool.vlm_model`: `claude-sonnet-4-6`
+- `main_agents.effort`: `max`
+- `main_agents.budget_tokens`: `128000` (extended thinking)
+- `run_experiment_tool.code_model`: `claude-opus-4-6`
+- `run_experiment_tool.feedback_model`: `claude-opus-4-6`
+- `run_experiment_tool.vlm_model`: `claude-opus-4-6`
 - `run_experiment_tool.report_model`: `claude-opus-4-6`
-- `budget.usd_limit`: `600`
+- `budget.usd_limit`: `2000`
 - `counsel.enabled`: `true`
 - `counsel.max_debate_rounds`: `3`
 
@@ -896,7 +895,7 @@ results/consortium_YYYYMMDD_HHMMSS/
     <agent_name>/
       model_0_claude-opus-4-6/
       model_1_claude-sonnet-4-6/
-      model_2_gpt-5.2/
+      model_2_gpt-5.4/
       model_3_gemini-3.0-pro/
   tree_search_state.json             # when --enable-tree-search
   tree_branches/                     # when --enable-tree-search
@@ -1057,7 +1056,7 @@ Runtime and spend depend on task scope, enabled gates, model choice, and revisio
 | Tree search + counsel (all nodes) | $200–600 | 4–10 hrs | ~15-20x per claim; maximum quality |
 | Full paper campaign (3 stages) | $100–400 | 6–12 hrs | Via OpenClaw orchestration |
 
-> **Budget cap**: The default `.llm_config.yaml` cap is $600. Reduce `budget.usd_limit` for experiments.
+> **Budget cap**: The default `.llm_config.yaml` cap is $2000. Reduce `budget.usd_limit` for experiments.
 
 For counsel-heavy runs, monitor:
 
@@ -1075,10 +1074,10 @@ By default, four frontier models run independently:
 
 | Slot | Model | Provider | Notes |
 |------|-------|----------|-------|
-| 0 | `claude-opus-4-6` | Anthropic | Also serves as synthesis model |
-| 1 | `claude-sonnet-4-6` | Anthropic | |
-| 2 | `gpt-5.2` | OpenAI | `reasoning_effort=high` |
-| 3 | `gemini-3.0-pro` | Google | `thinking_budget=65536` |
+| 0 | `claude-opus-4-6` | Anthropic | `effort=max`; also serves as synthesis model |
+| 1 | `claude-sonnet-4-6` | Anthropic | `effort=max` |
+| 2 | `gpt-5.4` | OpenAI | `reasoning_effort=high` |
+| 3 | `gemini-3.0-pro` | Google | `thinking_budget=131072` |
 
 Custom model specs can be set in `.llm_config.yaml` under `counsel.models`.
 

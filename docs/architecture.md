@@ -113,10 +113,10 @@ Math artifacts live in `math_workspace/`:
 When counsel is enabled, each specialist stage runs as a parallel debate:
 
 ```
-                    ┌── model_1 (claude-opus-4-6) ──┐
-                    ├── model_2 (claude-sonnet-4-6) ─┤
-task ──→ stage  ──→│── model_3 (gpt-5.2)          ─├──→ synthesis ──→ workspace merge
-                    └── model_4 (gemini-2.5-pro)   ─┘
+                    ┌── model_0 (claude-opus-4-6) ──┐
+                    ├── model_1 (claude-sonnet-4-6) ─┤
+task ──→ stage  ──→│── model_2 (gpt-5.4)           ─├──→ synthesis ──→ workspace merge
+                    └── model_3 (gemini-3.0-pro)    ─┘
                            ↑ ThreadPoolExecutor ↑
                          (parallel execution)
 ```

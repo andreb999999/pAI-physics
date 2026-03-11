@@ -4,26 +4,21 @@
 main_agents:
   # Model for all main agents (Manager, Ideation, Experimentation, Writeup)
   model: claude-opus-4-6
-  # effort: max  # disabled — litellm 1.81.15 doesn't support effort param
-
-  # GPT-5 specific settings
-  reasoning_effort: high
-  verbosity: medium
+  effort: max
+  budget_tokens: 128000
 
 run_experiment_tool:
   # Models for RunExperimentTool (AI-Scientist-v2 subprocess)
-  code_model: gpt-5.2
-  feedback_model: claude-sonnet-4-6
-  vlm_model: claude-sonnet-4-6
+  code_model: claude-opus-4-6
+  feedback_model: claude-opus-4-6
+  vlm_model: claude-opus-4-6
   report_model: claude-opus-4-6
-  # GPT-5 specific settings
-  reasoning_effort: high  # minimal, low, medium, high
 
 # HARD COST CAP (requires pricing to be filled in)
 # If usd_limit is set, the system will stop once the running total reaches the limit.
 # IMPORTANT: You must provide accurate per-model prices to enforce the cap.
 budget:
-  usd_limit: 600
+  usd_limit: 2000
   hard_stop: true
   fail_closed: true
   pricing:
@@ -57,9 +52,11 @@ counsel:
   synthesis_model: claude-opus-4-6
   models:
     - model: claude-opus-4-6
+      effort: max
     - model: claude-sonnet-4-6
-    - model: gpt-5.2
+      effort: max
+    - model: gpt-5.4
       reasoning_effort: high
       verbosity: high
     - model: gemini-3.0-pro
-      thinking_budget: 65536
+      thinking_budget: 131072
