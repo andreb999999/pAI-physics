@@ -1,0 +1,78 @@
+Theory run for Muon scaling rules.
+
+This stage builds on completed theory1 (implicit regularization) and experiment1 (NanoGPT fair comparison).
+
+Advisor guidance:
+"Look into the question: does a scaling rule exist for Muon?
+Scaling rule means scaling between batch size and step size.
+E.g., for an increase in batch size, how much of an increase in step size must occur to get the same results (e.g., to get the same 1-step decrease in loss)?
+Critical batch size?"
+
+Literature search (IMPORTANT — do this first):
+- Search ArXiv for papers on batch size scaling laws for optimizers. Key terms: "critical batch size", "batch size scaling rule", "linear scaling rule SGD", "batch size learning rate scaling", "signSGD batch size".
+- Search for: "gradient noise scale" (McCandlish et al., 2018), "large batch training" scaling laws, "sign gradient noise", "majority vote gradient".
+- Search for any existing scaling analysis of Muon or sign-based optimizers.
+- Search for: "operator norm steepest descent scaling", "mirror descent batch size".
+- Search for empirical batch size scaling studies on transformer training (GPT-style models).
+- Search for: "learning rate warmup batch size interaction", "critical batch size transformers".
+- Download and analyze the most relevant papers. Use their frameworks (especially gradient noise scale / critical batch size framework) to structure your analysis of Muon.
+
+Goals:
+1) Investigate whether a batch-size/step-size scaling rule exists for the Muon optimizer.
+2) Formalize any scaling relationships as mathematical claims in a claim graph.
+3) Explore the notion of "critical batch size" for Muon — the batch size beyond which increasing batch size yields diminishing returns per sample.
+4) Connect scaling results back to the implicit regularization findings from theory1.
+
+Formal objectives:
+
+1) SCALING LAW DERIVATION — derive eta*(B) for Muon:
+   - For the Muon update W_{t+1} = W_t - eta * polar(grad_B L(W_t)) with batch size B:
+     a) If we double B, what happens to the optimal eta? Is there a simple scaling law eta(B)?
+     b) Key insight: polar factor has FIXED norm (||polar(G)||_F = sqrt(min(m,n)) exactly, independent of G).
+        Therefore increasing B improves the DIRECTION accuracy of the polar factor but does not change its magnitude.
+     c) How does the direction accuracy of polar(grad_B) scale with B? At what rate does polar(avg of B gradients) approach polar(full gradient)?
+     d) Does Muon follow sqrt(B) scaling (like signSGD) rather than linear scaling (like SGD)? Derive this rigorously.
+
+2) CRITICAL BATCH SIZE:
+   - Define B* for Muon: the batch size beyond which polar(avg_grad_B) ≈ polar(full_grad) with high probability.
+   - Derive a formula for B*_Muon in terms of problem parameters (matrix dimensions, gradient singular value gap, noise level).
+   - Compare B*_Muon with B*_SGD and B*_Adam. Is Muon's critical batch size larger or smaller?
+   - What are the practical implications? Does Muon benefit more or less from large batches than Adam?
+
+3) MAJORITY-VOTE INTERPRETATION:
+   - The sign/polar function applied to a sum of stochastic gradients can be interpreted as a majority vote on gradient directions.
+   - How does vote accuracy scale with B? Derive concentration bounds.
+   - Connect to signSGD literature on sign majority votes.
+
+4) EMPIRICAL VALIDATION using NanoGPT data from experiment1:
+   - Design and run a batch size sweep: B in {32, 64, 128, 256, 512, 1024}.
+   - At each B, find optimal learning rate via grid search (reuse experiment1's fairness protocol).
+   - Plot eta*(B) vs B for both Muon and AdamW on log-log scale.
+   - Verify: does Muon show sqrt(B) scaling while AdamW shows different behavior?
+   - Compute the gradient singular value gap gamma_g from NanoGPT training data at various training checkpoints.
+   - Use the derived formula to predict B*_Muon. Compare with empirically observed saturation point.
+   - Submit batch sweep training jobs via SLURM GPU (A100).
+
+5) REGULARIZATION-SCALING BRIDGE (connect to theory1):
+   - If theory1 established that L_Muon ≈ L + lambda_eff * ||W||_*, how does lambda_eff change with batch size B?
+   - Derive the dependence lambda_eff(B) theoretically.
+   - Validate empirically: measure nuclear norm of trained NanoGPT weights at different batch sizes.
+   - Does increasing batch size strengthen or weaken Muon's implicit nuclear norm regularization?
+
+Required claim graph additions (math_workspace/scaling_claims.json):
+- Assumptions: gradient noise model, batch sampling, sign stability conditions, singular value gap conditions.
+- Definitions: critical batch size for Muon, scaling rule, effective learning rate under polar factor, directional accuracy metric.
+- Lemmas: polar factor norm invariance (||polar(G)||_F = sqrt(m)), polar factor concentration under batching, sign majority-vote concentration, gradient noise scale for Muon.
+- Theorems: at least one main scaling relationship theorem (eta*(B) for Muon), critical batch size characterization, comparison with SGD/Adam scaling.
+
+Required outputs:
+- math_workspace/scaling_claims.json (formal claim graph for scaling results)
+- math_workspace/scaling_proofs/ (proof sketches and detailed derivations)
+- math_workspace/scaling_checks/ (numerical verification scripts and results)
+- batch_sweep_results.json (empirical batch size sweep data from NanoGPT)
+- scaling_empirical_validation.md (comparison of theoretical predictions with empirical observations)
+
+Execution guidance:
+- Use ALL available tools: ArXiv search (fetch_arxiv_papers), web search, paper search (Semantic Scholar), citation search, VLM document analysis for reading downloaded PDFs, math claim graph tools, proof workspace tools, Python code execution for numerical verification and batch sweep experiments.
+- If any tool fails, continue with remaining tools and still produce best-effort formal outputs.
+- Prioritize: (1) literature grounding on scaling laws, (2) scaling claim graph + proofs, (3) empirical batch sweep validation, (4) regularization-scaling bridge.

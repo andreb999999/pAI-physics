@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
+import zipfile
 from typing import Optional
 
 import requests
@@ -66,6 +68,7 @@ def notify_stage_complete(stage_id: str, workspace: str, config: NotificationCon
         config,
         level="success",
     )
+    notify_stage_pdfs(stage_id, workspace, config)
 
 
 def notify_stage_failed(stage_id: str, reason: str, config: NotificationConfig) -> None:
@@ -190,3 +193,96 @@ def _sms(message: str, account_sid: str, auth_token: str,
         resp.raise_for_status()
     except Exception as e:
         print(f"[campaign:notify] SMS delivery failed: {e}")
+
+
+def _telegram_document(
+    file_path: str, caption: str, bot_token: str, chat_id: str,
+) -> None:
+    """Send a document (file) via Telegram Bot API sendDocument."""
+    try:
+        url = f"https://api.telegram.org/bot{bot_token}/sendDocument"
+        with open(file_path, "rb") as f:
+            resp = requests.post(
+                url,
+                data={"chat_id": chat_id, "caption": caption[:1024]},
+                files={"document": (os.path.basename(file_path), f)},
+                timeout=120,
+            )
+        resp.raise_for_status()
+    except Exception as e:
+        print(f"[campaign:notify] Telegram document delivery failed: {e}")
+
+
+def _collect_stage_pdfs(workspace: str) -> list[str]:
+    """Collect all summary/report PDFs from a stage workspace."""
+    pdfs: list[str] = []
+
+    for subdir in ("stage_summaries", "milestone_reports"):
+        d = os.path.join(workspace, subdir)
+        if os.path.isdir(d):
+            for fname in sorted(os.listdir(d)):
+                if fname.endswith(".pdf"):
+                    pdfs.append(os.path.join(d, fname))
+
+    for special in ("final_paper.pdf", "claim_graph_summary.pdf"):
+        for parent in (workspace, os.path.join(workspace, "paper_workspace")):
+            candidate = os.path.join(parent, special)
+            if os.path.isfile(candidate):
+                pdfs.append(candidate)
+
+    return pdfs
+
+
+def _bundle_pdfs_to_zip(pdfs: list[str], stage_id: str) -> Optional[str]:
+    """Bundle PDF paths into a temporary zip. Returns zip path or None."""
+    if not pdfs:
+        return None
+    try:
+        tmp = tempfile.NamedTemporaryFile(
+            prefix=f"{stage_id}_summaries_", suffix=".zip", delete=False,
+        )
+        tmp_path = tmp.name
+        tmp.close()
+
+        with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for pdf_path in pdfs:
+                parent = os.path.basename(os.path.dirname(pdf_path))
+                arcname = f"{parent}/{os.path.basename(pdf_path)}" if parent else os.path.basename(pdf_path)
+                zf.write(pdf_path, arcname)
+
+        return tmp_path
+    except Exception as e:
+        print(f"[campaign:notify] Failed to create PDF zip bundle: {e}")
+        return None
+
+
+def notify_stage_pdfs(
+    stage_id: str, workspace: str, config: NotificationConfig,
+) -> None:
+    """Send stage summary PDFs as a zip to Telegram. Fail-safe."""
+    if not (config.telegram_bot_token and config.telegram_chat_id):
+        return
+
+    try:
+        pdfs = _collect_stage_pdfs(workspace)
+        if not pdfs:
+            print(f"[campaign:notify] No PDFs found for stage '{stage_id}' — skipping Telegram document.")
+            return
+
+        zip_path = _bundle_pdfs_to_zip(pdfs, stage_id)
+        if not zip_path:
+            return
+
+        try:
+            caption = (
+                f"[consortium] Stage '{stage_id}' complete — "
+                f"{len(pdfs)} PDF summary/report file(s)."
+            )
+            _telegram_document(zip_path, caption, config.telegram_bot_token, config.telegram_chat_id)
+        finally:
+            try:
+                os.unlink(zip_path)
+            except OSError:
+                pass
+    except Exception as e:
+        print(f"[campaign:notify] notify_stage_pdfs failed: {e}")

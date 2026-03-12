@@ -73,23 +73,61 @@ def build_stage_workspace(
     """
     Determine the workspace directory for the new stage.
 
-    If the stage has context_from dependencies, we --resume the workspace of
-    the first listed dependency so the new stage can see its artifacts directly.
-    Otherwise, create a fresh workspace under spec.workspace_root.
+    Each stage always gets its own isolated workspace under
+    spec.workspace_root/<stage_id>/.  If the stage has context_from
+    dependencies, required artifacts from those workspaces are *copied*
+    into the new workspace so the stage can reference them without
+    contaminating the upstream workspace.
 
     Returns an absolute path (the directory will be created if needed).
     """
-    if stage.context_from:
-        # Use the first listed context source as the resume workspace
-        primary_ctx = stage.context_from[0]
-        prior_workspace = status.stage_workspace(primary_ctx)
-        if prior_workspace and os.path.isdir(prior_workspace):
-            return os.path.abspath(prior_workspace)
+    import shutil
 
-    # Fresh workspace: workspace_root/<stage_id>/
+    # Always create a fresh, isolated workspace for this stage
     workspace = os.path.join(spec.workspace_root, stage.id)
     os.makedirs(workspace, exist_ok=True)
-    return os.path.abspath(workspace)
+    workspace = os.path.abspath(workspace)
+
+    # Copy artifacts from upstream stages into this workspace
+    for ctx_id in stage.context_from:
+        prior_workspace = status.stage_workspace(ctx_id)
+        if not prior_workspace or not os.path.isdir(prior_workspace):
+            continue
+
+        # Find the upstream stage's artifact list
+        ctx_stage = spec.stage(ctx_id)
+        if not ctx_stage:
+            continue
+
+        # Copy all required + optional artifacts from the upstream workspace
+        all_artifacts = (
+            ctx_stage.success_artifacts.get("required", [])
+            + ctx_stage.success_artifacts.get("optional", [])
+        )
+        for artifact in all_artifacts:
+            src = os.path.join(prior_workspace, artifact)
+            dst = os.path.join(workspace, artifact)
+
+            if artifact.endswith("/"):
+                # Directory artifact
+                src_dir = src.rstrip("/")
+                dst_dir = dst.rstrip("/")
+                if os.path.isdir(src_dir) and not os.path.exists(dst_dir):
+                    shutil.copytree(src_dir, dst_dir, dirs_exist_ok=True)
+            else:
+                # File artifact
+                if os.path.exists(src) and not os.path.exists(dst):
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    shutil.copy2(src, dst)
+
+        # Also copy memory_dirs if defined on the upstream stage
+        for mem_dir in ctx_stage.memory_dirs:
+            src_dir = os.path.join(prior_workspace, mem_dir).rstrip("/")
+            dst_dir = os.path.join(workspace, mem_dir).rstrip("/")
+            if os.path.isdir(src_dir) and not os.path.exists(dst_dir):
+                shutil.copytree(src_dir, dst_dir, dirs_exist_ok=True)
+
+    return workspace
 
 
 def _extract_flag_value(args: List[str], flag: str) -> Optional[str]:
@@ -313,6 +351,10 @@ def launch_stage_slurm(
 #SBATCH --output={slurm_log_dir}/{stage.id}_%j.out
 #SBATCH --error={slurm_log_dir}/{stage.id}_%j.err
 
+set -eo pipefail
+# P2-7: Fix PS1 unbound variable in non-interactive batch shells
+export PS1="${{PS1:-}}"
+
 echo "========================================"
 echo "Campaign Stage: {stage.id}"
 echo "Job ID: $SLURM_JOB_ID"
@@ -322,8 +364,20 @@ echo "========================================"
 
 module load {conda_module}
 source {conda_init}
+
+# P2-7: Clear all inherited conda envs to avoid PATH collision
+conda deactivate 2>/dev/null || true
 conda deactivate 2>/dev/null || true
 conda activate {conda_env_prefix}
+
+# P2-8: Validate python resolves to expected env
+EXPECTED_PYTHON="{conda_env_prefix}/bin/python"
+ACTUAL_PYTHON="$(which python)"
+if [ "$ACTUAL_PYTHON" != "$EXPECTED_PYTHON" ]; then
+    echo "WARNING: python resolves to $ACTUAL_PYTHON (expected $EXPECTED_PYTHON)"
+    echo "Forcing PATH to use correct env"
+    export PATH="{conda_env_prefix}/bin:$PATH"
+fi
 
 export CONSORTIUM_SLURM_ENABLED=1
 export ENGAGING_CONFIG="{config_path}"

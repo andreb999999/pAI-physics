@@ -60,7 +60,7 @@ def create_model(
         if budget_tokens is not None:
             model_kwargs["thinking"] = {"type": "enabled", "budget_tokens": budget_tokens}
         if effort is not None and model_name in {"claude-opus-4-6", "claude-sonnet-4-6"}:
-            model_kwargs["effort"] = effort
+            model_kwargs["reasoning_effort"] = effort
 
         base_model = ChatLiteLLM(
             model=f"anthropic/{model_name}",
@@ -102,7 +102,7 @@ def create_model(
         )
 
     elif "gemini" in model_name:
-        if "gemini-3.0-pro" in model_name:
+        if "gemini-3-pro" in model_name:
             model_kwargs["thinking_budget"] = 65536
         elif "gemini-2.5-pro" in model_name:
             model_kwargs["thinking_budget"] = 32768

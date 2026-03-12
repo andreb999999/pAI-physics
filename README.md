@@ -708,6 +708,45 @@ repair:
 
 Full configuration schema is in `consortium/campaign/spec.py` (`RepairConfig` dataclass).
 
+### Circuit Breakers
+
+The campaign system includes several circuit breakers to prevent death loops — situations where the heartbeat keeps ticking (burning API credits) without making progress.
+
+| Circuit Breaker | Config Field | Default | Behavior |
+|---|---|---|---|
+| **Idle tick limit** | `max_idle_ticks` | `6` | After N consecutive heartbeat ticks with no action (no stage launched, completed, or failed), the heartbeat exits with code 0 to stop the cron/loop. |
+| **Campaign wall time** | `max_campaign_hours` | `48` (0=unlimited) | Hard wall-time limit for the entire campaign. If elapsed time since the first stage launch exceeds this, the campaign halts. |
+| **Repair backoff** | `repair.backoff_base_seconds` / `backoff_max_seconds` | `60` / `900` | Exponential backoff between repair attempts: `min(base * 2^(N-1), cap)`. Prevents rapid-fire repair retries. |
+| **REPAIRING timeout** | `repair.repairing_timeout_seconds` | `3600` | If a stage stays in `REPAIRING` status longer than this (e.g., SLURM repair job hung), it is marked `FAILED`. |
+| **Review failure cap** | `repair.max_review_failures` | `3` | After N consecutive LLM review failures, plans are rejected instead of auto-approved. Prevents unreviewed repairs from executing repeatedly. |
+| **Counsel model timeout** | `counsel_model_timeout_seconds` | `600` | Per-model timeout for counsel sandbox and debate phases. Models that exceed this are skipped with a timeout label. |
+| **Escalation timeout** | `repair.escalation_timeout_minutes` | `60` | If a failed stage sits with repair exhausted for longer than this, the repair attempt counter is reset and repair retries with a fresh budget. Controlled by `auto_retry_on_timeout`. |
+| **Artifact content validation** | `artifact_validators` (per-stage) | — | Validates artifact content beyond file existence: `min_size_bytes`, `must_contain`, `must_not_contain`. Detects hollow artifacts (e.g., `"status": "not_executed"`). |
+
+Configuration example (`campaign_v2.yaml`):
+
+```yaml
+max_idle_ticks: 6
+max_campaign_hours: 48
+counsel_model_timeout_seconds: 600
+
+repair:
+  backoff_base_seconds: 60
+  backoff_max_seconds: 900
+  repairing_timeout_seconds: 3600
+  max_review_failures: 3
+  escalation_timeout_minutes: 60
+  auto_retry_on_timeout: true
+
+stages:
+  - id: experiment1
+    artifact_validators:
+      experiment_results.json:
+        min_size_bytes: 100
+        must_not_contain:
+          - '"status": "not_executed"'
+```
+
 ### Memory Distillation
 
 After each stage completes, `distill_stage_memory()` reads key output files from the workspace and writes a concise markdown summary to `campaign_dir/memory/<stage_id>_summary.md`. The summary includes excerpts of required artifacts (up to 4000 chars each), files from `memory_dirs` (up to 1500 chars, 20 files max), budget totals, token counts, and pipeline status.
@@ -779,7 +818,7 @@ curl -s http://127.0.0.1:5002/status
 
 ### SLURM / HPC Deployment
 
-The `scripts/campaign_heartbeat_slurm.sh` script runs as a 7-day SLURM job on `pi_tpoggio` that ticks every 30 minutes (332 ticks with a 2-hour buffer before wall-time expiry). It tolerates up to 3 consecutive failure ticks to allow repair agents time to fix issues before giving up.
+The `scripts/campaign_heartbeat_slurm.sh` script runs as a 7-day SLURM job on `pi_tpoggio` that ticks every 30 minutes (332 ticks with a 2-hour buffer before wall-time expiry). The heartbeat uses configurable circuit breakers (`max_idle_ticks`, `max_campaign_hours`) to detect and halt stuck campaigns — see [Circuit Breakers](#circuit-breakers) below.
 
 All cluster-specific settings — partitions, GPU types, conda paths, module loads — are centralized in `engaging_config.yaml`. The heartbeat runs on a CPU partition; experiment GPU jobs and repair agents are submitted as separate SLURM jobs.
 
@@ -1173,6 +1212,8 @@ consortium/tree_search/
     tree_persistence.py       # JSON save/load for tree state
     budget_allocator.py       # Per-branch budget distribution
     tree_visualization.py     # ASCII tree, Mermaid diagram, summary table
+    failure_memory.py         # Learning from failed branches to avoid repeating mistakes
+    experiment_tree_integration.py  # Tree search integration for experiment track
 ```
 
 ### Tree Search Artifacts

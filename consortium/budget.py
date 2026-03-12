@@ -174,6 +174,37 @@ class BudgetManager:
         return cost
 
 
+class BudgetTrackingCallback:
+    """LangChain callback that records token usage to BudgetManager.
+
+    When BudgetedLiteLLMModel must be unwrapped (e.g. for LangGraph's
+    create_react_agent which requires a BaseChatModel), attach this callback
+    via ``config={"callbacks": [cb]}`` to keep budget tracking active.
+    """
+
+    # Required by LangChain's callback protocol (BaseCallbackHandler interface)
+    raise_error = False
+    run_inline = False
+
+    def __init__(self, budget_manager: "BudgetManager", model_id: str = "unknown"):
+        self.budget_manager = budget_manager
+        self.model_id = model_id
+
+    def on_llm_end(self, response: Any, **kwargs: Any) -> None:
+        """Extract token usage from LLMResult and record it."""
+        llm_output = getattr(response, "llm_output", None) or {}
+        usage = llm_output.get("token_usage", {})
+        prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
+        completion_tokens = int(usage.get("completion_tokens", 0) or 0)
+        if prompt_tokens or completion_tokens:
+            model_id = llm_output.get("model_name") or self.model_id
+            self.budget_manager.record_usage(
+                model_id=model_id,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+            )
+
+
 class BudgetedLiteLLMModel:
     """
     Wrapper that enforces a BudgetManager on all model calls.

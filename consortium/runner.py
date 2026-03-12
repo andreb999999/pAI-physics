@@ -23,7 +23,7 @@ from .interaction.http_steering import add_http_steering
 from .prereqs import check_latex_prereqs
 from .supervision import sanitize_result_payload
 from .token_usage_tracker import initialize_run_token_tracker
-from .counsel import create_counsel_models, DEFAULT_COUNSEL_MODEL_SPECS
+from .counsel import create_counsel_models, DEFAULT_COUNSEL_MODEL_SPECS, set_counsel_timeout
 from .graph import build_pipeline_stages
 from .utils import create_model, build_research_graph, save_agent_memory
 
@@ -31,6 +31,19 @@ load_dotenv(override=True)
 
 litellm.drop_params = True
 litellm.completion = filter_model_params(litellm.completion)
+
+
+class _VertexErrorFilter:
+    """Suppress repetitive Vertex AI credential errors from litellm logs."""
+    _SUPPRESSED = frozenset([
+        "Failed to load vertex credentials",
+        "Google Cloud SDK not found",
+        "vertex_llm_base",
+    ])
+
+    def filter(self, record):
+        msg = str(getattr(record, "msg", ""))
+        return not any(s in msg for s in self._SUPPRESSED)
 
 _DEFAULT_TASK = (
     "Investigate whether training small language models with multiple paraphrased responses "
@@ -112,6 +125,36 @@ def _setup_optional_tracing():
         print("Set LANGCHAIN_TRACING_V2=true and LANGCHAIN_API_KEY to enable LangSmith tracing.")
 
 
+def _install_litellm_token_callback():
+    """Register a litellm success callback that writes every API call to the
+    private token ledger.  This is a belt-and-suspenders layer: even if
+    BudgetTrackingCallback or BudgetedLiteLLMModel is bypassed, every litellm
+    call gets recorded for cost accounting.
+    """
+    from .token_usage_tracker import record_token_usage
+
+    def _on_litellm_success(kwargs, response_obj, start_time, end_time):
+        try:
+            usage = getattr(response_obj, "usage", None)
+            if usage is None:
+                return
+            prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
+            completion_tokens = getattr(usage, "completion_tokens", 0) or 0
+            if not prompt_tokens and not completion_tokens:
+                return
+            model = kwargs.get("model") or getattr(response_obj, "model", "unknown")
+            record_token_usage(
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                source="litellm_callback",
+                model_id=model,
+            )
+        except Exception:
+            pass  # Never break the call chain
+
+    litellm.success_callback.append(_on_litellm_success)
+
+
 def _filter_installed_imports(import_names):
     available, missing = [], []
     for name in import_names:
@@ -139,7 +182,8 @@ def _resolve_model_settings(args, llm_config):
         reasoning_effort = cfg.get("reasoning_effort", reasoning_effort)
         verbosity = cfg.get("verbosity", verbosity)
         budget_tokens = cfg.get("budget_tokens", budget_tokens)
-        effort = cfg.get("effort", effort)
+        # Support both "effort" (legacy) and "reasoning_effort" config keys
+        effort = cfg.get("effort") or cfg.get("reasoning_effort", effort)
         print("Loaded config file settings for main agents")
 
     if args.model is not None:
@@ -413,7 +457,18 @@ def main():
     else:
         os.environ.setdefault("LITELLM_LOG", "WARNING")
 
+    # P2-9: Suppress non-fatal Vertex AI credential errors that flood stderr.
+    # These fire every time litellm tries (and fails) to use Vertex AI as a
+    # fallback provider. They are harmless but produce thousands of log lines.
+    import logging
+    logging.getLogger("LiteLLM").setLevel(logging.WARNING)
+    _vertex_logger = logging.getLogger("LiteLLM Router")
+    _vertex_logger.setLevel(logging.ERROR)
+    for _handler in logging.root.handlers[:]:
+        _handler.addFilter(_VertexErrorFilter())
+
     _setup_optional_tracing()
+    _install_litellm_token_callback()
 
     llm_config = load_llm_config()
 
@@ -598,6 +653,10 @@ def main():
             model_specs=model_specs,
         )
         os.environ["CONSORTIUM_COUNSEL_MAX_DEBATE_ROUNDS"] = str(max_debate_rounds)
+
+        # Set per-model counsel timeout from env or default (600s)
+        counsel_timeout = int(os.environ.get("COUNSEL_MODEL_TIMEOUT_SECONDS", "600"))
+        set_counsel_timeout(counsel_timeout)
 
     # Build tree search config if enabled
     tree_search_config = None

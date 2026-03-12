@@ -1,0 +1,88 @@
+Experiment run for Adam/AdamW vs Muon comparison on NanoGPT.
+
+Advisor guidance:
+"Take NanoGPT and do Adam vs. Muon. Check if AdamW or Adam is the right baseline.
+Figure out how to compare them fairly — do a literature review of the fairest comparison methodology here."
+
+Literature review (IMPORTANT — do this first):
+- Search ArXiv and Semantic Scholar for papers on fair optimizer comparison methodology. Key terms: "fair optimizer comparison", "optimizer benchmark methodology", "Adam vs SGD comparison", "hyperparameter tuning budget", "compute-matched comparison".
+- Search specifically for: "Muon optimizer" papers (Jordan et al.), "signSGD empirical", "AdamW vs Adam language model", "decoupled weight decay regularization" (Loshchilov & Hutter, 2019).
+- Search for NanoGPT benchmark papers and any existing Muon vs Adam comparisons.
+- Search for the original Muon optimizer paper and any follow-up benchmarks or ablations.
+- Download and analyze the most relevant papers to ground the fairness protocol in established methodology.
+- Determine from the literature whether Adam or AdamW is the correct baseline for language model training and document the rationale with citations.
+
+Experiment execution plan:
+
+1) SETUP — NanoGPT:
+   - Clone NanoGPT (karpathy/nanoGPT) into the workspace.
+   - Configure for the Shakespeare dataset FIRST as a fast sanity check (small dataset, trains in minutes).
+   - After sanity checks pass, configure and run the main comparison on OpenWebText (standard NanoGPT benchmark, ~50GB).
+   - If cloning fails due to network restrictions, download the repository contents via available tools.
+
+2) IMPLEMENT MUON OPTIMIZER:
+   - Create a PyTorch Muon optimizer class compatible with NanoGPT's training loop.
+   - Muon update rule:
+     a) Compute gradient G of loss w.r.t. weight matrix W.
+     b) Compute the polar factor of G via Newton-Schulz iterations:
+        Initialize X_0 = G / ||G||_F, then iterate 5 times:
+        X_{k+1} = 1.5 * X_k - 0.5 * X_k @ X_k^T @ X_k
+     c) Apply momentum: m_t = beta * m_{t-1} + X_k (the polar factor)
+     d) Update: W_{t+1} = W_t - eta * m_t
+   - Handle non-matrix parameters (biases, LayerNorm weights/biases, embeddings) with standard Adam/AdamW — Muon's polar decomposition is only meaningful for 2D weight matrices.
+   - Ensure the implementation is numerically stable (handle zero gradients, small matrices).
+
+3) FAIR COMPARISON PROTOCOL (literature-grounded):
+   - Adam vs AdamW baseline choice: determine from literature which is correct for LM training.
+     Document the rationale with citations. (Expected answer: AdamW, per Loshchilov & Hutter 2019.)
+   - Compute matching: ensure all optimizers process the same number of tokens (same total FLOPs).
+   - Hyperparameter search with EQUAL budget per optimizer:
+     - AdamW grid: lr in {1e-4, 3e-4, 1e-3, 3e-3}, weight_decay in {0, 0.01, 0.1}
+     - Muon grid: lr in {1e-4, 3e-4, 1e-3, 3e-3} (no explicit weight decay — nuclear norm implicit regularization replaces it)
+     - Adam grid (if comparing): same as AdamW but with coupled weight decay
+   - Learning rate schedule: cosine decay with linear warmup (standard for NanoGPT).
+   - Fixed across all runs: model architecture, dataset, batch size, sequence length, number of training tokens.
+   - Metrics to track:
+     - Train loss (per step and smoothed)
+     - Validation loss / perplexity
+     - Wall-clock time per step and total training time
+     - Peak GPU memory usage
+   - Document any fairness pitfalls identified from literature and how the protocol avoids them.
+
+4) RUN TRAINING:
+   - Submit training jobs via SLURM GPU jobs (A100 GPUs on MIT Engaging cluster).
+   - Shakespeare runs: quick sanity checks, ~30 min each. Run all hyperparameter configs.
+   - OpenWebText runs: main comparison, full training to convergence. Run best configs from Shakespeare + a few exploratory ones.
+   - Save checkpoints at regular intervals for post-hoc analysis.
+
+5) NUCLEAR NORM ANALYSIS (connect to theory1's implicit regularization predictions):
+   - At each saved checkpoint during training, compute:
+     a) Nuclear norm ||W||_* of all 2D weight matrices (attention Q, K, V, O projections; MLP up/down projections)
+     b) Effective rank of each weight matrix: rank_eff = ||W||_F^2 / ||W||_op^2
+     c) L1/L2 ratio of singular values (sparsity proxy)
+     d) Top-k singular value concentration
+   - Compare Muon vs AdamW trajectories:
+     - Does Muon consistently produce lower nuclear norm? (Predicted by theory1)
+     - Does nuclear norm ordering Muon < AdamW hold throughout training, or only at convergence?
+     - How do effective ranks compare across layers and training stages?
+   - Save all measurements to nuclear_norm_trajectories.json for downstream analysis.
+
+6) FALLBACK PROTOCOL:
+   - If NanoGPT setup fails (e.g., network/GPU access issues), run surrogate experiments:
+     a) Matrix regression (underdetermined): tests implicit regularization directly
+     b) 2-layer MLP on CIFAR-10 or MNIST: tests at moderate scale
+   - CLEARLY LABEL surrogate results as proxy evidence in experiment_analysis.md.
+   - Do NOT silently skip GPU experiments — document the failure reason and fallback decision.
+
+Required outputs:
+- experiment_plan.md (fairness protocol: compute matching, tuning budget parity, schedules, metrics, Adam vs AdamW baseline choice rationale with citations)
+- fairness_protocol.json (machine-readable comparison policy: all hyperparameter grids, matching criteria, metrics)
+- experiment_results.json (measured metrics from all executed training runs: loss curves, timing, memory)
+- experiment_analysis.md (interpretation of results: which optimizer wins under which metric, nuclear norm observations, connection to theory1 predictions, pitfalls encountered)
+- nuclear_norm_trajectories.json (nuclear norm and effective rank at each checkpoint for each optimizer and weight matrix)
+
+Execution guidance:
+- Use ALL available tools: ArXiv search (fetch_arxiv_papers), web search, paper search (Semantic Scholar), citation search, VLM document analysis for reading downloaded PDFs, Python code execution for experiments, SLURM job submission for GPU training, LaTeX tools for figures/tables.
+- If NanoGPT code is unavailable locally, use RunExperimentTool or clone from GitHub via web tools.
+- If any tool fails, continue with remaining tools.
+- Prioritize: (1) literature review for fair comparison, (2) NanoGPT setup + training, (3) nuclear norm analysis, (4) comprehensive experiment documentation.

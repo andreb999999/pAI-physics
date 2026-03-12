@@ -29,6 +29,17 @@ def _unwrap_model(model: Any) -> Any:
     return model
 
 
+def _extract_budget_callback(model: Any) -> Any:
+    """Return a BudgetTrackingCallback if model is budget-wrapped, else None."""
+    from ..budget import BudgetedLiteLLMModel, BudgetTrackingCallback
+    if isinstance(model, BudgetedLiteLLMModel):
+        return BudgetTrackingCallback(
+            model.budget_manager,
+            model_id=model._get_model_id(),
+        )
+    return None
+
+
 def create_specialist_agent(
     model: Any,
     tools: List[BaseTool],
@@ -45,6 +56,8 @@ def create_specialist_agent(
     if workspace_dir:
         os.makedirs(os.path.join(workspace_dir, agent_name), exist_ok=True)
 
+    budget_callback = _extract_budget_callback(model)
+
     react_agent = create_react_agent(
         model=_unwrap_model(model),
         tools=tools,
@@ -54,9 +67,11 @@ def create_specialist_agent(
     def node_fn(state: dict) -> dict:
         task = state.get("agent_task") or state.get("task", "")
 
-        result = react_agent.invoke({
-            "messages": [HumanMessage(content=task)],
-        })
+        invoke_config = {"callbacks": [budget_callback]} if budget_callback else None
+        result = react_agent.invoke(
+            {"messages": [HumanMessage(content=task)]},
+            config=invoke_config,
+        )
 
         last_msg = result["messages"][-1] if result.get("messages") else None
         output = last_msg.content if last_msg and hasattr(last_msg, "content") else str(last_msg)

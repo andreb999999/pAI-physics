@@ -1,0 +1,67 @@
+Theory run for Muon implicit regularization.
+
+Goal — from advisor:
+"Finding whether there exists implicit regularization results for Muon, and if so, can we play with it.
+Say your loss with Muon = regularized loss with GD. Check if this is the case.
+This could be a paper on its own: L_1 * A_1 ≈ L_2 * A_2."
+
+Literature search (IMPORTANT — do this first):
+- Search ArXiv for prior work on implicit regularization in sign-gradient descent, signSGD, and Muon optimizer.
+- Search for papers on steepest descent under non-Euclidean norms (operator norm, nuclear norm duality).
+- Search for papers on implicit bias of mirror descent, natural gradient, and matrix-valued optimization.
+- Key authors/terms to search: "implicit regularization signSGD", "Muon optimizer", "steepest descent operator norm", "nuclear norm implicit bias", "mirror descent implicit regularization", "polar decomposition gradient".
+- Search for recent work on implicit regularization in nonlinear networks and transformers.
+- Search for practical implications of nuclear norm regularization for generalization in deep learning.
+- Search for papers on regularization-loss tradeoff curves and Pareto frontiers in optimization.
+- Download and analyze the most relevant papers. Use their results to ground your theoretical claims — cite prior work where it exists rather than re-deriving known results.
+
+Core conjecture:
+- Muon update: W_{t+1} = W_t - eta * polar(grad L(W_t)), where polar(G) = U_G V_G^T from the SVD G = U_G Sigma V_G^T.
+- This is steepest descent under the operator (spectral) norm. By norm duality, we conjecture implicit regularization toward minimum nuclear norm solutions.
+- We seek R(W) such that Muon dynamics are equivalent (fixed points/trajectory limits/implicit bias) to GD on L + lambda * R.
+- Start with linear or matrix-factorization setting; if nonlinear case is too hard, keep it as conjectural extension.
+
+Formal objectives:
+
+1) THE MAIN RESULT — L_1 * A_1 ≈ L_2 * A_2 equivalence (this is the "paper on its own"):
+   - Formalize the equivalence: if (L_1, A_1) = (L + lambda * ||W||_*, GD) and (L_2, A_2) = (L, Muon),
+     prove or disprove that the stationary points and/or trajectories match.
+   - Characterize: under what conditions does this hold exactly vs approximately?
+   - How does the effective lambda depend on the learning rate eta, initialization scale, and loss landscape geometry?
+   - When does the equivalence break down? What are the sharpest conditions?
+   - This should be the central theorem of the claim graph.
+
+2) Regularizer tunability ("play with it"):
+   - Consider the interpolated update: W_{t+1} = W_t - eta * (alpha * polar(grad L) + (1-alpha) * grad L)
+   - At alpha=1: full Muon (nuclear norm bias). At alpha=0: standard GD (Frobenius norm bias).
+   - Characterize the implicit regularizer R(W, alpha) as a continuous function of alpha.
+   - Can we continuously tune the strength of nuclear norm regularization by varying alpha?
+   - What is the resulting family of regularizers? Is there a clean parametric form?
+
+3) Nonlinear extension:
+   - Start with the linear/matrix-regression setting for rigorous proofs.
+   - Push to 2-layer networks: W = W_2 * W_1 with Muon applied to each layer independently.
+   - Explore effective kernel / NTK perspective for the nonlinear extension.
+   - If full nonlinear proofs are too hard, clearly state conjectures with numerical evidence.
+
+4) Generalization connection:
+   - When does nuclear norm implicit bias help generalization?
+   - Characterize settings where Muon's implicit bias is beneficial vs harmful.
+   - Relate to low-rank structure in learned representations and generalization bounds.
+
+Required claim graph content:
+- Assumptions: SVD/sign properties, smoothness/convergence conditions, loss function requirements.
+- Definitions: Muon update, Muon flow, candidate regularizer R(W), equivalence notion for (L,A) pairs, interpolated Muon update.
+- Lemmas: sign-function properties, polar decomposition as operator-norm steepest descent (von Neumann trace inequality), norm duality (operator ↔ nuclear), flow dynamics, fixed-point characterization, tunability intermediate results.
+- Theorems: at least one main linear-case theorem on the L_1*A_1 ≈ L_2*A_2 equivalence, a tunability characterization theorem, plus optional continuous-time theorem and nonlinear extension conjecture/theorem.
+
+Required outputs:
+- working_idea.json (high-level research summary)
+- math_workspace/claim_graph.json (formal claim graph with all claims, dependencies, proof sketches)
+- math_workspace/proofs/ (detailed proof attempts)
+- math_workspace/checks/ (numerical verification scripts and results)
+
+Execution guidance:
+- Use ALL available tools: ArXiv search (fetch_arxiv_papers), web search, paper search (Semantic Scholar), citation search, VLM document analysis for reading downloaded PDFs, math claim graph tools, proof workspace tools, LaTeX tools, and Python code execution for numerical verification.
+- If any tool fails, continue with remaining tools and still produce best-effort formal outputs.
+- Prioritize: (1) literature grounding, (2) L_1*A_1 ≈ L_2*A_2 main theorem + claim graph, (3) tunability analysis, (4) numerical verification artifacts.

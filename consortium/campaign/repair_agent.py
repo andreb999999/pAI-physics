@@ -701,9 +701,27 @@ APPROVED: <true|false>
         )
         review_text = response.choices[0].message.content or ""
     except Exception as e:
-        # If the review LLM fails, fall back to auto-approve plans with
-        # high/medium confidence to avoid blocking repairs entirely.
+        # If the review LLM fails, track consecutive failures.
+        # After max_review_failures (default 3), reject instead of auto-approving
+        # to prevent unreviewed repairs from executing repeatedly.
         print(f"[repair:review] LLM review failed: {e}")
+
+        # Track consecutive review failures via module-level counter
+        _review_plan._consecutive_failures = getattr(_review_plan, "_consecutive_failures", 0) + 1
+        max_failures = getattr(repair_config, "max_review_failures", 3)
+
+        if _review_plan._consecutive_failures >= max_failures:
+            print(
+                f"[repair:review] {_review_plan._consecutive_failures} consecutive review "
+                f"LLM failures (limit={max_failures}). Rejecting plan."
+            )
+            return PlanReview(
+                approved=False,
+                score=0,
+                reasoning=f"Review LLM has failed {_review_plan._consecutive_failures} times consecutively. Rejecting for safety.",
+                suggestions="Review LLM is unreliable. Fix API access before retrying.",
+            )
+
         auto_approve = plan["confidence"] in ("high", "medium")
         return PlanReview(
             approved=auto_approve,
@@ -1164,6 +1182,10 @@ def submit_slurm_repair(
 #SBATCH --output={slurm_log_dir}/repair_{stage.id}_%j.out
 #SBATCH --error={slurm_log_dir}/repair_{stage.id}_%j.err
 
+set -eo pipefail
+# Fix PS1 unbound variable in non-interactive batch shells
+export PS1="${{PS1:-}}"
+
 echo "========================================"
 echo "Repair Agent — Stage: {stage.id}"
 echo "Attempt: {attempt_num}"
@@ -1175,8 +1197,19 @@ echo "========================================"
 
 module load {conda_module}
 source {conda_init}
+
+# Clear all inherited conda envs to avoid PATH collision
+conda deactivate 2>/dev/null || true
 conda deactivate 2>/dev/null || true
 conda activate {conda_env}
+
+# Validate python resolves to expected env
+EXPECTED_PYTHON="{conda_env}/bin/python"
+ACTUAL_PYTHON="$(which python)"
+if [ "$ACTUAL_PYTHON" != "$EXPECTED_PYTHON" ]; then
+    echo "WARNING: python resolves to $ACTUAL_PYTHON (expected $EXPECTED_PYTHON)"
+    export PATH="{conda_env}/bin:$PATH"
+fi
 
 cd "{repo_root}"
 
@@ -1202,7 +1235,7 @@ for s in spec.stages:
         break
 
 if stage is None:
-    print(f'ERROR: Stage {stage.id!r} not found in spec')
+    print('ERROR: Stage {stage.id} not found in spec')
     sys.exit(1)
 
 print(f'Running attempt_repair for stage {{stage.id!r}}...')

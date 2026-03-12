@@ -1,0 +1,102 @@
+Paper synthesis for Muon implicit regularization research (v2).
+
+This stage synthesizes theory1, experiment1, and theory2 into a unified publication-quality paper.
+
+Paper positioning:
+- The advisor stated that the implicit regularization result (L_1 * A_1 ≈ L_2 * A_2) "could be a paper on its own."
+- Therefore: Theory 1 (implicit regularization + equivalence theorem + tunability) is the MAIN CONTRIBUTION.
+- Theory 2 (scaling rules) and experiments (NanoGPT comparison) are supporting material that strengthens the main result.
+- The paper should have actual NanoGPT experimental evidence, not just surrogate/proxy experiments.
+
+Proposed paper structure:
+
+1) Title: should capture the main result — Muon's implicit nuclear norm regularization and equivalence with regularized GD.
+
+2) Abstract: 150-250 words summarizing the L_1*A_1 ≈ L_2*A_2 equivalence, tunability, scaling rules, and NanoGPT experimental validation.
+
+3) Introduction:
+   - Motivation: optimizer choice implicitly determines regularization in overparameterized models.
+   - Contribution summary: (i) Muon ↔ nuclear-norm-regularized GD equivalence, (ii) tunability of implicit regularizer, (iii) batch-size scaling rule, (iv) NanoGPT experimental validation.
+   - Paper outline.
+
+4) Related Work:
+   - Implicit regularization in gradient descent (Gunasekar et al., Soudry et al., Li et al.)
+   - Steepest descent under non-Euclidean norms
+   - Mirror descent and implicit bias
+   - Muon optimizer (Jordan et al.) and sign-based methods
+   - Batch size scaling laws (McCandlish et al., Hoffer et al.)
+
+5) Preliminaries:
+   - Notation, Muon update definition, polar decomposition, operator/nuclear norm duality
+   - Problem setup (matrix regression, linear models, then neural networks)
+
+6) Part I — Implicit Regularization (MAIN CONTRIBUTION):
+   - Section 3: The L_1*A_1 ≈ L_2*A_2 equivalence theorem
+     - Theorem statement, proof sketch, conditions for exact vs approximate equivalence
+     - How effective lambda depends on learning rate, initialization, loss geometry
+   - Section 4: Regularizer tunability
+     - Interpolated Muon update and the R(W, alpha) family
+     - Continuous tuning of nuclear norm regularization strength
+   - Section 5: Extensions
+     - Nonlinear case (2-layer networks, NTK perspective)
+     - Generalization implications
+
+7) Part II — Scaling Rules:
+   - Section 6: Batch-size/step-size scaling law for Muon
+     - sqrt(B) scaling derivation
+     - Critical batch size B*_Muon formula and comparison with SGD/Adam
+   - Section 7: Regularization-scaling bridge
+     - How lambda_eff changes with batch size
+
+8) Part III — Experiments:
+   - Section 8: Fair comparison methodology
+     - Literature-grounded fairness protocol (Adam vs AdamW baseline choice, compute matching, tuning budget)
+   - Section 9: NanoGPT results
+     - Training curves: Muon vs AdamW on Shakespeare and OpenWebText
+     - Best hyperparameters for each optimizer
+     - Wall-clock and memory comparison
+   - Section 10: Nuclear norm analysis
+     - Nuclear norm trajectories throughout training
+     - Effective rank comparison across layers
+     - Confirmation of theory1 predictions at transformer scale
+   - Section 11: Batch size sweep
+     - eta*(B) curves for Muon vs AdamW
+     - Empirical verification of sqrt(B) scaling
+     - Critical batch size estimation
+
+9) Theory-Experiment Bridge Analysis:
+   - Systematic comparison of theoretical predictions with experimental observations
+   - Which predictions hold at transformer scale? Which need refinement?
+   - Table summarizing each theoretical claim and its empirical status
+
+10) Discussion and Limitations:
+    - What the equivalence theorem does and does not guarantee
+    - Limitations of linear-case proofs for nonlinear networks
+    - Gap between surrogate/theory-scale experiments and real NanoGPT results (if any)
+    - Open questions and future directions
+
+11) Conclusion:
+    - Summary of contributions
+    - Practical implications for practitioners choosing optimizers
+
+12) References: comprehensive bibliography
+
+13) Appendix:
+    - Full proofs of all theorems and lemmas
+    - Additional experimental details and hyperparameter tables
+    - Numerical verification results
+
+Required outputs:
+- final_paper.tex (main LaTeX source, compilable)
+- final_paper.pdf (compiled paper — THIS IS REQUIRED, must successfully compile)
+- paper_workspace/ (LaTeX source files if split across multiple .tex files)
+- analysis_connection.md (theory-experiment bridge analysis in markdown)
+- artifacts_index.md (index of all supporting artifacts from all stages)
+
+Execution guidance:
+- Use ALL available tools: LaTeX compilation tools, Python for generating figures and plots, BibTeX for references.
+- Read all artifacts from prior stages: claim_graph.json, scaling_claims.json, experiment_results.json, nuclear_norm_trajectories.json, experiment_analysis.md, fairness_protocol.json.
+- Generate publication-quality figures: loss curves, nuclear norm trajectories, batch size scaling plots, claim graph visualization.
+- Compile the PDF. If compilation fails, debug LaTeX errors and retry. The PDF is a REQUIRED artifact.
+- Emphasize throughout that experiments are on REAL NanoGPT training, not surrogates.
+- If any tool fails, continue with remaining tools. The paper must be produced.

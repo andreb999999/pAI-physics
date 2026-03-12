@@ -33,13 +33,23 @@ from langgraph.prebuilt import create_react_agent
 # Default model specs matching the 4 top-tier frontier models.
 # Used for debate-phase litellm.completion calls (where we need the model name string).
 DEFAULT_COUNSEL_MODEL_SPECS = [
-    {"model": "claude-opus-4-6",  "effort": "max"},
-    {"model": "claude-sonnet-4-6", "effort": "max"},
-    {"model": "gpt-5.2",          "reasoning_effort": "high", "verbosity": "high"},
-    {"model": "gemini-3.0-pro",   "thinking_budget": 65536},
+    {"model": "claude-opus-4-6",  "reasoning_effort": "high"},
+    {"model": "claude-sonnet-4-6", "reasoning_effort": "high"},
+    {"model": "gpt-5.4",          "reasoning_effort": "high", "verbosity": "high"},
+    {"model": "gemini-3-pro-preview",   "thinking_budget": 65536},
 ]
 
 SYNTHESIS_MODEL = "claude-opus-4-6"
+
+# Per-model timeout for sandbox and debate phases.
+# Set via set_counsel_timeout() at pipeline init, or COUNSEL_MODEL_TIMEOUT_SECONDS env var.
+DEFAULT_MODEL_TIMEOUT_SECONDS: int = int(os.environ.get("COUNSEL_MODEL_TIMEOUT_SECONDS", "600"))
+
+
+def set_counsel_timeout(seconds: int) -> None:
+    """Set the global per-model counsel timeout. Called at pipeline init from campaign config."""
+    global DEFAULT_MODEL_TIMEOUT_SECONDS
+    DEFAULT_MODEL_TIMEOUT_SECONDS = seconds
 
 
 # ---------------------------------------------------------------------------
@@ -56,12 +66,14 @@ def create_counsel_models(
     specs = model_specs or DEFAULT_COUNSEL_MODEL_SPECS
     models = []
     for spec in specs:
+        # Support both "effort" (legacy) and "reasoning_effort" spec keys
+        claude_effort = spec.get("effort") or spec.get("reasoning_effort")
         m = create_model(
             model_name=spec["model"],
             reasoning_effort=spec.get("reasoning_effort", "high"),
             verbosity=spec.get("verbosity", "medium"),
             budget_tokens=spec.get("thinking_budget"),
-            effort=spec.get("effort"),
+            effort=claude_effort,
             budget_config=budget_config or {},
             budget_dir=budget_dir or os.getcwd(),
         )
@@ -147,6 +159,7 @@ def run_counsel_stage(
     agent_name: str,
     max_debate_rounds: int = 3,
     model_specs: Optional[List[dict]] = None,
+    model_timeout_seconds: int = 600,
 ) -> str:
     """
     Run multi-model counsel for one pipeline stage.
@@ -163,6 +176,14 @@ def run_counsel_stage(
     specs = model_specs or DEFAULT_COUNSEL_MODEL_SPECS
     sandbox_base = os.path.join(workspace_dir, "counsel_sandboxes", agent_name)
     os.makedirs(sandbox_base, exist_ok=True)
+
+    # Extract BudgetManager for direct litellm calls (debate + synthesis)
+    _budget_mgr = None
+    from .budget import BudgetedLiteLLMModel
+    for _m in counsel_models:
+        if isinstance(_m, BudgetedLiteLLMModel):
+            _budget_mgr = _m.budget_manager
+            break
 
     # Pre-build sandbox dir paths (needed for merge even if agent fails)
     sandbox_dirs: List[str] = []
@@ -182,9 +203,11 @@ def run_counsel_stage(
         _populate_sandbox(workspace_dir, sandbox_dir)
         s_tools = _sandbox_tools(tools, sandbox_dir)
         try:
-            from .agents.base_agent import _unwrap_model
+            from .agents.base_agent import _unwrap_model, _extract_budget_callback
+            budget_cb = _extract_budget_callback(model)
             agent = create_react_agent(model=_unwrap_model(model), tools=s_tools, prompt=system_prompt)
-            result = agent.invoke({"messages": [HumanMessage(content=task)]})
+            invoke_cfg = {"callbacks": [budget_cb]} if budget_cb else None
+            result = agent.invoke({"messages": [HumanMessage(content=task)]}, config=invoke_cfg)
             last = result["messages"][-1] if result.get("messages") else None
             output = last.content if last and hasattr(last, "content") else ""
         except Exception as e:
@@ -195,9 +218,25 @@ def run_counsel_stage(
     sandbox_outputs: List[str] = [""] * len(counsel_models)
     with ThreadPoolExecutor(max_workers=len(counsel_models)) as pool:
         futures = {pool.submit(_run_one_sandbox, i): i for i in range(len(counsel_models))}
-        for future in as_completed(futures):
-            idx, output = future.result()
-            sandbox_outputs[idx] = output
+        for future in as_completed(futures, timeout=model_timeout_seconds + 60):
+            try:
+                idx, output = future.result(timeout=model_timeout_seconds)
+                sandbox_outputs[idx] = output
+            except TimeoutError:
+                # Identify which model timed out
+                for f, i in futures.items():
+                    if f is future:
+                        label = specs[i]["model"] if i < len(specs) else f"model_{i}"
+                        sandbox_outputs[i] = f"[{label} timed out after {model_timeout_seconds}s]"
+                        print(f"[counsel:{agent_name}] model_{i} ({label}) TIMED OUT after {model_timeout_seconds}s")
+                        break
+            except Exception as e:
+                for f, i in futures.items():
+                    if f is future:
+                        label = specs[i]["model"] if i < len(specs) else f"model_{i}"
+                        sandbox_outputs[i] = f"[{label} error: {e}]"
+                        print(f"[counsel:{agent_name}] model_{i} ({label}) error: {e}")
+                        break
 
     # ------------------------------------------------------------------
     # 2. Debate phase — all critiques per round run in parallel
@@ -223,23 +262,49 @@ def run_counsel_stage(
 
         def _one_critique(i: int) -> tuple[int, str]:
             spec = specs[i]
+            # Extract provider-specific params (everything except "model")
+            extra_params = {k: v for k, v in spec.items() if k != "model"}
+            # Normalize legacy "effort" key to "reasoning_effort" for litellm
+            if "effort" in extra_params:
+                extra_params.setdefault("reasoning_effort", extra_params.pop("effort"))
             try:
                 resp = litellm.completion(
                     model=spec["model"],
                     messages=[{"role": "user", "content": base_prompt}],
                     max_tokens=2048,
+                    **extra_params,
                 )
                 critique = resp.choices[0].message.content or ""
+                if _budget_mgr and hasattr(resp, "usage") and resp.usage:
+                    _budget_mgr.record_usage(
+                        model_id=spec["model"],
+                        prompt_tokens=int(getattr(resp.usage, "prompt_tokens", 0) or 0),
+                        completion_tokens=int(getattr(resp.usage, "completion_tokens", 0) or 0),
+                    )
             except Exception as e:
                 critique = f"[{spec['model']} debate error: {e}]"
             return i, f"Model {i} ({spec['model']}):\n{critique}"
 
+        debate_timeout = model_timeout_seconds  # same timeout for debate
         critiques: List[str] = [""] * len(specs)
         with ThreadPoolExecutor(max_workers=len(specs)) as pool:
             futures = {pool.submit(_one_critique, i): i for i in range(len(specs))}
-            for future in as_completed(futures):
-                i, text = future.result()
-                critiques[i] = text
+            for future in as_completed(futures, timeout=debate_timeout + 60):
+                try:
+                    i, text = future.result(timeout=debate_timeout)
+                    critiques[i] = text
+                except TimeoutError:
+                    for f, idx in futures.items():
+                        if f is future:
+                            label = specs[idx]["model"] if idx < len(specs) else f"model_{idx}"
+                            critiques[idx] = f"Model {idx} ({label}):\n[debate timed out after {debate_timeout}s]"
+                            print(f"[counsel:{agent_name}] debate model_{idx} ({label}) TIMED OUT")
+                            break
+                except Exception as e:
+                    for f, idx in futures.items():
+                        if f is future:
+                            critiques[idx] = f"Model {idx}:\n[debate error: {e}]"
+                            break
 
         debate_history.append(f"[Round {rnd + 1}]\n" + "\n\n".join(critiques))
         print(f"[counsel:{agent_name}] debate round {rnd + 1} complete.")
@@ -257,13 +322,29 @@ def run_counsel_stage(
         "Incorporate the strongest elements from all solutions. Be comprehensive and precise."
     )
 
+    # Find synthesis model params from specs (default to reasoning_effort=high)
+    _synth_params = {}
+    for _sp in specs:
+        if _sp["model"] == SYNTHESIS_MODEL:
+            _synth_params = {k: v for k, v in _sp.items() if k != "model"}
+            if "effort" in _synth_params:
+                _synth_params.setdefault("reasoning_effort", _synth_params.pop("effort"))
+            break
+
     try:
         resp = litellm.completion(
             model=SYNTHESIS_MODEL,
             messages=[{"role": "user", "content": synthesis_prompt}],
             max_tokens=8192,
+            **_synth_params,
         )
         final_output = resp.choices[0].message.content or sandbox_outputs[0]
+        if _budget_mgr and hasattr(resp, "usage") and resp.usage:
+            _budget_mgr.record_usage(
+                model_id=SYNTHESIS_MODEL,
+                prompt_tokens=int(getattr(resp.usage, "prompt_tokens", 0) or 0),
+                completion_tokens=int(getattr(resp.usage, "completion_tokens", 0) or 0),
+            )
     except Exception as e:
         print(f"[counsel:{agent_name}] synthesis failed ({e}), using first sandbox output.")
         final_output = sandbox_outputs[0] if sandbox_outputs else ""
@@ -290,6 +371,7 @@ def create_counsel_node(
     counsel_models: List[Any],
     max_debate_rounds: int = 3,
     model_specs: Optional[List[dict]] = None,
+    model_timeout_seconds: Optional[int] = None,
 ) -> Any:
     """
     Return a LangGraph node callable that wraps run_counsel_stage.
@@ -297,6 +379,8 @@ def create_counsel_node(
     Drop-in replacement for create_specialist_agent when counsel mode is enabled.
     Accepts the same state dict and returns the same state-update dict shape.
     """
+    _timeout = model_timeout_seconds if model_timeout_seconds is not None else DEFAULT_MODEL_TIMEOUT_SECONDS
+
     def counsel_node(state: dict) -> dict:
         task = state.get("agent_task") or state.get("task", "")
         output = run_counsel_stage(
@@ -308,6 +392,7 @@ def create_counsel_node(
             agent_name=agent_name,
             max_debate_rounds=max_debate_rounds,
             model_specs=model_specs,
+            model_timeout_seconds=_timeout,
         )
         return {
             "agent_outputs": {**state.get("agent_outputs", {}), agent_name: output},

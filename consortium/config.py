@@ -35,6 +35,12 @@ def filter_model_params(original_func):
         elif isinstance(model, str) and ("claude" in model or "anthropic" in model):
             fk = kwargs.copy()
 
+            # Translate legacy "effort" param to litellm-supported "reasoning_effort"
+            if "effort" in fk and "reasoning_effort" not in fk:
+                fk["reasoning_effort"] = fk.pop("effort")
+            elif "effort" in fk:
+                fk.pop("effort")
+
             # Don't send both temperature + top_p to Claude
             if "temperature" in fk and "top_p" in fk:
                 fk.pop("top_p")

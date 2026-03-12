@@ -25,8 +25,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
+import time as _time
+from datetime import datetime, timezone
 
 # Ensure tex-live is available for paper/editorial stages
 _TEX_LIVE_BIN = "/orcd/software/community/001/pkg/tex-live/20251104/bin/x86_64-linux"
@@ -97,6 +100,77 @@ def print_status_report(spec, status, campaign_dir: str) -> None:
     print()
 
 
+def _check_campaign_wall_time(spec, status, campaign_dir: str) -> bool:
+    """Return True if campaign has exceeded max_campaign_hours. Marks all as failed."""
+    if spec.max_campaign_hours <= 0:
+        return False  # unlimited
+    # Find earliest started_at across all stages
+    earliest = None
+    for stage in spec.stages:
+        started = status.raw()["stages"].get(stage.id, {}).get("started_at")
+        if started:
+            try:
+                dt = datetime.fromisoformat(started)
+                if earliest is None or dt < earliest:
+                    earliest = dt
+            except (ValueError, TypeError):
+                pass
+    if earliest is None:
+        return False
+    elapsed_hours = (datetime.now(timezone.utc) - earliest).total_seconds() / 3600
+    if elapsed_hours > spec.max_campaign_hours:
+        print(
+            f"[heartbeat] Campaign wall time exceeded: {elapsed_hours:.1f}h > "
+            f"{spec.max_campaign_hours}h limit. Halting."
+        )
+        return True
+    return False
+
+
+def _load_idle_tick_count(campaign_dir: str) -> int:
+    """Load the consecutive idle tick counter from a sidecar file."""
+    path = os.path.join(campaign_dir, ".idle_ticks")
+    try:
+        with open(path) as f:
+            return int(f.read().strip())
+    except (FileNotFoundError, ValueError):
+        return 0
+
+
+def _save_idle_tick_count(campaign_dir: str, count: int) -> None:
+    """Persist the consecutive idle tick counter."""
+    path = os.path.join(campaign_dir, ".idle_ticks")
+    with open(path, "w") as f:
+        f.write(str(count))
+
+
+def _check_repairing_timeout(stage, status, spec, campaign_dir: str) -> bool:
+    """If a stage has been in REPAIRING status too long, time it out and mark failed."""
+    sid = stage.id
+    if status.stage_status(sid) != REPAIRING:
+        return False
+    stage_data = status.raw()["stages"].get(sid, {})
+    # Use completed_at as the time repair started (it was set when the stage first failed)
+    repair_started = stage_data.get("completed_at")
+    if not repair_started:
+        return False
+    try:
+        dt = datetime.fromisoformat(repair_started)
+    except (ValueError, TypeError):
+        return False
+    elapsed = (datetime.now(timezone.utc) - dt).total_seconds()
+    timeout = spec.repair.repairing_timeout_seconds
+    if elapsed > timeout:
+        print(
+            f"[heartbeat] Stage '{sid}' stuck in REPAIRING for {elapsed:.0f}s "
+            f"(timeout={timeout}s). Marking as failed."
+        )
+        status.mark_failed(sid, f"Repair timed out after {elapsed:.0f}s", stage_data.get("missing_artifacts", []))
+        write_status(campaign_dir, status)
+        return True
+    return False
+
+
 def run_heartbeat(
     spec,
     status,
@@ -107,14 +181,29 @@ def run_heartbeat(
     Core heartbeat logic. Returns exit code.
     """
     # ----------------------------------------------------------------
+    # -1. Campaign wall-time check (P3-11)
+    # ----------------------------------------------------------------
+    if _check_campaign_wall_time(spec, status, campaign_dir):
+        notify(
+            f"Campaign '{spec.name}' exceeded wall time limit "
+            f"({spec.max_campaign_hours}h). Halting.",
+            spec.notification,
+        )
+        return 2
+
+    # ----------------------------------------------------------------
     # 0. Check any stage with a SLURM repair job in progress
     # ----------------------------------------------------------------
     for stage in spec.stages:
         sid = stage.id
         if status.stage_status(sid) == REPAIRING:
+            # Check REPAIRING timeout first (P0 fix)
+            if _check_repairing_timeout(stage, status, spec, campaign_dir):
+                continue  # now FAILED, will be handled below
             print(f"[heartbeat] Stage '{sid}' has a repair in progress — polling...")
             repair_exit = _try_repair(stage, spec, status, campaign_dir)
             if repair_exit is not None:
+                _save_idle_tick_count(campaign_dir, 0)
                 return repair_exit
             # If None, repair exhausted — fall through to normal failure handling
 
@@ -142,10 +231,18 @@ def run_heartbeat(
                 )
             else:
                 print(f"[heartbeat] Stage '{sid}' in progress (PID {pid}). Artifacts look complete.")
+            _save_idle_tick_count(campaign_dir, 0)
             return 1
 
         # Process is dead (or force_advance). Check artifacts.
         all_present, missing = check_stage_artifacts(workspace, stage)
+
+        # P1-5: Validate artifact content, not just existence
+        if all_present:
+            validation_errors = _validate_artifact_content(workspace, stage)
+            if validation_errors:
+                all_present = False
+                missing = validation_errors
 
         if all_present:
             print(f"[heartbeat] Stage '{sid}' completed.")
@@ -154,7 +251,7 @@ def run_heartbeat(
             distill_stage_memory(stage, workspace, campaign_dir)
             notify_stage_complete(sid, workspace, spec.notification)
         else:
-            reason = f"Process ended but required artifacts missing: {missing}"
+            reason = f"Process ended but required artifacts missing/invalid: {missing}"
             print(f"[heartbeat] Stage '{sid}' FAILED: {reason}")
             status.mark_failed(sid, reason, missing)
             write_status(campaign_dir, status)
@@ -162,12 +259,14 @@ def run_heartbeat(
             # --- Autonomous repair attempt ---
             repair_exit = _try_repair(stage, spec, status, campaign_dir)
             if repair_exit is not None:
+                _save_idle_tick_count(campaign_dir, 0)
                 return repair_exit
 
             # No repair attempted or repair exhausted — escalate
             notify_stage_failed(sid, reason, spec.notification)
             return 2
 
+        _save_idle_tick_count(campaign_dir, 0)
         break  # Only process one in-progress stage per tick
 
     # ----------------------------------------------------------------
@@ -176,10 +275,41 @@ def run_heartbeat(
     if status.campaign_failed(spec):
         # Find the failed stage and try repair before giving up
         for stage in spec.stages:
-            if status.stage_status(stage.id) == FAILED:
+            sid = stage.id
+            if status.stage_status(sid) == FAILED:
                 repair_exit = _try_repair(stage, spec, status, campaign_dir)
                 if repair_exit is not None:
+                    _save_idle_tick_count(campaign_dir, 0)
                     return repair_exit
+
+                # P3-10: Escalation timeout — if repair is exhausted and
+                # the failure has been sitting for longer than
+                # escalation_timeout_minutes, auto-retry (reset attempts).
+                repair_config = spec.repair
+                if repair_config.auto_retry_on_timeout and repair_config.escalation_timeout_minutes > 0:
+                    stage_data = status.raw()["stages"].get(sid, {})
+                    failed_at = stage_data.get("completed_at")
+                    if failed_at:
+                        try:
+                            failed_dt = datetime.fromisoformat(failed_at)
+                            elapsed_min = (datetime.now(timezone.utc) - failed_dt).total_seconds() / 60
+                            if elapsed_min >= repair_config.escalation_timeout_minutes:
+                                print(
+                                    f"[heartbeat] Escalation timeout for '{sid}': "
+                                    f"{elapsed_min:.0f}min elapsed (limit={repair_config.escalation_timeout_minutes}min). "
+                                    f"Auto-resetting repair attempts."
+                                )
+                                # Clear repair log to allow fresh attempts
+                                stage_data["repair_log"] = []
+                                write_status(campaign_dir, status)
+                                # Try repair again with fresh budget
+                                retry_exit = _try_repair(stage, spec, status, campaign_dir)
+                                if retry_exit is not None:
+                                    _save_idle_tick_count(campaign_dir, 0)
+                                    return retry_exit
+                        except (ValueError, TypeError):
+                            pass
+
                 break  # only handle one failed stage per tick
         print("[heartbeat] Campaign has a failed stage. Human attention required.")
         return 2
@@ -214,11 +344,90 @@ def run_heartbeat(
         status.mark_in_progress(sid, workspace, proc.pid)
         write_status(campaign_dir, status)
         notify_stage_launched(sid, proc.pid, workspace, spec.notification)
+        _save_idle_tick_count(campaign_dir, 0)
         return 3
 
-    # No stage to launch and no active stage — waiting for a dependency
-    print("[heartbeat] No action taken — waiting for dependencies.")
+    # ----------------------------------------------------------------
+    # 5. Idle tick circuit breaker (P0-1 / P3-12)
+    # ----------------------------------------------------------------
+    idle_ticks = _load_idle_tick_count(campaign_dir) + 1
+    _save_idle_tick_count(campaign_dir, idle_ticks)
+
+    if spec.max_idle_ticks > 0 and idle_ticks >= spec.max_idle_ticks:
+        print(
+            f"[heartbeat] {idle_ticks} consecutive idle ticks (limit={spec.max_idle_ticks}). "
+            f"Campaign is stuck or done. Exiting with code 0 to stop cron."
+        )
+        return 0
+
+    print(f"[heartbeat] No action taken — waiting for dependencies. (idle tick {idle_ticks}/{spec.max_idle_ticks})")
     return 1
+
+
+def _validate_artifact_content(workspace: str, stage) -> list:
+    """
+    P1-5: Validate artifact content beyond mere file existence.
+
+    Uses per-artifact validators from stage.artifact_validators, plus
+    built-in heuristics for known file types.
+
+    Returns a list of validation error strings (empty = all valid).
+    """
+    errors = []
+    validators = getattr(stage, "artifact_validators", {})
+
+    for artifact in stage.success_artifacts.get("required", []):
+        if artifact.endswith("/"):
+            continue  # skip directory artifacts
+        full = os.path.join(workspace, artifact)
+        if not os.path.exists(full):
+            continue  # already caught by check_stage_artifacts
+
+        # Check validator rules if defined
+        rules = validators.get(artifact, {})
+
+        try:
+            file_size = os.path.getsize(full)
+        except OSError:
+            continue
+
+        # min_size_bytes check
+        min_size = rules.get("min_size_bytes", 0)
+        if file_size < min_size:
+            errors.append(f"{artifact}: too small ({file_size}B < {min_size}B)")
+            continue
+
+        # Content checks (for text files)
+        if any(artifact.endswith(ext) for ext in (".json", ".md", ".txt", ".tex", ".csv")):
+            try:
+                with open(full) as f:
+                    content = f.read(100_000)  # cap at 100KB
+            except Exception:
+                continue
+
+            # must_contain checks
+            for required_str in rules.get("must_contain", []):
+                if required_str not in content:
+                    errors.append(f"{artifact}: missing required content '{required_str}'")
+
+            # must_not_contain checks (detect hollow artifacts)
+            for forbidden_str in rules.get("must_not_contain", []):
+                if forbidden_str in content:
+                    errors.append(f"{artifact}: contains forbidden content '{forbidden_str}'")
+
+            # Built-in heuristic: JSON files with "not_executed" are hollow
+            if artifact.endswith(".json") and '"status": "not_executed"' in content:
+                errors.append(f"{artifact}: hollow artifact (status=not_executed)")
+
+    return errors
+
+
+def _compute_backoff_seconds(repair_config, attempt_num: int) -> float:
+    """P0-4: Compute exponential backoff for repair attempt N."""
+    base = repair_config.backoff_base_seconds
+    cap = repair_config.backoff_max_seconds
+    delay = min(base * (2 ** (attempt_num - 1)), cap)
+    return delay
 
 
 def _try_repair(
@@ -240,7 +449,6 @@ def _try_repair(
         - 1 if repair is in progress (SLURM job running, or retrying next tick)
         - None if repair is not enabled, exhausted, or failed
     """
-    import time as _time
     from consortium.campaign.status import is_slurm_job_alive
 
     sid = stage.id
@@ -310,6 +518,25 @@ def _try_repair(
         )
         return None
 
+    # P0-4: Exponential backoff — check if enough time has elapsed since last attempt
+    if attempts_so_far > 0:
+        last_attempt = status.raw()["stages"].get(sid, {}).get("repair_log", [])
+        if last_attempt:
+            last_ts = last_attempt[-1].get("timestamp", "")
+            try:
+                last_dt = datetime.fromisoformat(last_ts)
+                elapsed = (datetime.now(timezone.utc) - last_dt).total_seconds()
+                required_backoff = _compute_backoff_seconds(repair_config, attempts_so_far)
+                if elapsed < required_backoff:
+                    remaining = required_backoff - elapsed
+                    print(
+                        f"[heartbeat] Backoff for '{sid}': {remaining:.0f}s remaining "
+                        f"(need {required_backoff:.0f}s between attempts). Skipping this tick."
+                    )
+                    return 1  # come back next tick
+            except (ValueError, TypeError):
+                pass  # malformed timestamp, proceed anyway
+
     attempt_num = attempts_so_far + 1
     print(
         f"[heartbeat] Attempting autonomous repair for '{sid}' "
@@ -330,6 +557,17 @@ def _try_repair(
         job_id = submit_slurm_repair(stage, spec, status, campaign_dir)
         if job_id is None:
             print(f"[heartbeat] SLURM repair submission failed for '{sid}'. Falling back to local.")
+            # Record submission failure as an attempt (P0-2: count all failures)
+            status.add_repair_attempt(
+                sid,
+                success=False,
+                diagnosis="SLURM repair submission failed",
+                actions=[],
+                duration=0.0,
+                error="submit_slurm_repair returned None",
+            )
+            status.mark_failed(sid, "SLURM repair submission failed", status.raw()["stages"].get(sid, {}).get("missing_artifacts", []))
+            write_status(campaign_dir, status)
             # Fall through to local mode
         else:
             # Store SLURM job ID in status so we can poll it next tick
@@ -346,7 +584,7 @@ def _try_repair(
     # ------------------------------------------------------------------
     result = attempt_repair(stage, spec, status, campaign_dir)
 
-    # Record the attempt
+    # P0-2: Always record the attempt, even if planning failed
     status.add_repair_attempt(
         sid,
         success=result.success,
@@ -378,8 +616,6 @@ def _handle_repair_result(
 
     Returns exit code for the heartbeat.
     """
-    import time as _time
-
     repair_config = spec.repair
     attempt_num = status.repair_attempt_count(sid)  # already incremented
 
@@ -421,14 +657,15 @@ def _handle_repair_result(
         )
         write_status(campaign_dir, status)
 
-        # If we still have attempts left, return 1 so the next heartbeat
-        # tick can try again
         if attempt_num < repair_config.max_attempts:
+            # P0-4: Backoff is enforced in _try_repair. Signal that we'll retry
+            # on a future tick, but the backoff timer must elapse first.
+            backoff = _compute_backoff_seconds(repair_config, attempt_num)
             print(
-                f"[heartbeat] Will retry repair on next heartbeat tick "
+                f"[heartbeat] Will retry repair after {backoff:.0f}s backoff "
                 f"({repair_config.max_attempts - attempt_num} attempt(s) remaining)."
             )
-            return 1  # in progress — come back next tick
+            return 1  # come back next tick (backoff enforced in _try_repair)
 
         return None  # exhausted
 

@@ -143,7 +143,7 @@ def apply_compute_profile(model: Any, profile: ComputeProfile) -> Any:
     if "claude" in model_lower or "anthropic" in model_lower:
         # Claude: set effort and budget_tokens via model_kwargs
         kwargs = getattr(model, "model_kwargs", {}) or {}
-        kwargs["effort"] = profile.claude_effort
+        kwargs["reasoning_effort"] = profile.claude_effort
         kwargs["budget_tokens"] = profile.claude_budget_tokens
         model.model_kwargs = kwargs
 
@@ -171,12 +171,12 @@ def build_counsel_specs(profile: ComputeProfile) -> list[dict]:
     return [
         {
             "model": "claude-opus-4-6",
-            "effort": profile.claude_effort,
+            "reasoning_effort": profile.claude_effort,
             "budget_tokens": profile.claude_budget_tokens,
         },
         {
             "model": "claude-sonnet-4-6",
-            "effort": profile.claude_effort,
+            "reasoning_effort": profile.claude_effort,
             "budget_tokens": profile.claude_budget_tokens,
         },
         {
@@ -184,7 +184,7 @@ def build_counsel_specs(profile: ComputeProfile) -> list[dict]:
             "reasoning_effort": profile.gpt_reasoning_effort,
         },
         {
-            "model": "gemini-3.0-pro",
+            "model": "gemini-3-pro-preview",
             "thinking_budget": profile.gemini_thinking_budget,
         },
     ]

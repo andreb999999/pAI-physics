@@ -21,6 +21,8 @@ class Stage:
     memory_dirs: List[str] = field(default_factory=list)
     # success_artifacts: {"required": [...], "optional": [...]}
     success_artifacts: dict = field(default_factory=lambda: {"required": [], "optional": []})
+    # artifact_validators: {"filename": {"min_size_bytes": N, "must_contain": ["str"], "must_not_contain": ["str"]}}
+    artifact_validators: Dict[str, dict] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, d: dict) -> "Stage":
@@ -40,6 +42,8 @@ class Stage:
             artifacts.setdefault("required", [])
             artifacts.setdefault("optional", [])
 
+        validators = d.get("artifact_validators", {})
+
         return cls(
             id=d["id"],
             task_file=d["task_file"],
@@ -48,6 +52,7 @@ class Stage:
             context_from=context_from,
             memory_dirs=d.get("memory_dirs", []),
             success_artifacts=artifacts,
+            artifact_validators=validators,
         )
 
 
@@ -111,6 +116,16 @@ class RepairConfig:
     review_model: str = "claude-opus-4-6"  # model OpenClaw uses to judge the plan
     review_temperature: float = 0.2     # low temp for deterministic review
     min_review_score: int = 7           # plan must score >= this (1-10) to proceed
+    # --- Backoff settings ---
+    backoff_base_seconds: int = 60      # initial backoff after failed repair
+    backoff_max_seconds: int = 900      # max backoff (15 minutes)
+    # --- REPAIRING state timeout ---
+    repairing_timeout_seconds: int = 3600  # 1 hour max in REPAIRING state
+    # --- Review fallback ---
+    max_review_failures: int = 3        # after N review LLM failures, reject (don't auto-approve)
+    # --- Escalation ---
+    escalation_timeout_minutes: int = 60  # auto-retry transient failures after N min with no human response
+    auto_retry_on_timeout: bool = True    # when escalation times out, retry (True) or halt (False)
 
     @classmethod
     def from_dict(cls, d: dict) -> "RepairConfig":
@@ -136,6 +151,12 @@ class RepairConfig:
             review_model=d.get("review_model", "claude-opus-4-6"),
             review_temperature=float(d.get("review_temperature", 0.2)),
             min_review_score=int(d.get("min_review_score", 7)),
+            backoff_base_seconds=int(d.get("backoff_base_seconds", 60)),
+            backoff_max_seconds=int(d.get("backoff_max_seconds", 900)),
+            repairing_timeout_seconds=int(d.get("repairing_timeout_seconds", 3600)),
+            max_review_failures=int(d.get("max_review_failures", 3)),
+            escalation_timeout_minutes=int(d.get("escalation_timeout_minutes", 60)),
+            auto_retry_on_timeout=d.get("auto_retry_on_timeout", True),
         )
 
 
@@ -147,6 +168,10 @@ class CampaignSpec:
     notification: NotificationConfig
     repair: RepairConfig = field(default_factory=RepairConfig)
     heartbeat_interval_minutes: int = 30
+    # --- Circuit breakers ---
+    max_idle_ticks: int = 6             # auto-exit after N consecutive no-op ticks
+    max_campaign_hours: float = 0       # 0 = unlimited; hard wall-time for entire campaign
+    counsel_model_timeout_seconds: int = 600  # per-model timeout for counsel sandbox agents
 
     def stage(self, stage_id: str) -> Optional[Stage]:
         for s in self.stages:
@@ -192,6 +217,9 @@ def load_spec(path: str) -> CampaignSpec:
         notification=notification,
         repair=repair,
         heartbeat_interval_minutes=int(raw.get("heartbeat_interval_minutes", 30)),
+        max_idle_ticks=int(raw.get("max_idle_ticks", 6)),
+        max_campaign_hours=float(raw.get("max_campaign_hours", 0)),
+        counsel_model_timeout_seconds=int(raw.get("counsel_model_timeout_seconds", 600)),
     )
 
 
