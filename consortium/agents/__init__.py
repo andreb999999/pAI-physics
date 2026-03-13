@@ -26,6 +26,9 @@ from .math_empirical_verifier_agent import build_node as build_math_empirical_ve
 from .proof_transcription_agent import build_node as build_proof_transcription_node
 from .manager_agent import build_node as build_manager_node
 from .track_merge_node import build_node as build_track_merge_node
+from .brainstorm_agent import build_node as build_brainstorm_node
+from .formalize_goals_agent import build_node as build_formalize_goals_node
+from .formalize_results_agent import build_node as build_formalize_results_node
 
 __all__ = [
     "create_specialist_agent",
@@ -50,4 +53,7 @@ __all__ = [
     "build_proof_transcription_node",
     "build_manager_node",
     "build_track_merge_node",
+    "build_brainstorm_node",
+    "build_formalize_goals_node",
+    "build_formalize_results_node",
 ]

@@ -18,7 +18,7 @@ run_experiment_tool:
 # If usd_limit is set, the system will stop once the running total reaches the limit.
 # IMPORTANT: You must provide accurate per-model prices to enforce the cap.
 budget:
-  usd_limit: 2000
+  usd_limit: 500
   hard_stop: true
   fail_closed: true
   pricing:
@@ -63,3 +63,21 @@ counsel:
       verbosity: high
     - model: gemini-3-pro-preview
       thinking_budget: 131072
+
+# PERSONA COUNCIL (V2 pipeline — prompt-diverse debate before research)
+# Three personas with distinct evaluation lenses debate the research proposal.
+# Use --pipeline-version v2 to activate.
+persona_council:
+  max_debate_rounds: 3
+  synthesis_model: claude-opus-4-6
+  # Optional: override default persona specs. Each entry needs 'name' and 'system_prompt'.
+  # If omitted, uses built-in Practical Compass / Rigor & Novelty / Narrative Architect.
+  # personas:
+  #   - name: "Practical Compass"
+  #     system_prompt: "..."
+
+# DUALITY CHECK (V2 pipeline — dual-lens evaluation of formalized results)
+# Two parallel LLM evaluations assess results from complementary angles.
+# Disable with --no-duality-check.
+duality_check:
+  model: claude-opus-4-6

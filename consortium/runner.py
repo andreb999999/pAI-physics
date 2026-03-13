@@ -9,8 +9,11 @@ import importlib.util
 import json
 import os
 import platform
+import signal
 import subprocess
 import sys
+import threading
+import time
 from datetime import datetime
 
 import litellm
@@ -24,7 +27,7 @@ from .prereqs import check_latex_prereqs
 from .supervision import sanitize_result_payload
 from .token_usage_tracker import initialize_run_token_tracker
 from .counsel import create_counsel_models, DEFAULT_COUNSEL_MODEL_SPECS, set_counsel_timeout
-from .graph import build_pipeline_stages
+from .graph import build_pipeline_stages, build_pipeline_stages_v2, get_default_checkpointer
 from .utils import create_model, build_research_graph, save_agent_memory
 
 load_dotenv(override=True)
@@ -107,6 +110,16 @@ _STAGE_ALIASES = {
     "review": "reviewer_agent",
     "reviewer": "reviewer_agent",
     "reviewer_agent": "reviewer_agent",
+    # V2 pipeline aliases
+    "persona_council": "persona_council",
+    "council": "persona_council",
+    "brainstorm": "brainstorm_agent",
+    "brainstorm_agent": "brainstorm_agent",
+    "formalize_goals": "formalize_goals_agent",
+    "formalize_goals_agent": "formalize_goals_agent",
+    "goals": "formalize_goals_agent",
+    "formalize_results": "formalize_results_agent",
+    "formalize_results_agent": "formalize_results_agent",
 }
 
 
@@ -150,7 +163,22 @@ def _install_litellm_token_callback():
                 model_id=model,
             )
         except Exception:
-            pass  # Never break the call chain
+            # Log but don't break the LLM call chain.
+            # Use a counter to avoid flooding logs — warn after 10 failures.
+            _on_litellm_success._fail_count = getattr(_on_litellm_success, "_fail_count", 0) + 1
+            if _on_litellm_success._fail_count <= 3:
+                import logging
+                logging.getLogger(__name__).debug(
+                    "Token recording failed (occurrence #%d)", _on_litellm_success._fail_count,
+                    exc_info=True,
+                )
+            elif _on_litellm_success._fail_count == 10:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "Token recording has failed %d times — token tracking may be inaccurate. "
+                    "Check disk space and permissions.",
+                    _on_litellm_success._fail_count,
+                )
 
     litellm.success_callback.append(_on_litellm_success)
 
@@ -558,7 +586,12 @@ def main():
     if args.enable_math_agents:
         print("Math agent workflow enabled.")
 
-    pipeline_stages = build_pipeline_stages(args.enable_math_agents)
+    pipeline_version = getattr(args, "pipeline_version", "v1")
+    if pipeline_version == "v2":
+        pipeline_stages = build_pipeline_stages_v2(args.enable_math_agents)
+        print(f"Pipeline version: v2 (persona-council-driven)")
+    else:
+        pipeline_stages = build_pipeline_stages(args.enable_math_agents)
     try:
         start_stage_index = (
             _resolve_start_stage_index(args.start_from_stage, pipeline_stages)
@@ -676,24 +709,73 @@ def main():
         milestone_timeout = getattr(args, "milestone_timeout", 3600)
         adversarial_verification = getattr(args, "adversarial_verification", False)
 
-        graph, checkpointer = build_research_graph(
-            model=model,
-            workspace_dir=results_base_dir,
-            essential_imports=essential_imports,
-            require_pdf=args.require_pdf,
-            enforce_paper_artifacts=enforce_paper_artifacts,
-            require_experiment_plan=require_experiment_plan,
-            enable_math_agents=args.enable_math_agents,
-            enforce_editorial_artifacts=enforce_editorial_artifacts,
-            min_review_score=args.min_review_score,
-            pipeline_mode=effective_pipeline_mode,
-            followup_max_iterations=args.followup_max_iterations,
-            manager_max_steps=args.manager_max_steps if args.manager_max_steps else 50,
-            counsel_models=counsel_models_list,
-            tree_search_config=tree_search_config,
-            enable_milestone_gates=enable_milestone_gates,
-            adversarial_verification=adversarial_verification,
-        )
+        if pipeline_version == "v2":
+            # --- V2: persona-council-driven pipeline ---
+            pc_cfg = llm_config.get("persona_council", {}) if llm_config else {}
+            dc_cfg = llm_config.get("duality_check", {}) if llm_config else {}
+
+            persona_debate_rounds = getattr(args, "persona_debate_rounds", None)
+            if persona_debate_rounds is None:
+                persona_debate_rounds = int(pc_cfg.get("max_debate_rounds", 3))
+
+            persona_council_specs = pc_cfg.get("personas") or None
+            persona_synthesis_model = pc_cfg.get("synthesis_model", "claude-opus-4-6")
+            duality_check_model = dc_cfg.get("model", "claude-opus-4-6")
+            enable_duality_check = not getattr(args, "no_duality_check", False)
+
+            # Extract budget manager if available
+            budget_manager = None
+            if hasattr(model, "_budget_manager"):
+                budget_manager = model._budget_manager
+
+            from .graph import build_research_graph_v2
+            checkpointer = get_default_checkpointer(results_base_dir)
+            graph = build_research_graph_v2(
+                model=model,
+                workspace_dir=results_base_dir,
+                pipeline_mode=effective_pipeline_mode,
+                enable_math_agents=args.enable_math_agents,
+                enforce_paper_artifacts=enforce_paper_artifacts,
+                enforce_editorial_artifacts=enforce_editorial_artifacts,
+                require_pdf=args.require_pdf,
+                require_experiment_plan=require_experiment_plan,
+                min_review_score=args.min_review_score,
+                followup_max_iterations=args.followup_max_iterations,
+                manager_max_steps=args.manager_max_steps if args.manager_max_steps else 50,
+                authorized_imports=essential_imports,
+                checkpointer=checkpointer,
+                counsel_models=counsel_models_list,
+                tree_search_config=tree_search_config,
+                enable_milestone_gates=enable_milestone_gates,
+                adversarial_verification=adversarial_verification,
+                persona_council_specs=persona_council_specs,
+                persona_debate_rounds=persona_debate_rounds,
+                persona_synthesis_model=persona_synthesis_model,
+                duality_check_model=duality_check_model,
+                enable_duality_check=enable_duality_check,
+                budget_manager=budget_manager,
+            )
+            print(f"V2 pipeline: {persona_debate_rounds} persona debate rounds, "
+                  f"duality_check={'enabled' if enable_duality_check else 'disabled'}")
+        else:
+            graph, checkpointer = build_research_graph(
+                model=model,
+                workspace_dir=results_base_dir,
+                essential_imports=essential_imports,
+                require_pdf=args.require_pdf,
+                enforce_paper_artifacts=enforce_paper_artifacts,
+                require_experiment_plan=require_experiment_plan,
+                enable_math_agents=args.enable_math_agents,
+                enforce_editorial_artifacts=enforce_editorial_artifacts,
+                min_review_score=args.min_review_score,
+                pipeline_mode=effective_pipeline_mode,
+                followup_max_iterations=args.followup_max_iterations,
+                manager_max_steps=args.manager_max_steps if args.manager_max_steps else 50,
+                counsel_models=counsel_models_list,
+                tree_search_config=tree_search_config,
+                enable_milestone_gates=enable_milestone_gates,
+                adversarial_verification=adversarial_verification,
+            )
 
         if adversarial_verification:
             print("Adversarial verification enabled — red-team verifiers will "
@@ -744,6 +826,21 @@ def main():
             "milestone_timeout": milestone_timeout,
             "intermediate_validation_log": [],
             "finished": False,
+            # V2 pipeline fields (safe to include for v1 — ignored by v1 graph)
+            "pipeline_version": pipeline_version,
+            "research_proposal": None,
+            "brainstorm_output": None,
+            "brainstorm_history": [],
+            "research_goals": None,
+            "formalized_results": None,
+            "lit_review_feasibility": None,
+            "verify_completion_result": None,
+            "verify_completion_history": [],
+            "duality_check_result": None,
+            "lit_review_attempts": 0,
+            "brainstorm_cycle": 0,
+            "verify_rework_attempts": 0,
+            "duality_rework_attempts": 0,
         }
 
         # Use workspace_dir as thread_id for default resumability.
@@ -758,7 +855,53 @@ def main():
 
         print(f"\n{'='*50}\nRunning LangGraph research pipeline...\nTask: {task}\n{'='*50}")
 
-        final_state = graph.invoke(initial_state, config=run_config)
+        # --- Progress heartbeat watchdog (Tier 1.1) ---
+        # Writes a .progress_heartbeat file every 2 minutes so the campaign
+        # heartbeat / OpenClaw overseer can detect hung stages (process alive
+        # but not making progress for >30 min).
+        progress_file = os.path.join(results_base_dir, ".progress_heartbeat")
+        _graph_done = threading.Event()
+
+        def _watchdog_writer():
+            while not _graph_done.is_set():
+                try:
+                    tmp = progress_file + ".tmp"
+                    with open(tmp, "w") as f:
+                        json.dump({"ts": time.time(), "pid": os.getpid()}, f)
+                    os.replace(tmp, progress_file)
+                except OSError:
+                    pass  # disk full / permissions — non-fatal
+                _graph_done.wait(120)
+
+        watchdog_thread = threading.Thread(target=_watchdog_writer, daemon=True)
+        watchdog_thread.start()
+
+        # --- Hard timeout via SIGALRM (Tier 1.1) ---
+        max_run_seconds = getattr(args, "max_run_seconds", None)
+        _old_alarm_handler = None
+        if max_run_seconds and hasattr(signal, "SIGALRM"):
+            def _timeout_handler(signum, frame):
+                raise TimeoutError(
+                    f"Pipeline exceeded --max-run-seconds={max_run_seconds}. "
+                    f"Killing run to prevent infinite hang."
+                )
+            _old_alarm_handler = signal.signal(signal.SIGALRM, _timeout_handler)
+            signal.alarm(max_run_seconds)
+            print(f"Hard timeout set: {max_run_seconds}s")
+
+        try:
+            final_state = graph.invoke(initial_state, config=run_config)
+        finally:
+            _graph_done.set()
+            if max_run_seconds and hasattr(signal, "SIGALRM"):
+                signal.alarm(0)  # cancel alarm
+                if _old_alarm_handler is not None:
+                    signal.signal(signal.SIGALRM, _old_alarm_handler)
+            # Clean up progress heartbeat file on normal completion
+            try:
+                os.remove(progress_file)
+            except OSError:
+                pass
 
         result = final_state.get("agent_outputs", {})
         result = sanitize_result_payload(

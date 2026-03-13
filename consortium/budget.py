@@ -58,13 +58,48 @@ class BudgetManager:
                     f"fail_closed is enabled. Cannot safely continue without "
                     f"accurate spend tracking. Error: {exc}"
                 ) from exc
-            logger.warning(
-                "Budget state file '%s' is corrupted (%s); resetting to zero. "
-                "Spend tracking may be inaccurate.",
-                self.state_path, exc,
-            )
-            self.total_usd = 0.0
-            self.by_model = {}
+            # Attempt recovery from the append-only ledger (more resilient
+            # than the state file since it's never overwritten in place).
+            recovered = self._recover_from_ledger()
+            if recovered:
+                logger.warning(
+                    "Budget state file '%s' corrupted (%s); recovered $%.4f from ledger.",
+                    self.state_path, exc, self.total_usd,
+                )
+            else:
+                logger.warning(
+                    "Budget state file '%s' corrupted (%s) and ledger unavailable; "
+                    "resetting to zero. Spend tracking may be inaccurate.",
+                    self.state_path, exc,
+                )
+                self.total_usd = 0.0
+                self.by_model = {}
+
+    def _recover_from_ledger(self) -> bool:
+        """Attempt to reconstruct spend totals from the append-only ledger file."""
+        if not os.path.exists(self.ledger_path):
+            return False
+        try:
+            total = 0.0
+            by_model: Dict[str, float] = {}
+            with open(self.ledger_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    entry = json.loads(line)
+                    cost = float(entry.get("cost_usd", 0.0))
+                    model = entry.get("model_id", "unknown")
+                    total += cost
+                    by_model[model] = by_model.get(model, 0.0) + cost
+            self.total_usd = total
+            self.by_model = by_model
+            # Persist the recovered state so next load doesn't re-scan
+            self._save_state()
+            return True
+        except Exception as exc:
+            logger.debug("Ledger recovery failed: %s", exc)
+            return False
 
     def _save_state(self) -> None:
         os.makedirs(os.path.dirname(self.state_path), exist_ok=True)
@@ -74,8 +109,12 @@ class BudgetManager:
             "by_model": self.by_model,
             "last_updated": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         }
-        with open(self.state_path, "w", encoding="utf-8") as f:
+        # Atomic write: write to tmp then rename to prevent corruption
+        # from crashes during write.
+        tmp_path = self.state_path + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
+        os.replace(tmp_path, self.state_path)
 
     def _write_ledger(self, entry: Dict[str, Any]) -> None:
         os.makedirs(os.path.dirname(self.ledger_path), exist_ok=True)

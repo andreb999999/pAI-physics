@@ -196,36 +196,71 @@ def launch_stage(
         subprocess.Popen handle. The caller is responsible for writing the PID
         to status and calling write_status().
     """
-    launcher = launcher or _find_launcher()
     workspace = build_stage_workspace(stage, spec, status)
-    task_prompt = build_task_prompt(stage, spec, status, campaign_dir)
 
-    cmd: List[str] = [
-        sys.executable,
-        launcher,
-        "--task", task_prompt,
-        "--resume", workspace,
-    ]
+    # Determine whether this stage uses a custom launcher script
+    if stage.launcher_script:
+        # Custom launcher (e.g., run_campaign_planner.py)
+        repo_root = os.path.dirname(os.path.abspath(_find_launcher()))
+        custom_launcher = os.path.join(repo_root, stage.launcher_script)
+        if not os.path.exists(custom_launcher):
+            raise FileNotFoundError(
+                f"Custom launcher_script not found: {custom_launcher}"
+            )
 
-    # Pass stage-specific extra args
-    stage_args = list(stage.args)
-    callback_host = _extract_flag_value(stage_args, "--callback_host") or "127.0.0.1"
-    callback_port = _extract_flag_value(stage_args, "--callback_port")
-    if callback_port is None:
-        chosen_port = _find_available_callback_port(host=callback_host)
-        stage_args.extend(["--callback_port", str(chosen_port)])
-        print(
-            f"[campaign] Stage '{stage.id}' using callback port {chosen_port} "
-            f"(HTTP {chosen_port + 1})."
-        )
+        # Serialize planning config if available
+        planning_config_json = "{}"
+        if spec.planning:
+            import json as _json
+            planning_config_json = _json.dumps({
+                "enabled": spec.planning.enabled,
+                "max_stages": spec.planning.max_stages,
+                "max_parallel": spec.planning.max_parallel,
+                "human_review": spec.planning.human_review,
+                "planning_budget_usd": spec.planning.planning_budget_usd,
+                "planning_timeout_seconds": spec.planning.planning_timeout_seconds,
+            })
 
-    cmd.extend(stage_args)
+        cmd: List[str] = [
+            sys.executable,
+            custom_launcher,
+            "--workspace", workspace,
+            "--planning-config", planning_config_json,
+        ]
+        cwd = repo_root
+    else:
+        # Standard launch_multiagent.py
+        launcher = launcher or _find_launcher()
+        task_prompt = build_task_prompt(stage, spec, status, campaign_dir)
 
-    # Write the enriched task to a sidecar file for auditability
-    os.makedirs(os.path.join(campaign_dir, "task_prompts"), exist_ok=True)
-    task_file = os.path.join(campaign_dir, "task_prompts", f"{stage.id}_task.txt")
-    with open(task_file, "w") as f:
-        f.write(task_prompt)
+        cmd = [
+            sys.executable,
+            launcher,
+            "--task", task_prompt,
+            "--resume", workspace,
+        ]
+
+        # Pass stage-specific extra args
+        stage_args = list(stage.args)
+        callback_host = _extract_flag_value(stage_args, "--callback_host") or "127.0.0.1"
+        callback_port = _extract_flag_value(stage_args, "--callback_port")
+        if callback_port is None:
+            chosen_port = _find_available_callback_port(host=callback_host)
+            stage_args.extend(["--callback_port", str(chosen_port)])
+            print(
+                f"[campaign] Stage '{stage.id}' using callback port {chosen_port} "
+                f"(HTTP {chosen_port + 1})."
+            )
+
+        cmd.extend(stage_args)
+
+        # Write the enriched task to a sidecar file for auditability
+        os.makedirs(os.path.join(campaign_dir, "task_prompts"), exist_ok=True)
+        task_file = os.path.join(campaign_dir, "task_prompts", f"{stage.id}_task.txt")
+        with open(task_file, "w") as f:
+            f.write(task_prompt)
+
+        cwd = os.path.dirname(launcher)
 
     env = {**os.environ, **(extra_env or {})}
 
@@ -240,8 +275,13 @@ def launch_stage(
         stdout=stdout_log,
         stderr=stderr_log,
         env=env,
-        cwd=os.path.dirname(launcher),
+        cwd=cwd,
     )
+
+    # Close file handles in the parent — the child inherited the FDs.
+    # Prevents file descriptor exhaustion over many stages.
+    stdout_log.close()
+    stderr_log.close()
 
     # Write PID file
     pid_dir = os.path.join(campaign_dir, "pids")
@@ -290,7 +330,6 @@ def launch_stage_slurm(
     launcher = launcher or _find_launcher()
     repo_dir = os.path.dirname(os.path.abspath(launcher))
     workspace = build_stage_workspace(stage, spec, status)
-    task_prompt = build_task_prompt(stage, spec, status, campaign_dir)
 
     # Load Engaging config for defaults
     config_path = os.environ.get("ENGAGING_CONFIG", os.path.join(repo_dir, "engaging_config.yaml"))
@@ -306,27 +345,63 @@ def launch_stage_slurm(
     mem = mem or orch_config.get("mem", "32G")
     cpus = cpus or orch_config.get("cpus", 4)
 
-    conda_init = cluster_config.get(
-        "conda_init_script",
-        "/orcd/data/lhtsai/001/om2/mabdel03/miniforge3/etc/profile.d/conda.sh",
-    )
-    conda_env_prefix = cluster_config.get(
-        "conda_env_prefix",
-        "/home/mabdel03/conda_envs/consortium",
-    )
+    conda_init = cluster_config.get("conda_init_script") or os.environ.get("CONDA_INIT_SCRIPT", "")
+    conda_env_prefix = cluster_config.get("conda_env_prefix") or os.environ.get("CONDA_PREFIX", "")
+    if not conda_init or not conda_env_prefix:
+        print(
+            f"[campaign] WARNING: conda_init_script={conda_init!r}, "
+            f"conda_env_prefix={conda_env_prefix!r}. "
+            f"Set these in engaging_config.yaml or via CONDA_INIT_SCRIPT / CONDA_PREFIX env vars."
+        )
     conda_module = cluster_config.get("modules", {}).get("conda", "miniforge/25.11.0-0")
 
-    # Build the command-line arguments
-    stage_args = list(stage.args)
-    # No callback port needed — SLURM job runs non-interactively
-    # Remove any callback args to avoid port conflicts
-    stage_args_str = " ".join(f'"{a}"' if " " in a else a for a in stage_args)
+    # Build the run command based on whether this stage uses a custom launcher
+    if stage.launcher_script:
+        # Custom launcher script (e.g., run_campaign_planner.py)
+        import json as _json
+        planning_config_json = "{}"
+        if spec.planning:
+            planning_config_json = _json.dumps({
+                "enabled": spec.planning.enabled,
+                "max_stages": spec.planning.max_stages,
+                "max_parallel": spec.planning.max_parallel,
+                "human_review": spec.planning.human_review,
+                "planning_budget_usd": spec.planning.planning_budget_usd,
+                "planning_timeout_seconds": spec.planning.planning_timeout_seconds,
+            })
+        # Write planning config to a file (avoids shell quoting issues)
+        os.makedirs(os.path.join(campaign_dir, "task_prompts"), exist_ok=True)
+        config_file = os.path.join(campaign_dir, "task_prompts", f"{stage.id}_planning_config.json")
+        with open(config_file, "w") as f:
+            f.write(planning_config_json)
 
-    # Write the task to a temp file (avoids shell quoting issues with long prompts)
-    os.makedirs(os.path.join(campaign_dir, "task_prompts"), exist_ok=True)
-    task_file = os.path.join(campaign_dir, "task_prompts", f"{stage.id}_task.txt")
-    with open(task_file, "w") as f:
-        f.write(task_prompt)
+        run_command = (
+            f"python {stage.launcher_script} \\\n"
+            f"    --workspace {workspace} \\\n"
+            f"    --planning-config {config_file}"
+        )
+    else:
+        # Standard launch_multiagent.py
+        task_prompt = build_task_prompt(stage, spec, status, campaign_dir)
+
+        # Build the command-line arguments
+        stage_args = list(stage.args)
+        # No callback port needed — SLURM job runs non-interactively
+        # Remove any callback args to avoid port conflicts
+        stage_args_str = " ".join(f'"{a}"' if " " in a else a for a in stage_args)
+
+        # Write the task to a temp file (avoids shell quoting issues with long prompts)
+        os.makedirs(os.path.join(campaign_dir, "task_prompts"), exist_ok=True)
+        task_file = os.path.join(campaign_dir, "task_prompts", f"{stage.id}_task.txt")
+        with open(task_file, "w") as f:
+            f.write(task_prompt)
+
+        run_command = (
+            f"python launch_multiagent.py \\\n"
+            f"    --task \"$(cat {task_file})\" \\\n"
+            f"    --resume {workspace} \\\n"
+            f"    {stage_args_str}"
+        )
 
     # SLURM log directory
     log_dir = os.path.join(campaign_dir, "logs")
@@ -385,10 +460,7 @@ export ENGAGING_CONFIG="{config_path}"
 
 cd {repo_dir}
 
-python launch_multiagent.py \\
-    --task "$(cat {task_file})" \\
-    --resume {workspace} \\
-    {stage_args_str}
+{run_command}
 
 EXIT_CODE=$?
 echo "Stage {stage.id} completed with exit code $EXIT_CODE at $(date)"

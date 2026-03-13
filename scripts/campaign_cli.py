@@ -598,6 +598,91 @@ def cmd_launchable(args, spec, status, campaign_dir: str) -> int:
     })
 
 
+def cmd_approve_plan(args, spec, status, campaign_dir: str) -> int:
+    """Approve the dynamic campaign plan for execution."""
+    approval_path = os.path.join(campaign_dir, "plan_approval.json")
+    if os.path.exists(approval_path):
+        with open(approval_path) as f:
+            existing = json.load(f)
+        return _json_out({
+            "error": f"Plan already has action: {existing.get('action')}",
+            "approval_path": approval_path,
+        }, 1)
+
+    # Check that a plan exists
+    plan_review_path = os.path.join(campaign_dir, "campaign_plan_review.md")
+    planning_counsel_ws = status.stage_workspace("planning_counsel")
+    plan_json_path = os.path.join(planning_counsel_ws, "campaign_plan.json") if planning_counsel_ws else ""
+
+    if not plan_json_path or not os.path.exists(plan_json_path):
+        return _json_out({"error": "No campaign plan found. Has planning_counsel completed?"}, 1)
+
+    approval = {
+        "action": "approve",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    with open(approval_path, "w") as f:
+        json.dump(approval, f, indent=2)
+
+    return _json_out({
+        "action": "approved",
+        "approval_path": approval_path,
+        "message": "Campaign plan approved. Next heartbeat tick will inject dynamic stages.",
+    })
+
+
+def cmd_reject_plan(args, spec, status, campaign_dir: str) -> int:
+    """Reject the dynamic campaign plan."""
+    approval_path = os.path.join(campaign_dir, "plan_approval.json")
+    rejection = {
+        "action": "reject",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    with open(approval_path, "w") as f:
+        json.dump(rejection, f, indent=2)
+
+    return _json_out({
+        "action": "rejected",
+        "approval_path": approval_path,
+        "message": "Campaign plan rejected. Campaign will halt at planning stage.",
+    })
+
+
+def cmd_show_plan(args, spec, status, campaign_dir: str) -> int:
+    """Show the proposed campaign plan."""
+    # Try campaign_plan_review.md first
+    review_path = os.path.join(campaign_dir, "campaign_plan_review.md")
+    plan_json = None
+
+    planning_counsel_ws = status.stage_workspace("planning_counsel")
+    if planning_counsel_ws:
+        plan_json_path = os.path.join(planning_counsel_ws, "campaign_plan.json")
+        if os.path.exists(plan_json_path):
+            with open(plan_json_path) as f:
+                plan_json = json.load(f)
+
+    review_md = None
+    if os.path.exists(review_path):
+        with open(review_path) as f:
+            review_md = f.read()
+
+    if not plan_json and not review_md:
+        return _json_out({"error": "No campaign plan found. Has planning_counsel completed?"}, 1)
+
+    # Check approval status
+    approval_path = os.path.join(campaign_dir, "plan_approval.json")
+    approval_status = None
+    if os.path.exists(approval_path):
+        with open(approval_path) as f:
+            approval_status = json.load(f).get("action")
+
+    return _json_out({
+        "plan": plan_json,
+        "review_markdown": review_md,
+        "approval_status": approval_status,
+    })
+
+
 # ------------------------------------------------------------------
 # CLI parser
 # ------------------------------------------------------------------
@@ -646,6 +731,10 @@ def main() -> int:
 
     subs.add_parser("launchable", help="List stages ready to launch")
 
+    subs.add_parser("approve-plan", help="Approve the dynamic campaign plan")
+    subs.add_parser("reject-plan", help="Reject the dynamic campaign plan")
+    subs.add_parser("show-plan", help="Show the proposed campaign plan")
+
     args = parser.parse_args()
 
     try:
@@ -665,6 +754,9 @@ def main() -> int:
             "distill": cmd_distill,
             "rewrite-task": cmd_rewrite_task,
             "launchable": cmd_launchable,
+            "approve-plan": cmd_approve_plan,
+            "reject-plan": cmd_reject_plan,
+            "show-plan": cmd_show_plan,
         }
 
         return cmd_map[args.command](args, spec, status, campaign_dir)

@@ -319,4 +319,44 @@ Examples:
         help="Seconds to wait for human response at milestone gates before auto-proceeding (default: 3600).",
     )
 
+    # -----------------------------------------------------------------
+    # V2 pipeline — persona council
+    # -----------------------------------------------------------------
+    parser.add_argument(
+        "--pipeline-version",
+        type=str,
+        choices=["v1", "v2"],
+        default="v1",
+        help="Pipeline version: 'v1' (default, linear flow) or 'v2' (persona-council-driven "
+             "flow with feedback loops and duality check).",
+    )
+
+    parser.add_argument(
+        "--persona-debate-rounds",
+        type=int,
+        default=None,
+        help="Number of debate rounds in persona council (default: 3, "
+             "overrides persona_council.max_debate_rounds in config).",
+    )
+
+    parser.add_argument(
+        "--no-duality-check",
+        action="store_true",
+        default=False,
+        help="Disable duality check gate even when using --pipeline-version v2.",
+    )
+
+    # -----------------------------------------------------------------
+    # Reliability — watchdog & timeout
+    # -----------------------------------------------------------------
+    parser.add_argument(
+        "--max-run-seconds",
+        type=int,
+        default=None,
+        help="Hard timeout for the entire pipeline run in seconds. "
+             "If the graph hasn't finished after this many seconds, the "
+             "process is killed with SIGALRM. Also enables a progress "
+             "heartbeat file (.progress_heartbeat) in the workspace.",
+    )
+
     return parser.parse_args()

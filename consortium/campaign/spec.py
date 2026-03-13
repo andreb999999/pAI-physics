@@ -23,6 +23,8 @@ class Stage:
     success_artifacts: dict = field(default_factory=lambda: {"required": [], "optional": []})
     # artifact_validators: {"filename": {"min_size_bytes": N, "must_contain": ["str"], "must_not_contain": ["str"]}}
     artifact_validators: Dict[str, dict] = field(default_factory=dict)
+    # Optional override: run this script instead of launch_multiagent.py
+    launcher_script: Optional[str] = None
 
     @classmethod
     def from_dict(cls, d: dict) -> "Stage":
@@ -46,13 +48,14 @@ class Stage:
 
         return cls(
             id=d["id"],
-            task_file=d["task_file"],
+            task_file=d.get("task_file", ""),
             args=d.get("args", []),
             depends_on=depends_on,
             context_from=context_from,
             memory_dirs=d.get("memory_dirs", []),
             success_artifacts=artifacts,
             artifact_validators=validators,
+            launcher_script=d.get("launcher_script"),
         )
 
 
@@ -161,6 +164,34 @@ class RepairConfig:
 
 
 @dataclass
+class PlanningConfig:
+    """Configuration for dynamic campaign planning via multi-model counsel."""
+    enabled: bool = False
+    base_task_file: str = ""           # task file for the discovery stage
+    max_stages: int = 6                # hard cap on non-paper stages
+    max_parallel: int = 2              # max simultaneously-running stages
+    counsel_models: Optional[List[dict]] = None  # override default counsel models
+    human_review: bool = True          # pause for human approval before executing
+    planning_budget_usd: float = 5.0   # budget for the planning counsel debate
+    planning_timeout_seconds: int = 600
+    stage_type_constraints: dict = field(default_factory=dict)  # override args per type
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "PlanningConfig":
+        return cls(
+            enabled=d.get("enabled", False),
+            base_task_file=d.get("base_task_file", ""),
+            max_stages=int(d.get("max_stages", 6)),
+            max_parallel=int(d.get("max_parallel", 2)),
+            counsel_models=d.get("counsel_models"),
+            human_review=d.get("human_review", True),
+            planning_budget_usd=float(d.get("planning_budget_usd", 5.0)),
+            planning_timeout_seconds=int(d.get("planning_timeout_seconds", 600)),
+            stage_type_constraints=d.get("stage_type_constraints", {}),
+        )
+
+
+@dataclass
 class CampaignSpec:
     name: str
     workspace_root: str
@@ -172,6 +203,7 @@ class CampaignSpec:
     max_idle_ticks: int = 6             # auto-exit after N consecutive no-op ticks
     max_campaign_hours: float = 0       # 0 = unlimited; hard wall-time for entire campaign
     counsel_model_timeout_seconds: int = 600  # per-model timeout for counsel sandbox agents
+    planning: Optional[PlanningConfig] = None  # dynamic campaign planning config
 
     def stage(self, stage_id: str) -> Optional[Stage]:
         for s in self.stages:
@@ -191,11 +223,69 @@ def load_spec(path: str) -> CampaignSpec:
     name = raw.get("name") or os.path.basename(os.path.dirname(os.path.abspath(path)))
     workspace_root = raw.get("workspace_root", "results/campaign")
 
+    # Parse planning config (if present)
+    planning_raw = raw.get("planning", {})
+    planning = PlanningConfig.from_dict(planning_raw) if planning_raw else None
+
     stages_raw = raw.get("stages", [])
-    if not stages_raw:
+
+    # When dynamic planning is enabled, stages can be empty (they'll be generated)
+    if not stages_raw and not (planning and planning.enabled):
         raise ValueError(f"campaign.yaml at {path} has no stages defined.")
 
     stages = [Stage.from_dict(s) for s in stages_raw]
+
+    # Auto-inject discovery_plan and planning_counsel stages when planning is enabled
+    if planning and planning.enabled:
+        if not planning.base_task_file:
+            raise ValueError(
+                "planning.base_task_file is required when planning.enabled is true."
+            )
+        existing_ids = {s.id for s in stages}
+
+        if "discovery_plan" not in existing_ids:
+            discovery_stage = Stage(
+                id="discovery_plan",
+                task_file=planning.base_task_file,
+                args=[
+                    "--pipeline-mode", "full_research",
+                    "--enable-math-agents", "--enable-counsel",
+                    "--enable-tree-search",
+                ],
+                depends_on=[],
+                context_from=[],
+                memory_dirs=["paper_workspace/"],
+                success_artifacts={
+                    "required": [
+                        "paper_workspace/research_plan.tex",
+                        "paper_workspace/track_decomposition.json",
+                    ],
+                    "optional": [
+                        "paper_workspace/research_plan_tasks.json",
+                    ],
+                },
+            )
+            stages.insert(0, discovery_stage)
+
+        if "planning_counsel" not in existing_ids:
+            planning_counsel_stage = Stage(
+                id="planning_counsel",
+                task_file=planning.base_task_file,
+                args=[],
+                depends_on=["discovery_plan"],
+                context_from=["discovery_plan"],
+                memory_dirs=[],
+                success_artifacts={
+                    "required": ["campaign_plan.json"],
+                    "optional": ["campaign_plan_review.md"],
+                },
+                launcher_script="scripts/run_campaign_planner.py",
+            )
+            # Insert after discovery_plan
+            discovery_idx = next(
+                (i for i, s in enumerate(stages) if s.id == "discovery_plan"), 0
+            )
+            stages.insert(discovery_idx + 1, planning_counsel_stage)
 
     # Validate dependency references
     ids = {s.id for s in stages}
@@ -220,6 +310,7 @@ def load_spec(path: str) -> CampaignSpec:
         max_idle_ticks=int(raw.get("max_idle_ticks", 6)),
         max_campaign_hours=float(raw.get("max_campaign_hours", 0)),
         counsel_model_timeout_seconds=int(raw.get("counsel_model_timeout_seconds", 600)),
+        planning=planning,
     )
 
 

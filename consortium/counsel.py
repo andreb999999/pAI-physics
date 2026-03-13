@@ -29,6 +29,8 @@ from langchain_core.messages import HumanMessage
 from langchain_core.tools import BaseTool
 from langgraph.prebuilt import create_react_agent
 
+from .utils import normalize_model_for_litellm
+
 
 # Default model specs matching the 4 top-tier frontier models.
 # Used for debate-phase litellm.completion calls (where we need the model name string).
@@ -89,7 +91,7 @@ def _populate_sandbox(workspace_dir: str, sandbox_dir: str) -> None:
     """Copy current workspace into a fresh sandbox, skipping sandbox subtrees and DBs."""
     if os.path.exists(sandbox_dir):
         shutil.rmtree(sandbox_dir)
-    max_attempts = 3
+    max_attempts = 5
     for attempt in range(max_attempts):
         try:
             shutil.copytree(
@@ -98,12 +100,19 @@ def _populate_sandbox(workspace_dir: str, sandbox_dir: str) -> None:
                 ignore=shutil.ignore_patterns("counsel_sandboxes", "*.db", "*.lock"),
             )
             return
-        except InterruptedError:
+        except (InterruptedError, OSError) as exc:
             if attempt == max_attempts - 1:
+                print(
+                    f"[counsel] sandbox copy failed after {max_attempts} attempts: {exc}"
+                )
                 raise
+            print(
+                f"[counsel] sandbox copy attempt {attempt + 1} failed ({exc}), "
+                f"retrying in {1 << attempt}s..."
+            )
             if os.path.exists(sandbox_dir):
                 shutil.rmtree(sandbox_dir, ignore_errors=True)
-            time.sleep(0.2 * (2**attempt))
+            time.sleep(1 << attempt)  # 1s, 2s, 4s, 8s
 
 
 def _sandbox_tools(original_tools: List[BaseTool], sandbox_dir: str) -> List[BaseTool]:
@@ -126,8 +135,14 @@ def _sandbox_tools(original_tools: List[BaseTool], sandbox_dir: str) -> List[Bas
             if hasattr(tool, "allow_accepted_transition"):
                 kwargs["allow_accepted_transition"] = tool.allow_accepted_transition
             result.append(cls(**kwargs) if kwargs else tool)
-        except Exception:
-            result.append(tool)
+        except Exception as exc:
+            # WARNING: falling back to the original tool means sandbox writes
+            # go to the main workspace, bypassing isolation. Log prominently.
+            print(
+                f"[counsel] WARNING: could not re-instantiate tool '{tool.name}' "
+                f"for sandbox ({exc}). Excluding from sandbox tools to preserve isolation."
+            )
+            # Skip the tool rather than break sandbox isolation
     return result
 
 
@@ -143,7 +158,9 @@ def _merge_sandbox(sandbox_dir: str, workspace_dir: str) -> None:
             try:
                 shutil.copy2(src, dst)
             except Exception as exc:
-                print(f"[counsel] merge warning: failed to copy {rel}: {exc}")
+                # Log merge failures prominently — critical files failing to merge
+                # can cause downstream pipeline errors.
+                print(f"[counsel] merge WARNING: failed to copy {rel}: {exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -239,6 +256,22 @@ def run_counsel_stage(
                         break
 
     # ------------------------------------------------------------------
+    # 1b. Quorum check — skip debate if too few models succeeded
+    # ------------------------------------------------------------------
+    _MIN_QUORUM = 2  # need at least 2 valid outputs for meaningful debate
+    valid_outputs = [
+        i for i, out in enumerate(sandbox_outputs)
+        if out and not out.startswith("[") and not out.endswith("timed out]") and not out.endswith("failed]")
+    ]
+    if len(valid_outputs) < _MIN_QUORUM and len(counsel_models) >= _MIN_QUORUM:
+        print(
+            f"[counsel:{agent_name}] Only {len(valid_outputs)}/{len(counsel_models)} models "
+            f"produced valid output (quorum={_MIN_QUORUM}). Skipping debate, "
+            f"using best available sandbox output for synthesis."
+        )
+        max_debate_rounds = 0  # skip debate, go straight to synthesis
+
+    # ------------------------------------------------------------------
     # 2. Debate phase — all critiques per round run in parallel
     # ------------------------------------------------------------------
     formatted = "\n\n".join(
@@ -269,7 +302,7 @@ def run_counsel_stage(
                 extra_params.setdefault("reasoning_effort", extra_params.pop("effort"))
             try:
                 resp = litellm.completion(
-                    model=spec["model"],
+                    model=normalize_model_for_litellm(spec["model"]),
                     messages=[{"role": "user", "content": base_prompt}],
                     max_tokens=2048,
                     **extra_params,
@@ -333,7 +366,7 @@ def run_counsel_stage(
 
     try:
         resp = litellm.completion(
-            model=SYNTHESIS_MODEL,
+            model=normalize_model_for_litellm(SYNTHESIS_MODEL),
             messages=[{"role": "user", "content": synthesis_prompt}],
             max_tokens=8192,
             **_synth_params,

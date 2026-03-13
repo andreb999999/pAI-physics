@@ -107,6 +107,36 @@ class ResearchState(TypedDict):
     intermediate_validation_log: list[dict]  # [{checkpoint, timestamp, results}]
 
     # -----------------------------------------------------------------
+    # V2 pipeline — persona council output
+    # -----------------------------------------------------------------
+    research_proposal: Optional[str]           # 1-2 page synthesized proposal from persona council
+    pipeline_version: str                      # "v1" or "v2"
+
+    # -----------------------------------------------------------------
+    # V2 pipeline — brainstorm & goals
+    # -----------------------------------------------------------------
+    brainstorm_output: Optional[str]           # structured practical approaches
+    brainstorm_history: list[str]              # accumulated brainstorm outputs across cycles
+    research_goals: Optional[dict]             # {goals: [{id, description, success_criteria, track}], total_goals: int}
+    formalized_results: Optional[str]          # structured findings from execution
+
+    # -----------------------------------------------------------------
+    # V2 pipeline — gate results
+    # -----------------------------------------------------------------
+    lit_review_feasibility: Optional[dict]     # {feasible: bool, reason: str}
+    verify_completion_result: Optional[dict]   # {goals_met, goals_total, ratio, verdict, goal_verdicts}
+    verify_completion_history: list[dict]      # previous verify_completion_results for progress vetting
+    duality_check_result: Optional[dict]       # {both_passed, check_a: {passed, reasoning, score, suggestions}, check_b: {...}}
+
+    # -----------------------------------------------------------------
+    # V2 pipeline — loop counters
+    # -----------------------------------------------------------------
+    lit_review_attempts: int                   # lit_review→council loop (max 2)
+    brainstorm_cycle: int                      # brainstorm re-entry from verify or duality (max 3)
+    verify_rework_attempts: int                # verify→formalize_goals loop (max 3)
+    duality_rework_attempts: int               # duality→followup_lit→brainstorm loop (max 2)
+
+    # -----------------------------------------------------------------
     # Terminal flag
     # -----------------------------------------------------------------
     finished: bool

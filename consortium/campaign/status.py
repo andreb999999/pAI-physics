@@ -22,7 +22,9 @@ campaign_status.json schema:
 
 from __future__ import annotations
 
+import fcntl
 import json
+import logging
 import os
 import signal
 import subprocess
@@ -38,6 +40,8 @@ except ImportError:
 
 from .spec import CampaignSpec, Stage
 
+_logger = logging.getLogger(__name__)
+
 STATUS_FILE = "campaign_status.json"
 _LOCK_TIMEOUT = 30  # seconds
 
@@ -46,7 +50,7 @@ _LOCK_TIMEOUT = 30  # seconds
 def _status_lock(campaign_dir: str):
     """Context manager that holds an exclusive file lock on the status file.
 
-    Falls back to a no-op context manager if filelock is not installed.
+    Uses filelock if available, otherwise falls back to fcntl.flock() on POSIX.
     """
     lock_path = os.path.join(campaign_dir, "campaign_status.lock")
     if _FILELOCK_AVAILABLE:
@@ -54,7 +58,18 @@ def _status_lock(campaign_dir: str):
         with lock:
             yield
     else:
-        yield
+        # Fallback: use fcntl.flock() (available on all POSIX systems)
+        _logger.warning(
+            "filelock not installed — using fcntl.flock() fallback. "
+            "Install filelock for better cross-platform locking: pip install filelock"
+        )
+        fd = os.open(lock_path, os.O_CREAT | os.O_RDWR)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
 
 # Stage status constants
 PENDING = "pending"
@@ -62,6 +77,7 @@ IN_PROGRESS = "in_progress"
 COMPLETED = "completed"
 FAILED = "failed"
 REPAIRING = "repairing"
+PLANNING = "planning"  # Waiting for human review of dynamic campaign plan
 
 
 class CampaignStatus:
@@ -300,8 +316,13 @@ def is_pid_alive(pid: int) -> bool:
         return True
 
 
-def is_slurm_job_alive(job_id: int) -> bool:
-    """Return True if a SLURM job is still active (PENDING, RUNNING, etc.).
+def is_slurm_job_alive(job_id: int) -> Optional[bool]:
+    """Check if a SLURM job is still active (PENDING, RUNNING, etc.).
+
+    Returns:
+        True  — job is confirmed alive (PENDING/RUNNING/etc.)
+        False — job is confirmed dead (not in squeue, exit code available)
+        None  — unknown (squeue timed out or unavailable; don't assume dead)
 
     Uses squeue for fast lookup — only lists active jobs.
     Works across nodes (unlike PID-based checking).
@@ -316,14 +337,25 @@ def is_slurm_job_alive(job_id: int) -> bool:
             timeout=10,
         )
         state = result.stdout.strip()
-        return state in ("PENDING", "RUNNING", "CONFIGURING", "COMPLETING", "REQUEUED")
-    except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
+        if state in ("PENDING", "RUNNING", "CONFIGURING", "COMPLETING", "REQUEUED"):
+            return True
+        # Empty output or terminal state = job finished
         return False
+    except subprocess.TimeoutExpired:
+        _logger.warning("squeue timed out checking job %d — treating as unknown", job_id)
+        return None
+    except FileNotFoundError:
+        _logger.warning("squeue not found — treating SLURM job %d as unknown", job_id)
+        return None
+    except Exception as exc:
+        _logger.warning("squeue failed for job %d (%s) — treating as unknown", job_id, exc)
+        return None
 
 
-def is_stage_alive(status: "CampaignStatus", stage_id: str) -> bool:
+def is_stage_alive(status: "CampaignStatus", stage_id: str) -> Optional[bool]:
     """Check if a stage is still running, using SLURM job ID or PID.
 
+    Returns True (alive), False (dead), or None (unknown — skip this tick).
     Prefers SLURM job ID check (works across nodes) over PID check (local only).
     """
     slurm_jid = status.stage_slurm_job_id(stage_id)

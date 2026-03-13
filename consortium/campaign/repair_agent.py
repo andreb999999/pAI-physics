@@ -698,6 +698,7 @@ APPROVED: <true|false>
             messages=[{"role": "user", "content": review_prompt}],
             temperature=repair_config.review_temperature,
             max_tokens=1000,
+            timeout=120,
         )
         review_text = response.choices[0].message.content or ""
     except Exception as e:
@@ -1145,13 +1146,12 @@ def submit_slurm_repair(
     eng_config = _load_engaging_config()
     cluster = eng_config.get("cluster", {})
     repair_cluster = cluster.get("repair", cluster.get("orchestrator", {}))
-    conda_init = cluster.get(
-        "conda_init_script",
-        "/orcd/data/lhtsai/001/om2/mabdel03/miniforge3/etc/profile.d/conda.sh",
-    )
-    conda_env = cluster.get("conda_env_prefix", "/home/mabdel03/conda_envs/consortium")
+    conda_init = cluster.get("conda_init_script") or os.environ.get("CONDA_INIT_SCRIPT", "")
+    conda_env = cluster.get("conda_env_prefix") or os.environ.get("CONDA_PREFIX", "")
     conda_module = cluster.get("modules", {}).get("conda", "miniforge/25.11.0-0")
-    repo_root = cluster.get("repo_root", "/orcd/scratch/orcd/012/mabdel03/AI_Researcher/phdlabor-1")
+    # Derive repo_root from this file's location if not configured
+    _default_repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    repo_root = cluster.get("repo_root", _default_repo_root)
 
     partition = repair_cluster.get("partition", "pi_tpoggio")
     wall_time = repair_cluster.get("time", "01:00:00")
@@ -1317,12 +1317,12 @@ def poll_slurm_repair(
     """
     sentinel = _repair_sentinel_path(campaign_dir, stage.id)
 
-    if not os.path.exists(sentinel):
-        return None  # still running or never submitted
-
+    # Atomic read: skip exists() check to avoid TOCTOU race
     try:
         with open(sentinel) as f:
             data = json.load(f)
+    except FileNotFoundError:
+        return None  # still running or never submitted
     except Exception as e:
         print(f"[repair:slurm] Error reading sentinel: {e}")
         return None
@@ -1354,10 +1354,12 @@ def poll_slurm_repair(
     print(f"[repair:slurm] Confidence: {report.get('confidence', 'unknown')}")
     print(f"[repair:slurm] Success: {success}")
 
-    # Clean up sentinel so it doesn't confuse future ticks
+    # Mark sentinel as processed (rename instead of delete to avoid race
+    # where a concurrent heartbeat tick misses the result).
     try:
-        os.remove(sentinel)
-    except Exception:
+        os.rename(sentinel, sentinel + ".processed")
+    except OSError:
+        # If rename fails (e.g., already processed by another tick), that's OK
         pass
 
     error = None

@@ -235,6 +235,63 @@ If the planner selects no execution tracks, the graph falls through directly to 
 
 **Tree search** (`--enable-tree-search`): In the theory track, the linear `MathProver` stage is replaced by a tree search controller that explores multiple proof strategies in parallel via DAG-layered best-first search. See [Agentic Tree Search](#agentic-tree-search).
 
+### V2 Pipeline (Persona-Council-Driven)
+
+Enable with `--pipeline-version v2`. V2 replaces the linear discovery phase with a persona council that evaluates the research direction from three critical lenses (practical compass, rigor/novelty, narrative architect) before committing resources. It adds feedback loops at multiple stages for self-correction.
+
+**V2-only agents**: `brainstorm_agent`, `formalize_goals_agent`, `formalize_results_agent`
+
+**V2-only gates**: `lit_review_gate` (feasibility check), `verify_completion` (three-way: complete/incomplete/rethink), `duality_gate` (internal consistency check)
+
+```mermaid
+flowchart TD
+    personaCouncil["PersonaCouncil\n(3-persona debate)"] --> litReview[LiteratureReviewAgent]
+    litReview --> litGate{LitReviewGate}
+    litGate -->|"feasible"| brainstorm[BrainstormAgent]
+    litGate -->|"infeasible"| personaCouncil
+
+    brainstorm --> formalGoals[FormalizeGoalsAgent]
+    formalGoals --> milestoneGoals[MilestoneGoals]
+    milestoneGoals --> trackRouter{TrackRouter}
+
+    subgraph theoryTrack ["TheoryTrack (--enable-math-agents)"]
+        mathLit2[MathLiterature] --> mathProp2[MathProposer] --> mathProver2["MathProver\n(or TreeSearch)"] --> mathRigorous2[MathRigorousVerifier] --> mathEmpirical2[MathEmpiricalVerifier] --> proofTrans2[ProofTranscription]
+    end
+
+    subgraph experimentTrack [ExperimentTrack]
+        expLit2[ExperimentLiterature] --> expDesign2[ExperimentDesign] --> expExec2[Experimentation] --> expVerify2[ExperimentVerification] --> expTrans2[ExperimentTranscription]
+    end
+
+    trackRouter -->|"theory"| mathLit2
+    trackRouter -->|"empirical"| expLit2
+    proofTrans2 --> trackMerge2[TrackMerge]
+    expTrans2 --> trackMerge2
+
+    trackMerge2 --> verifyCompletion{VerifyCompletion}
+    verifyCompletion -->|"complete"| formalResults[FormalizeResultsAgent]
+    verifyCompletion -->|"incomplete"| formalGoals
+    verifyCompletion -->|"rethink"| brainstorm
+
+    formalResults --> dualityCheck["DualityCheck\n(--no-duality-check to skip)"]
+    dualityCheck --> dualityGate{DualityGate}
+    dualityGate -->|"pass"| resourcePrep2[ResourcePreparation]
+    dualityGate -->|"fail"| followupLit[FollowupLitReview] --> brainstorm
+
+    resourcePrep2 --> writeup2[Writeup] --> proofread2[Proofreading] --> reviewer2[Reviewer]
+    reviewer2 --> validationGate2{ValidationGate}
+    validationGate2 -->|"pass"| endNode2((END))
+    validationGate2 -->|"fail"| writeup2
+
+    classDef counselNode stroke:#6366f1,stroke-width:2px,stroke-dasharray:5
+    class litReview,brainstorm,formalGoals,formalResults,mathLit2,mathProp2,mathProver2,mathRigorous2,mathEmpirical2,proofTrans2,expLit2,expDesign2,expExec2,expVerify2,expTrans2,resourcePrep2,writeup2,proofread2,reviewer2 counselNode
+```
+
+**V2-specific CLI flags**:
+- `--pipeline-version v2` — select the persona-council-driven pipeline
+- `--persona-debate-rounds N` — number of debate rounds in persona council (default: 3)
+- `--no-duality-check` — skip the duality check gate (formalize results goes directly to paper production)
+- `--adversarial-verification` — run a hostile red-team verifier after cooperative verifiers pass
+
 ## Quick Start
 
 From repository root (`consortium`):
@@ -465,6 +522,24 @@ python launch_multiagent.py \
 
 Tree search with counsel at every node is the most expensive configuration (~15-20x per-claim cost vs. baseline).
 
+### V2 Pipeline (Persona-Council-Driven, Maximum Quality)
+
+```bash
+python launch_multiagent.py \
+  --task "Full persona-council-driven run with tree search, counsel, and adversarial verification." \
+  --pipeline-version v2 \
+  --enable-math-agents \
+  --enable-counsel \
+  --enable-tree-search \
+  --tree-counsel-mode all_nodes \
+  --persona-debate-rounds 5 \
+  --adversarial-verification \
+  --enforce-paper-artifacts \
+  --require-pdf
+```
+
+V2 adds persona council evaluation, feasibility gating, verify-completion feedback loops, and duality checking. Use `--no-duality-check` to skip the duality gate.
+
 ## Resume and Stage-Based Resume
 
 ### Resume a Workspace
@@ -597,7 +672,7 @@ flowchart TD
 
     heartbeat --> launchNext{"Next PENDING\nstage ready?"}
     launchNext -->|"yes"| buildPrompt["Build enriched prompt\n(task + memory summaries)"]
-    buildPrompt --> launch["launch_multiagent.py\n(Consortium 24-agent pipeline)"]
+    buildPrompt --> launch["launch_multiagent.py\n(Consortium multi-agent pipeline)"]
     launchNext -->|"no"| wait
 
     heartbeat -.->|"on events"| notify["Notifications\n(ntfy / Slack / Telegram / SMS)"]
@@ -866,6 +941,10 @@ Use `python launch_multiagent.py --help` for full output.
 | `--no-counsel` | `false` | Force-disable counsel |
 | `--counsel-max-debate-rounds` | `None` (effective `3`) | Override counsel debate rounds |
 | `--max-rebuttal-iterations` | `2` | Max reviewer → writeup rebuttal loops |
+| `--pipeline-version` | `v1` | Select pipeline version (`v1` or `v2`) |
+| `--persona-debate-rounds` | `None` (effective `3`) | Number of debate rounds in persona council (V2 only) |
+| `--no-duality-check` | `false` | Disable duality check gate in V2 pipeline |
+| `--adversarial-verification` | `false` | Enable hostile red-team verifier for claims |
 | `--enable-tree-search` | `false` | Enable agentic tree search (parallel proof strategies in theory track) |
 | `--tree-max-breadth` | `3` | Max parallel branches per decision point |
 | `--tree-max-depth` | `4` | Max debugging/refinement recursion depth |
@@ -1034,7 +1113,7 @@ Core orchestration:
 - `launch_multiagent.py`: thin entry point
 - `consortium/runner.py`: run lifecycle, config loading, model/counsel/tree-search setup, workspace/checkpoint initialization, execution
 - `consortium/utils.py`: model factory and `build_research_graph()` wrapper that returns the compiled graph plus checkpointer
-- `consortium/graph.py`: direct-wired LangGraph definition, track router, novelty gate, follow-up gate, validation gate, and theory/experiment subgraph builders
+- `consortium/graph.py`: direct-wired LangGraph definitions for both V1 and V2 pipelines, track router, gates (novelty, follow-up, validation, lit-review, verify-completion, duality), and theory/experiment subgraph builders
 - `consortium/state.py`: `ResearchState` schema, including `track_decomposition`, track status fields, tree search state, and cycle counters
 - `consortium/models.py`: canonical model registry with context limits and provider mappings
 - `consortium/workflow_utils.py`: shared follow-up parsing, required-artifact construction, and validation helpers
@@ -1043,7 +1122,7 @@ Core orchestration:
 
 Major package areas:
 
-- `consortium/agents/`: 20 specialist agent implementations, base agent factory, and track merge node
+- `consortium/agents/`: 22+ specialist agent implementations (V1 core + V2 additions), base agent factory, and track merge node
 - `consortium/toolkits/search/`: arXiv/web/search/document inspection tools (including Open Deep Search with web scraping, reranking, and SERP integration)
 - `consortium/toolkits/experimentation/`: experiment execution helpers (including SLURM job submission)
 - `consortium/toolkits/writeup/`: LaTeX generation/compilation/reflection, citation search, data visualization (comparison plots, training analysis, statistical analysis, multi-panel composition), and VLM document analysis
@@ -1058,10 +1137,12 @@ Major package areas:
 
 Notable agent groups:
 
-- **Discovery**: `ideation_agent`, `literature_review_agent`, `research_planner_agent`
+- **Discovery (V1)**: `ideation_agent`, `literature_review_agent`, `research_planner_agent`
+- **Discovery (V2)**: `persona_council`, `literature_review_agent`, `brainstorm_agent`, `formalize_goals_agent`
 - **Theory track**: `math_literature_agent`, `math_proposer_agent`, `math_prover_agent`, `math_rigorous_verifier_agent`, `math_empirical_verifier_agent`, `proof_transcription_agent`
 - **Experiment track**: `experiment_literature_agent`, `experiment_design_agent`, `experimentation_agent`, `experiment_verification_agent`, `experiment_transcription_agent`
-- **Post-track / papering**: `track_merge`, `synthesis_literature_review_agent`, `results_analysis_agent`, `resource_preparation_agent`, `writeup_agent`, `proofreading_agent`, `reviewer_agent`
+- **Post-track (V1)**: `track_merge`, `synthesis_literature_review_agent`, `results_analysis_agent`, `resource_preparation_agent`, `writeup_agent`, `proofreading_agent`, `reviewer_agent`
+- **Post-track (V2)**: `track_merge`, `verify_completion`, `formalize_results_agent`, `duality_check`, `resource_preparation_agent`, `writeup_agent`, `proofreading_agent`, `reviewer_agent`
 
 ## Math Workflow
 

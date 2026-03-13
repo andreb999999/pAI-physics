@@ -18,6 +18,21 @@ from .results_analysis_instructions import RESULTS_ANALYSIS_INSTRUCTIONS
 from .workspace_management import WORKSPACE_GUIDANCE
 from .writeup_instructions import WRITEUP_INSTRUCTIONS
 
+# v2 pipeline prompt modules
+from .persona_instructions import (
+    PRACTICAL_COMPASS_PERSONA,
+    RIGOR_AND_NOVELTY_PERSONA,
+    NARRATIVE_ARCHITECT_PERSONA,
+    PERSONA_SYNTHESIS_PROMPT,
+)
+from .duality_check_instructions import (
+    DUALITY_CHECK_A_PROMPT,
+    DUALITY_CHECK_B_PROMPT,
+)
+from .brainstorm_instructions import BRAINSTORM_INSTRUCTIONS
+from .formalize_goals_instructions import FORMALIZE_GOALS_INSTRUCTIONS
+from .formalize_results_instructions import FORMALIZE_RESULTS_INSTRUCTIONS
+
 __all__ = [
     "IDEATION_INSTRUCTIONS",
     "EXPERIMENTATION_INSTRUCTIONS",
@@ -33,4 +48,14 @@ __all__ = [
     "MATH_LITERATURE_INSTRUCTIONS",
     "PROOF_TRANSCRIPTION_INSTRUCTIONS",
     "WORKSPACE_GUIDANCE",
+    # v2 pipeline
+    "PRACTICAL_COMPASS_PERSONA",
+    "RIGOR_AND_NOVELTY_PERSONA",
+    "NARRATIVE_ARCHITECT_PERSONA",
+    "PERSONA_SYNTHESIS_PROMPT",
+    "DUALITY_CHECK_A_PROMPT",
+    "DUALITY_CHECK_B_PROMPT",
+    "BRAINSTORM_INSTRUCTIONS",
+    "FORMALIZE_GOALS_INSTRUCTIONS",
+    "FORMALIZE_RESULTS_INSTRUCTIONS",
 ]

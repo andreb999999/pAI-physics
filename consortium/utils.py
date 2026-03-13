@@ -10,6 +10,18 @@ from .models import AVAILABLE_MODELS  # noqa: F401 — re-exported for backward 
 logger = logging.getLogger(__name__)
 
 
+def normalize_model_for_litellm(model: str) -> str:
+    """Add provider prefix for direct litellm.completion() calls.
+
+    The LangChain ChatLiteLLM wrapper (create_model) already handles this,
+    but direct litellm.completion() calls need the prefix to route correctly.
+    Without ``gemini/``, litellm routes to Vertex AI (requires google.auth).
+    """
+    if "gemini" in model and not model.startswith("gemini/"):
+        return f"gemini/{model}"
+    return model
+
+
 def _require_env(key: str, model_name: str) -> str:
     """Get a required environment variable or raise a descriptive error."""
     value = os.environ.get(key)

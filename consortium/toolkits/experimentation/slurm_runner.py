@@ -99,15 +99,9 @@ def submit_experiment_job(
     mem = mem or exp_config.get("mem", "64G")
     cpus = cpus or exp_config.get("cpus", 8)
 
-    # Conda settings
-    conda_init = cluster.get(
-        "conda_init_script",
-        "/orcd/data/lhtsai/001/om2/mabdel03/miniforge3/etc/profile.d/conda.sh",
-    )
-    conda_env_prefix = cluster.get(
-        "conda_env_prefix",
-        "/home/mabdel03/conda_envs/consortium",
-    )
+    # Conda settings — prefer config, fall back to env vars
+    conda_init = cluster.get("conda_init_script") or os.environ.get("CONDA_INIT_SCRIPT", "")
+    conda_env_prefix = cluster.get("conda_env_prefix") or os.environ.get("CONDA_PREFIX", "")
     conda_module = cluster.get("modules", {}).get("conda", "miniforge/25.11.0-0")
     cuda_module = cluster.get("modules", {}).get("cuda", "cuda/12.4.0")
     cudnn_module = cluster.get("modules", {}).get("cudnn", "cudnn/9.8.0.87-cuda12")

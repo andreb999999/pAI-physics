@@ -68,6 +68,7 @@ def encode_image_to_base64(image_data: Union[str, bytes, List[bytes]]) -> str:
 @backoff.on_exception(
     backoff.expo,
     (openai.RateLimitError, openai.APITimeoutError, anthropic.RateLimitError),
+    max_tries=5,
 )
 def get_response_from_vlm(
     prompt: str,
@@ -125,6 +126,7 @@ def get_response_from_vlm(
             max_tokens=4096,
             n=1,
             seed=0,
+            timeout=180,
         )
         _record_response_token_usage(response, model, "vlm")
         content_response = response.choices[0].message.content
@@ -147,6 +149,7 @@ def get_response_from_vlm(
             system=system_message,
             messages=[{"role": "user", "content": anthropic_content}],
             max_tokens=4096,
+            timeout=180,
         )
         _record_response_token_usage(response, model, "vlm")
         text_blocks = [

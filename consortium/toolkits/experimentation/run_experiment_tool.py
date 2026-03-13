@@ -84,47 +84,52 @@ class RunExperimentTool(BaseTool):
             if os.path.exists(candidate):
                 return candidate
 
-        # Strategy 3: Look for conda environment Python by name
+        # Strategy 3: Check CONSORTIUM_PYTHON env var (explicit override)
+        explicit_python = os.environ.get("CONSORTIUM_PYTHON")
+        if explicit_python and os.path.exists(explicit_python):
+            return explicit_python
+
+        # Strategy 4: Look for conda environment Python by name
         conda_env = os.environ.get('CONDA_DEFAULT_ENV')
         if conda_env:
-            # Try common conda base locations (including HPC/Engaging paths)
             conda_bases = [
-                "/orcd/data/lhtsai/001/om2/mabdel03/miniforge3",
                 os.path.expanduser("~/.conda"),
                 os.path.expanduser("~/miniforge3"),
                 os.path.expanduser("~/anaconda3"),
                 os.path.expanduser("~/miniconda3"),
                 "/opt/conda",
             ]
+            # Also check CONDA_BASE if available
+            conda_base_env = os.environ.get("CONDA_BASE")
+            if conda_base_env:
+                conda_bases.insert(0, conda_base_env)
             for base in conda_bases:
                 candidate = os.path.join(base, "envs", conda_env, "bin", "python")
                 if os.path.exists(candidate):
                     return candidate
 
-        # Strategy 4: Check for specific environment names
+        # Strategy 5: Check for common environment names in standard locations
         env_names = ['consortium', 'ai_scientist', 'ai_scientist_v2', 'as_env']
         conda_bases = [
-            "/orcd/data/lhtsai/001/om2/mabdel03/miniforge3",
             os.path.expanduser("~/.conda"),
             os.path.expanduser("~/miniforge3"),
             os.path.expanduser("~/anaconda3"),
             os.path.expanduser("~/miniconda3"),
             "/opt/conda",
         ]
+        # Also check ~/conda_envs (prefix-based envs)
+        prefix_dirs = [os.path.expanduser("~/conda_envs")]
         for env_name in env_names:
             for base in conda_bases:
                 candidate = os.path.join(base, "envs", env_name, "bin", "python")
                 if os.path.exists(candidate):
                     return candidate
-        # Also check prefix-based envs in known locations
-        prefix_candidates = [
-            "/home/mabdel03/conda_envs/consortium/bin/python",
-        ]
-        for candidate in prefix_candidates:
-            if os.path.exists(candidate):
-                return candidate
+            for prefix_dir in prefix_dirs:
+                candidate = os.path.join(prefix_dir, env_name, "bin", "python")
+                if os.path.exists(candidate):
+                    return candidate
 
-        # Strategy 5: Fall back to system python
+        # Strategy 6: Fall back to system python
         return "python"
 
     def _run(self, idea_json: str, code_model: str = None,

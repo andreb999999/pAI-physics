@@ -40,10 +40,14 @@ if _TEX_LIVE_BIN not in os.environ.get("PATH", ""):
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(_HERE))
 
+# Load .env so notification credentials (TELEGRAM_BOT_TOKEN, etc.) are available
+from dotenv import load_dotenv
+load_dotenv(os.path.join(os.path.dirname(_HERE), ".env"), override=False)
+
 from consortium.campaign.spec import load_spec
 from consortium.campaign.status import (
     COMPLETED, FAILED, IN_PROGRESS, PENDING, REPAIRING,
-    check_stage_artifacts, init_status, is_pid_alive,
+    check_stage_artifacts, init_status, is_pid_alive, is_slurm_job_alive,
     read_status, write_status,
 )
 from consortium.campaign.runner import launch_stage
@@ -55,6 +59,10 @@ from consortium.campaign.notify import (
 )
 from consortium.campaign.repair_agent import (
     attempt_repair, submit_slurm_repair, poll_slurm_repair,
+)
+from consortium.campaign.planner import (
+    format_plan_for_review, generate_task_files,
+    load_campaign_plan, plan_to_stages,
 )
 
 
@@ -171,6 +179,186 @@ def _check_repairing_timeout(stage, status, spec, campaign_dir: str) -> bool:
     return False
 
 
+def _apply_campaign_plan(spec, status, campaign_dir: str):
+    """Read planning counsel output, inject dynamic stages into spec and status.
+
+    Called after the planning_counsel stage completes. Reads campaign_plan.json,
+    optionally waits for human approval, generates task files, and patches the
+    spec with dynamically generated stages.
+
+    Returns the patched spec, or None if blocked (human review pending).
+    """
+    plan_workspace = status.stage_workspace("planning_counsel")
+    if not plan_workspace:
+        print("[heartbeat] No workspace found for planning_counsel stage.")
+        return None
+
+    plan_path = os.path.join(plan_workspace, "campaign_plan.json")
+    if not os.path.exists(plan_path):
+        print(f"[heartbeat] campaign_plan.json not found at {plan_path}")
+        return None
+
+    plan = load_campaign_plan(plan_path)
+
+    # Human review gate
+    if spec.planning and spec.planning.human_review:
+        approval_path = os.path.join(campaign_dir, "plan_approval.json")
+        if not os.path.exists(approval_path):
+            # Write review materials and notify, then halt
+            review_md = format_plan_for_review(plan)
+            review_path = os.path.join(campaign_dir, "campaign_plan_review.md")
+            with open(review_path, "w") as f:
+                f.write(review_md)
+            print(f"[heartbeat] Campaign plan written for review: {review_path}")
+            notify(
+                f"Campaign '{spec.name}' plan ready for review. "
+                f"See {review_path}. Run 'campaign_cli.py approve-plan' to proceed.",
+                spec.notification,
+            )
+            return None  # halt until human approves
+
+        with open(approval_path) as f:
+            approval = json.load(f)
+        if approval.get("action") != "approve":
+            print(f"[heartbeat] Plan not approved (action={approval.get('action')}). Halting.")
+            return None
+
+    # Generate task files
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    task_dir = os.path.join(repo_root, "automation_tasks", "generated")
+    generate_task_files(plan, task_dir)
+    print(f"[heartbeat] Generated task files in {task_dir}")
+
+    # Convert to Stage objects
+    new_stages = plan_to_stages(plan, task_dir, spec.planning)
+
+    # Patch spec: keep discovery_plan + planning_counsel, add dynamic stages
+    preserved = [s for s in spec.stages if s.id in ("discovery_plan", "planning_counsel")]
+    spec.stages = preserved + new_stages
+
+    # Update status with new stage entries
+    for s in new_stages:
+        if s.id not in status.raw()["stages"]:
+            status.raw()["stages"][s.id] = {
+                "status": PENDING,
+                "workspace": None,
+                "pid": None,
+                "slurm_job_id": None,
+                "started_at": None,
+                "completed_at": None,
+                "missing_artifacts": [],
+                "fail_reason": None,
+            }
+    write_status(campaign_dir, status)
+
+    # Write resolved spec for auditability
+    _write_resolved_spec(spec, campaign_dir)
+
+    stage_ids = [s.id for s in new_stages]
+    print(f"[heartbeat] Injected {len(new_stages)} dynamic stages: {stage_ids}")
+    notify(
+        f"Campaign '{spec.name}' plan approved. "
+        f"{len(new_stages)} dynamic stages injected: {stage_ids}",
+        spec.notification,
+    )
+
+    return spec
+
+
+def _write_resolved_spec(spec, campaign_dir: str) -> None:
+    """Write the resolved campaign spec (with dynamic stages) for auditability."""
+    path = os.path.join(campaign_dir, "resolved_campaign_spec.json")
+    resolved = {
+        "name": spec.name,
+        "workspace_root": spec.workspace_root,
+        "stages": [
+            {
+                "id": s.id,
+                "task_file": s.task_file,
+                "args": s.args,
+                "depends_on": s.depends_on,
+                "context_from": s.context_from,
+                "memory_dirs": s.memory_dirs,
+                "success_artifacts": s.success_artifacts,
+                "launcher_script": s.launcher_script,
+            }
+            for s in spec.stages
+        ],
+    }
+    with open(path, "w") as f:
+        json.dump(resolved, f, indent=2)
+    print(f"[heartbeat] Written resolved spec: {path}")
+
+
+_HANG_THRESHOLD_SECONDS = 30 * 60  # 30 minutes with no progress = hung
+
+
+def _check_progress_heartbeat(workspace: str) -> tuple:
+    """Check if a stage's progress heartbeat file indicates a hang.
+
+    Returns (is_hung: bool, stale_minutes: float).
+    If the progress file doesn't exist, the stage predates the watchdog —
+    fall back to workspace mtime heuristic.
+    """
+    progress_file = os.path.join(workspace, ".progress_heartbeat")
+    try:
+        with open(progress_file) as f:
+            data = json.load(f)
+        ts = data.get("ts", 0)
+        elapsed = _time.time() - ts
+        return (elapsed > _HANG_THRESHOLD_SECONDS, elapsed / 60.0)
+    except (FileNotFoundError, json.JSONDecodeError, KeyError, TypeError):
+        # No progress file — check workspace file mtime as fallback
+        return _check_workspace_mtime(workspace)
+
+
+def _check_workspace_mtime(workspace: str) -> tuple:
+    """Fallback hang detection: check newest file mtime in workspace.
+
+    Returns (is_hung: bool, stale_minutes: float).
+    """
+    if not workspace or not os.path.isdir(workspace):
+        return (False, 0.0)
+    newest = 0.0
+    try:
+        for entry in os.scandir(workspace):
+            try:
+                mt = entry.stat().st_mtime
+                if mt > newest:
+                    newest = mt
+            except OSError:
+                continue
+    except OSError:
+        return (False, 0.0)
+    if newest == 0.0:
+        return (False, 0.0)
+    elapsed = _time.time() - newest
+    return (elapsed > _HANG_THRESHOLD_SECONDS, elapsed / 60.0)
+
+
+def _kill_stage(pid: int | None, slurm_job_id: int | None) -> None:
+    """Best-effort kill of a hung stage process."""
+    import signal as _signal
+    if slurm_job_id and slurm_job_id > 0:
+        try:
+            import subprocess
+            subprocess.run(
+                ["scancel", str(slurm_job_id)],
+                capture_output=True, timeout=10,
+            )
+            print(f"[heartbeat] Sent scancel to SLURM job {slurm_job_id}")
+        except Exception as exc:
+            print(f"[heartbeat] scancel failed: {exc}")
+    if pid and pid > 0:
+        try:
+            os.kill(pid, _signal.SIGTERM)
+            print(f"[heartbeat] Sent SIGTERM to PID {pid}")
+        except ProcessLookupError:
+            pass  # already dead
+        except PermissionError:
+            print(f"[heartbeat] Cannot kill PID {pid} — permission denied")
+
+
 def run_heartbeat(
     spec,
     status,
@@ -208,22 +396,50 @@ def run_heartbeat(
             # If None, repair exhausted — fall through to normal failure handling
 
     # ----------------------------------------------------------------
-    # 1. Check any in-progress stage
+    # 1. Check all in-progress stages (supports parallel execution)
     # ----------------------------------------------------------------
+    any_alive = False
+    any_completed_this_tick = False
     for stage in spec.stages:
         sid = stage.id
         if not status.is_in_progress(sid):
             continue
 
         pid = status.stage_pid(sid)
+        slurm_jid = status.stage_slurm_job_id(sid)
         workspace = status.stage_workspace(sid) or ""
-        alive = is_pid_alive(pid) if pid else False
+
+        # Check liveness: prefer SLURM check (cross-node), fall back to PID
+        if slurm_jid:
+            slurm_alive = is_slurm_job_alive(slurm_jid)
+            if slurm_alive is None:
+                # squeue unavailable — skip this stage for this tick
+                print(
+                    f"[heartbeat] Stage '{sid}': squeue unavailable, "
+                    f"skipping liveness check this tick."
+                )
+                any_alive = True
+                continue
+            alive = slurm_alive
+        else:
+            alive = is_pid_alive(pid) if pid else False
+
+        # --- Hang detection via progress heartbeat (Tier 1.1) ---
+        # If the process is alive but hasn't updated .progress_heartbeat
+        # in >30 minutes, it's hung (e.g., stuck LLM call, infinite loop).
+        if alive and not force_advance:
+            hung, stale_minutes = _check_progress_heartbeat(workspace)
+            if hung:
+                print(
+                    f"[heartbeat] Stage '{sid}' HUNG: process alive (PID {pid}) "
+                    f"but no progress for {stale_minutes:.0f} minutes. Killing."
+                )
+                _kill_stage(pid, status.stage_slurm_job_id(sid))
+                alive = False  # fall through to failure handling below
 
         if alive and not force_advance:
             # Stage still running — check artifacts speculatively
             all_present, missing = check_stage_artifacts(workspace, stage)
-            summary = _build_summary(spec, status)
-            notify_heartbeat(summary, spec.notification)
             if not all_present:
                 print(
                     f"[heartbeat] Stage '{sid}' in progress (PID {pid}). "
@@ -231,8 +447,8 @@ def run_heartbeat(
                 )
             else:
                 print(f"[heartbeat] Stage '{sid}' in progress (PID {pid}). Artifacts look complete.")
-            _save_idle_tick_count(campaign_dir, 0)
-            return 1
+            any_alive = True
+            continue
 
         # Process is dead (or force_advance). Check artifacts.
         all_present, missing = check_stage_artifacts(workspace, stage)
@@ -250,6 +466,16 @@ def run_heartbeat(
             write_status(campaign_dir, status)
             distill_stage_memory(stage, workspace, campaign_dir)
             notify_stage_complete(sid, workspace, spec.notification)
+            any_completed_this_tick = True
+
+            # If planning_counsel just completed, apply the campaign plan
+            if sid == "planning_counsel" and spec.planning and spec.planning.enabled:
+                result = _apply_campaign_plan(spec, status, campaign_dir)
+                if result is None:
+                    # Human review pending or plan application failed
+                    _save_idle_tick_count(campaign_dir, 0)
+                    return 1
+                # spec has been patched with new stages — continue to Section 4
         else:
             reason = f"Process ended but required artifacts missing/invalid: {missing}"
             print(f"[heartbeat] Stage '{sid}' FAILED: {reason}")
@@ -266,8 +492,14 @@ def run_heartbeat(
             notify_stage_failed(sid, reason, spec.notification)
             return 2
 
+    if any_alive and not any_completed_this_tick:
+        summary = _build_summary(spec, status)
+        notify_heartbeat(summary, spec.notification)
         _save_idle_tick_count(campaign_dir, 0)
-        break  # Only process one in-progress stage per tick
+        return 1
+
+    if any_completed_this_tick:
+        _save_idle_tick_count(campaign_dir, 0)
 
     # ----------------------------------------------------------------
     # 2. Check for overall failure (with repair opportunity)
@@ -299,7 +531,12 @@ def run_heartbeat(
                                     f"{elapsed_min:.0f}min elapsed (limit={repair_config.escalation_timeout_minutes}min). "
                                     f"Auto-resetting repair attempts."
                                 )
-                                # Clear repair log to allow fresh attempts
+                                # Archive repair log (preserve diagnostic history)
+                                # then reset to allow fresh attempts
+                                old_log = stage_data.get("repair_log", [])
+                                if old_log:
+                                    archive = stage_data.setdefault("repair_log_archive", [])
+                                    archive.extend(old_log)
                                 stage_data["repair_log"] = []
                                 write_status(campaign_dir, status)
                                 # Try repair again with fresh budget
@@ -324,8 +561,23 @@ def run_heartbeat(
         return 0
 
     # ----------------------------------------------------------------
-    # 4. Find next pending stage to launch
+    # 4. Find all pending stages with satisfied deps and launch them
     # ----------------------------------------------------------------
+    from consortium.campaign.runner import build_stage_workspace
+
+    # If planning is enabled and planning_counsel is complete but plan
+    # not yet applied (e.g., human review just approved), apply it now.
+    if (spec.planning and spec.planning.enabled
+            and status.stage_status("planning_counsel") == COMPLETED
+            and not any(s.id not in ("discovery_plan", "planning_counsel")
+                        for s in spec.stages
+                        if s.id not in ("discovery_plan", "planning_counsel"))):
+        result = _apply_campaign_plan(spec, status, campaign_dir)
+        if result is None:
+            _save_idle_tick_count(campaign_dir, 0)
+            return 1
+
+    launched_any = False
     for stage in spec.stages:
         sid = stage.id
         if status.stage_status(sid) != PENDING:
@@ -335,15 +587,13 @@ def run_heartbeat(
 
         # Ready to launch
         proc = launch_stage(stage, spec, status, campaign_dir)
-        workspace = status.stage_workspace(stage.depends_on[0]) if stage.depends_on else \
-            os.path.join(spec.workspace_root, stage.id)
-        # Runner writes the actual workspace; read it back from the proc's args if needed.
-        # For now, update status with the workspace the runner chose.
-        from consortium.campaign.runner import build_stage_workspace
         workspace = build_stage_workspace(stage, spec, status)
         status.mark_in_progress(sid, workspace, proc.pid)
         write_status(campaign_dir, status)
         notify_stage_launched(sid, proc.pid, workspace, spec.notification)
+        launched_any = True
+
+    if launched_any:
         _save_idle_tick_count(campaign_dir, 0)
         return 3
 
@@ -398,10 +648,14 @@ def _validate_artifact_content(workspace: str, stage) -> list:
             continue
 
         # Content checks (for text files)
+        # Read up to 10MB for validation (100KB was too small for large JSON artifacts
+        # where required markers may appear beyond that offset).
+        _MAX_VALIDATE_BYTES = 10_000_000
         if any(artifact.endswith(ext) for ext in (".json", ".md", ".txt", ".tex", ".csv")):
             try:
+                read_limit = min(file_size, _MAX_VALIDATE_BYTES)
                 with open(full) as f:
-                    content = f.read(100_000)  # cap at 100KB
+                    content = f.read(read_limit)
             except Exception:
                 continue
 
@@ -426,7 +680,9 @@ def _compute_backoff_seconds(repair_config, attempt_num: int) -> float:
     """P0-4: Compute exponential backoff for repair attempt N."""
     base = repair_config.backoff_base_seconds
     cap = repair_config.backoff_max_seconds
-    delay = min(base * (2 ** (attempt_num - 1)), cap)
+    # Cap the exponent to avoid computing astronomically large integers
+    exponent = min(attempt_num - 1, 20)
+    delay = min(base * (1 << exponent), cap)
     return delay
 
 
