@@ -1,4 +1,4 @@
-# consortium: Multi-Agent Research-to-Paper Pipeline
+# OpenPI: Multi-Agent Research-to-Paper Pipeline
 
 Goal: Bring down the steer rate by 2-3 orders of magnitude. Don't know exactly what research will be automated, but we estimate that to go from idea/hypothesis to final paper of low to average quality, one needs on order of magnitude of 10^2 GPT Pro Calls, and we want to bring this down to 0-10 user prompts (steers). 
 
