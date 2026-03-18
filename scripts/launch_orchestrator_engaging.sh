@@ -5,7 +5,7 @@
 # Usage:
 #   ./scripts/submit_orchestrator.sh [--task "..." ] [extra flags...]
 #   # or directly:
-#   cd phdlabor-1 && mkdir -p slurm_outputs && sbatch scripts/launch_orchestrator_engaging.sh
+#   cd OpenPI && mkdir -p slurm_outputs && sbatch scripts/launch_orchestrator_engaging.sh
 #
 # The orchestrator makes LLM API calls over the network. It does NOT need GPU.
 # When the pipeline reaches the experimentation stage, GPU experiments are

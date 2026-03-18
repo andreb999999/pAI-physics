@@ -13,7 +13,7 @@
 source /orcd/data/lhtsai/001/om2/mabdel03/miniforge3/etc/profile.d/conda.sh
 
 # 2. Bootstrap the environment (creates conda env + installs deps)
-cd /orcd/scratch/orcd/012/mabdel03/AI_Researcher/phdlabor-1
+cd /orcd/scratch/orcd/012/mabdel03/AI_Researcher/OpenPI
 ./scripts/bootstrap.sh consortium full
 
 # 3. Set up API keys

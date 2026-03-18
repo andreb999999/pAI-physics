@@ -73,7 +73,7 @@ notification:
 ## Step 3: Initialize the Campaign
 
 ```bash
-cd /orcd/scratch/orcd/012/mabdel03/AI_Researcher/phdlabor-1
+cd /orcd/scratch/orcd/012/mabdel03/AI_Researcher/OpenPI
 
 source /orcd/data/lhtsai/001/om2/mabdel03/miniforge3/etc/profile.d/conda.sh
 conda activate /home/mabdel03/conda_envs/consortium

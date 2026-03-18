@@ -7,7 +7,7 @@
 
 set -uo pipefail
 
-REPO_ROOT="/orcd/scratch/orcd/012/mabdel03/AI_Researcher/phdlabor-1"
+REPO_ROOT="/orcd/scratch/orcd/012/mabdel03/AI_Researcher/OpenPI"
 GATEWAY_SCRIPT="$REPO_ROOT/scripts/launch_openclaw_gateway.sh"
 NTFY_TOPIC="OpenClaw-Engaging"
 

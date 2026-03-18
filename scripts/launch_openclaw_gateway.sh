@@ -4,15 +4,15 @@
 #SBATCH --time=12:00:00
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=8G
-#SBATCH --output=/orcd/scratch/orcd/012/mabdel03/AI_Researcher/phdlabor-1/slurm_outputs/openclaw_gw_%j.log
-#SBATCH --error=/orcd/scratch/orcd/012/mabdel03/AI_Researcher/phdlabor-1/slurm_outputs/openclaw_gw_%j.log
+#SBATCH --output=/orcd/scratch/orcd/012/mabdel03/AI_Researcher/OpenPI/slurm_outputs/openclaw_gw_%j.log
+#SBATCH --error=/orcd/scratch/orcd/012/mabdel03/AI_Researcher/OpenPI/slurm_outputs/openclaw_gw_%j.log
 
 # OpenClaw Gateway SLURM launcher — runs the gateway as a long-running service.
 # Self-resubmits before wall time expires.
 
 set -uo pipefail
 
-REPO_ROOT="/orcd/scratch/orcd/012/mabdel03/AI_Researcher/phdlabor-1"
+REPO_ROOT="/orcd/scratch/orcd/012/mabdel03/AI_Researcher/OpenPI"
 SCRIPT_PATH="$REPO_ROOT/scripts/launch_openclaw_gateway.sh"
 
 # --- Environment ---

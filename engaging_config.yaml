@@ -71,6 +71,6 @@ cluster:
   # ---------------------------------------------------------------------------
   # Paths
   # ---------------------------------------------------------------------------
-  repo_root: ${REPO_ROOT:-/orcd/scratch/orcd/012/mabdel03/AI_Researcher/phdlabor-1}
+  repo_root: ${REPO_ROOT:-/orcd/scratch/orcd/012/mabdel03/AI_Researcher/OpenPI}
   scratch_root: ${SCRATCH_ROOT:-/orcd/scratch/orcd/012/mabdel03/AI_Researcher}
-  slurm_output_dir: ${SLURM_OUTPUT_DIR:-/orcd/scratch/orcd/012/mabdel03/AI_Researcher/phdlabor-1/slurm_outputs}
+  slurm_output_dir: ${SLURM_OUTPUT_DIR:-/orcd/scratch/orcd/012/mabdel03/AI_Researcher/OpenPI/slurm_outputs}

@@ -1,4 +1,4 @@
-"""Agentic tree search for phdlabor-1.
+"""Agentic tree search for OpenPI.
 
 Implements DAG-layered best-first search for both theory (proof stage) and
 experiment tracks. Inspired by AI Scientist-v2 progressive agentic tree search,
