@@ -472,6 +472,9 @@ source {conda_init}
 # P2-7: Clear all inherited conda envs to avoid PATH collision
 conda deactivate 2>/dev/null || true
 conda deactivate 2>/dev/null || true
+# P5-1: Reset conda stacking state to guarantee a clean activation
+export CONDA_SHLVL=0
+unset CONDA_DEFAULT_ENV CONDA_PREFIX CONDA_PROMPT_MODIFIER 2>/dev/null || true
 conda activate {conda_env_prefix}
 
 # P2-8: Validate python resolves to expected env

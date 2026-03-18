@@ -34,25 +34,53 @@ STAGE_ARG_TEMPLATES: Dict[str, List[str]] = {
 
 STAGE_ARTIFACT_TEMPLATES: Dict[str, dict] = {
     "theory": {
+        # Pipeline writes theory artifacts into paper_workspace/ (claim_graph,
+        # formalized_results) and optionally math_workspace/ (proofs, checks).
         "success_artifacts": {
-            "required": ["math_workspace/claim_graph.json"],
-            "optional": ["math_workspace/proofs/", "math_workspace/checks/"],
+            "required": ["paper_workspace/claim_graph.json"],
+            "optional": [
+                "math_workspace/",
+                "paper_workspace/formalized_results.json",
+            ],
         },
-        "memory_dirs": ["math_workspace/"],
+        "artifact_validators": {
+            "paper_workspace/claim_graph.json": {
+                "min_size_bytes": 200,
+                "must_not_contain": ["not_executed", "placeholder"],
+            },
+        },
+        "memory_dirs": ["paper_workspace/"],
     },
     "experiment": {
+        # Pipeline writes experiment outputs into paper_workspace/ and
+        # experiments/ subdirectory.  The experiment_design.json and report
+        # PDFs land in paper_workspace/.
         "success_artifacts": {
-            "required": ["experiment_results.json", "experiment_analysis.md"],
-            "optional": ["experiment_workspace/"],
+            "required": ["paper_workspace/experiment_design.json"],
+            "optional": [
+                "experiments/",
+                "paper_workspace/",
+            ],
         },
-        "memory_dirs": ["experiment_workspace/"],
+        "artifact_validators": {
+            "paper_workspace/experiment_design.json": {
+                "min_size_bytes": 200,
+                "must_not_contain": ["not_executed", "placeholder", "TODO"],
+            },
+        },
+        "memory_dirs": ["paper_workspace/"],
     },
     "paper": {
         "success_artifacts": {
-            "required": ["final_paper.tex", "final_paper.pdf"],
+            "required": ["paper_workspace/final_paper.pdf", "paper_workspace/final_paper.tex"],
             "optional": ["paper_workspace/"],
         },
-        "memory_dirs": [],
+        "artifact_validators": {
+            "paper_workspace/final_paper.pdf": {
+                "min_size_bytes": 50000,
+            },
+        },
+        "memory_dirs": ["paper_workspace/"],
     },
 }
 
@@ -74,17 +102,20 @@ capabilities are enabled:
 ### theory
 - Runs the full pipeline with math agents enabled (formal proof, verification, claim graphs)
 - Best for: proving theorems, deriving bounds, formal analysis, mathematical modeling
-- Produces: claim_graph.json, formal proofs, verification reports
+- Produces: paper_workspace/claim_graph.json, formal proofs, verification reports
 
 ### experiment
 - Runs the full pipeline with experiment agents enabled (design, execution, verification)
 - Best for: empirical validation, benchmarks, ablation studies, data analysis
-- Produces: experiment_results.json, experiment_analysis.md, plots, code
+- Produces: paper_workspace/experiment_design.json, experiments/, plots, code
 
 ### paper
 - Runs the full pipeline focused on paper writing with PDF generation
 - Must be the FINAL stage — depends on all prior stages
-- Produces: final_paper.tex, final_paper.pdf
+- Produces: paper_workspace/final_paper.tex, paper_workspace/final_paper.pdf
+- IMPORTANT: The paper agent must produce exactly ONE final PDF at \
+paper_workspace/final_paper.pdf. Do not create multiple PDF variants or \
+intermediate compilations — compile only when the manuscript is ready
 
 ## Design Principles
 

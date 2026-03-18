@@ -51,6 +51,10 @@ Miniconda3-latest-MacOSX-x86_64.sh
 # Slurm job outputs
 slurm_outputs/
 
+# Archive — keep manifests + YAMLs, exclude large results and token ledgers
+archive/*/results/
+archive/*/token_ledger.jsonl
+
 # Local ad-hoc project workspaces (never commit)
 /project*/
 /my_project_*/

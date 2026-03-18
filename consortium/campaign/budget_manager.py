@@ -154,6 +154,34 @@ class CampaignBudgetManager:
         return f"Budget: ${total:.2f} / ${self.usd_limit:.2f} ({frac * 100:.0f}%) — Rigor level: {rigor.upper()}"
 
     # ------------------------------------------------------------------
+    # Hard-cap enforcement and threshold alerts
+    # ------------------------------------------------------------------
+
+    def is_budget_exceeded(self) -> bool:
+        """Return True if total spend has reached or exceeded the budget cap."""
+        if self.usd_limit <= 0:
+            return False  # unlimited
+        return self.total_spent >= self.usd_limit
+
+    def check_thresholds(self) -> list[str]:
+        """Return list of budget threshold alerts that should be fired.
+
+        Possible alerts: '85pct_warning', '95pct_critical', 'exceeded'.
+        Callers should use sentinel files to avoid re-firing the same alert.
+        """
+        if self.usd_limit <= 0:
+            return []  # unlimited
+        alerts = []
+        frac = self.spend_fraction
+        if frac >= 0.85:
+            alerts.append("85pct_warning")
+        if frac >= 0.95:
+            alerts.append("95pct_critical")
+        if frac >= 1.0:
+            alerts.append("exceeded")
+        return alerts
+
+    # ------------------------------------------------------------------
     # Stage budget allocation
     # ------------------------------------------------------------------
 

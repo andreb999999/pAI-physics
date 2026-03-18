@@ -243,11 +243,12 @@ def plan_to_stages(
         else:
             args = list(STAGE_ARG_TEMPLATES.get(ps.stage_type, []))
 
-        # Determine artifacts and memory dirs from templates
+        # Determine artifacts, validators, and memory dirs from templates
         tmpl = STAGE_ARTIFACT_TEMPLATES.get(ps.stage_type, {})
         success_artifacts = dict(tmpl.get("success_artifacts", {
             "required": [], "optional": [],
         }))
+        artifact_validators = dict(tmpl.get("artifact_validators", {}))
         memory_dirs = list(tmpl.get("memory_dirs", []))
 
         # context_from defaults to depends_on if not specified
@@ -264,6 +265,7 @@ def plan_to_stages(
             context_from=context_from,
             memory_dirs=memory_dirs,
             success_artifacts=success_artifacts,
+            artifact_validators=artifact_validators,
         ))
 
     return result

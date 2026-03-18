@@ -260,6 +260,15 @@ def init_status(campaign_dir: str, spec: "CampaignSpec", spec_file: str) -> Camp
             "spec_file": os.path.abspath(spec_file),
             "stages": {},
         }
+        # Preserve ALL existing stage entries (including dynamically injected
+        # stages not present in the current spec).  This fixes the critical
+        # bug where init_status() was called every heartbeat tick with a
+        # freshly-loaded spec that only contained the YAML-defined stages,
+        # silently dropping dynamically generated stages from status tracking.
+        spec_ids = {s.id for s in spec.stages}
+        for sid, sdata in existing_stages.items():
+            if sid not in spec_ids:
+                data["stages"][sid] = sdata
         for stage in spec.stages:
             existing_stage = existing_stages.get(stage.id, {})
             data["stages"][stage.id] = existing_stage or {
@@ -383,6 +392,32 @@ def infer_workspace_from_status_txt(candidate_dir: str) -> Optional[str]:
         if os.path.exists(os.path.join(full, "STATUS.txt")):
             return full
     return None
+
+
+def clean_orphaned_stages(campaign_dir: str, status: CampaignStatus) -> list[str]:
+    """Remove status entries whose workspace directory does not exist.
+
+    Prevents stale entries from crashed/aborted campaigns from accumulating.
+    Only removes stages that are in 'pending' or 'failed' state and whose
+    workspace was set but no longer exists on disk.
+
+    Returns list of removed stage IDs.
+    """
+    removed = []
+    stages = status.raw().get("stages", {})
+    for sid, sdata in list(stages.items()):
+        workspace = sdata.get("workspace")
+        if not workspace:
+            continue  # no workspace assigned yet — not orphaned
+        st = sdata.get("status", PENDING)
+        if st in (IN_PROGRESS, REPAIRING, COMPLETED):
+            continue  # don't touch active or completed stages
+        full_path = os.path.join(campaign_dir, workspace) if not os.path.isabs(workspace) else workspace
+        if not os.path.isdir(full_path):
+            _logger.info("Removing orphaned stage '%s' (workspace %s missing)", sid, workspace)
+            del stages[sid]
+            removed.append(sid)
+    return removed
 
 
 def _now() -> str:

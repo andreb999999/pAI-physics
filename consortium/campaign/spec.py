@@ -205,6 +205,7 @@ class CampaignSpec:
     counsel_model_timeout_seconds: int = 600  # per-model timeout for counsel sandbox agents
     planning: Optional[PlanningConfig] = None  # dynamic campaign planning config
     spec_file: str = ""  # absolute path to the campaign YAML that created this spec
+    budget_usd: float = 0.0  # 0 = unlimited; campaign-wide budget cap in USD
 
     def stage(self, stage_id: str) -> Optional[Stage]:
         for s in self.stages:
@@ -310,8 +311,8 @@ def load_spec(path: str) -> CampaignSpec:
             if ctx not in ids:
                 raise ValueError(f"Stage '{s.id}' context_from unknown stage '{ctx}'.")
 
-    notification = NotificationConfig.from_dict(raw.get("notification", {}))
-    repair = RepairConfig.from_dict(raw.get("repair", {}))
+    notification = NotificationConfig.from_dict(raw.get("notification") or {})
+    repair = RepairConfig.from_dict(raw.get("repair") or {})
 
     return CampaignSpec(
         name=name,
@@ -325,6 +326,7 @@ def load_spec(path: str) -> CampaignSpec:
         counsel_model_timeout_seconds=int(raw.get("counsel_model_timeout_seconds", 600)),
         planning=planning,
         spec_file=abs_path,
+        budget_usd=float(raw.get("budget_usd", 0)),
     )
 
 

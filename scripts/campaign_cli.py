@@ -652,6 +652,44 @@ def cmd_validate_pipeline(args, spec, status, campaign_dir: str) -> int:
     })
 
 
+def cmd_archive(args) -> int:
+    """Archive a campaign: move YAML + results + task files to archive/."""
+    from consortium.campaign.archive import archive_campaign
+
+    yaml_path = os.path.abspath(args.campaign)
+    result = archive_campaign(
+        yaml_path, REPO_ROOT,
+        force=args.force, dry_run=args.dry_run,
+    )
+    return _json_out(result)
+
+
+def cmd_archive_all(args) -> int:
+    """Archive all finished campaigns + migrate deprecated YAMLs."""
+    from consortium.campaign.archive import (
+        auto_archive_finished, migrate_deprecated_yamls,
+    )
+
+    results = {"migrated": [], "archived": []}
+
+    migrated = migrate_deprecated_yamls(REPO_ROOT, dry_run=args.dry_run)
+    results["migrated"] = migrated
+    if migrated:
+        label = "Would migrate" if args.dry_run else "Migrated"
+        print(f"[archive] {label} {len(migrated)} deprecated campaign(s): {migrated}")
+
+    archived = auto_archive_finished(REPO_ROOT, dry_run=args.dry_run)
+    results["archived"] = archived
+    if archived:
+        label = "Would archive" if args.dry_run else "Archived"
+        print(f"[archive] {label} {len(archived)} finished campaign(s): {archived}")
+
+    if not migrated and not archived:
+        print("[archive] Nothing to archive.")
+
+    return _json_out(results)
+
+
 def cmd_init_campaign(args) -> int:
     """Create a new campaign YAML + initialize status from scratch.
 
@@ -706,6 +744,33 @@ def cmd_init_campaign(args) -> int:
                 }, 1)
         except Exception:
             pass
+
+    # --- Auto-archive + clean-slate enforcement ---
+    from consortium.campaign.archive import (
+        auto_archive_finished, migrate_deprecated_yamls, verify_clean_slate,
+    )
+
+    # Migrate legacy *_DEPRECATED.yaml files (one-time, idempotent)
+    migrated = migrate_deprecated_yamls(REPO_ROOT)
+    if migrated:
+        print(f"[init] Migrated {len(migrated)} deprecated campaign(s) to archive/: {migrated}")
+
+    # Auto-archive finished campaigns (unless opted out)
+    if not getattr(args, "no_auto_archive", False):
+        archived = auto_archive_finished(REPO_ROOT)
+        if archived:
+            print(f"[init] Auto-archived {len(archived)} finished campaign(s): {archived}")
+
+    # Verify clean slate for the new campaign
+    violations = verify_clean_slate(slug, REPO_ROOT)
+    if violations and not args.force:
+        return _json_out({
+            "error": "Clean-slate check failed. Use --force to override.",
+            "violations": violations,
+        }, 1)
+    elif violations:
+        for v in violations:
+            print(f"[init] WARNING (--force): {v}")
 
     # Validate task file exists
     task_path = task_file
@@ -917,6 +982,77 @@ def cmd_show_plan(args, spec, status, campaign_dir: str) -> int:
     })
 
 
+def cmd_dashboard(args, spec, status, campaign_dir: str) -> int:
+    """Compact one-screen campaign dashboard (human-readable, not JSON)."""
+    from consortium.campaign.budget_manager import CampaignBudgetManager
+
+    budget_limit = getattr(spec, "budget_usd", 0) or 2000.0
+    budget_mgr = CampaignBudgetManager(campaign_dir, budget_limit)
+    total_spent = budget_mgr.total_spent
+    frac = budget_mgr.spend_fraction
+    rigor = budget_mgr.recommended_rigor_level().upper()
+
+    # Header
+    bar_len = 20
+    filled = int(frac * bar_len)
+    bar = "█" * filled + "░" * (bar_len - filled)
+    header = (
+        f"Campaign: {spec.name} | "
+        f"Budget: ${total_spent:.0f}/${budget_limit:.0f} [{bar}] {frac*100:.0f}% | "
+        f"Rigor: {rigor}"
+    )
+    sep = "=" * len(header)
+
+    lines = [sep, header, sep]
+
+    per_stage_costs = {e["stage"]: e["cost_usd"] for e in budget_mgr.per_stage_costs()}
+
+    for stage in spec.stages:
+        sid = stage.id
+        st = status.stage_status(sid)
+        cost = per_stage_costs.get(sid, 0.0)
+
+        # Compute elapsed time
+        stage_data = status.raw()["stages"].get(sid, {})
+        started = stage_data.get("started_at")
+        completed = stage_data.get("completed_at")
+        elapsed_str = ""
+        if started:
+            try:
+                start_dt = datetime.fromisoformat(started)
+                end_dt = datetime.fromisoformat(completed) if completed else datetime.now(timezone.utc)
+                elapsed = (end_dt - start_dt).total_seconds()
+                h, m = int(elapsed // 3600), int((elapsed % 3600) // 60)
+                elapsed_str = f"{h}h {m:02d}m"
+            except (ValueError, TypeError):
+                pass
+
+        # Status icon
+        icons = {
+            COMPLETED: "✓", IN_PROGRESS: "⟳", FAILED: "✗",
+            PENDING: "○", REPAIRING: "⚡",
+        }
+        icon = icons.get(st, "?")
+
+        lines.append(
+            f"  [{icon} {st:12s}] {sid:25s} | ${cost:>8.2f} | {elapsed_str:>8s}"
+        )
+
+    lines.append(sep)
+
+    # Summary
+    completed_count = sum(1 for s in spec.stages if status.is_complete(s.id))
+    total_count = len(spec.stages)
+    lines.append(
+        f"  Total: {completed_count}/{total_count} stages complete | "
+        f"${total_spent:.2f} spent"
+    )
+
+    # Print as plain text (not JSON — this is for human consumption)
+    print("\n".join(lines))
+    return 0
+
+
 # ------------------------------------------------------------------
 # CLI parser
 # ------------------------------------------------------------------
@@ -932,6 +1068,7 @@ def main() -> int:
     subs = parser.add_subparsers(dest="command", required=True)
 
     subs.add_parser("status", help="Full campaign status + budget")
+    subs.add_parser("dashboard", help="Compact one-screen campaign dashboard")
 
     p_logs = subs.add_parser("stage-logs", help="Read stage log tails")
     p_logs.add_argument("stage_id")
@@ -971,6 +1108,19 @@ def main() -> int:
     subs.add_parser("reject-plan", help="Reject the dynamic campaign plan")
     subs.add_parser("show-plan", help="Show the proposed campaign plan")
 
+    p_archive = subs.add_parser(
+        "archive",
+        help="Archive a campaign (move YAML + results + task files to archive/)",
+    )
+    p_archive.add_argument("--dry-run", action="store_true", help="Show what would be archived")
+    p_archive.add_argument("--force", action="store_true", help="Archive even if stages are running")
+
+    p_archive_all = subs.add_parser(
+        "archive-all",
+        help="Archive all finished campaigns + migrate deprecated YAMLs (no --campaign needed)",
+    )
+    p_archive_all.add_argument("--dry-run", action="store_true", help="Show what would be archived")
+
     p_init = subs.add_parser(
         "init-campaign",
         help="Create a new campaign YAML + initialize workspace (does NOT require --campaign)",
@@ -981,26 +1131,64 @@ def main() -> int:
     p_init.add_argument("--venue", default=None, help="Target venue (neurips, icml, iclr)")
     p_init.add_argument("--auto-approve", action="store_true", help="Skip human plan approval")
     p_init.add_argument("--force", action="store_true", help="Overwrite existing YAML/workspace")
+    p_init.add_argument("--no-auto-archive", action="store_true", help="Skip auto-archiving finished campaigns")
 
     args = parser.parse_args()
 
-    # init-campaign is special: it creates the YAML, so --campaign is not required.
+    # Commands that don't require --campaign / spec loading
     if args.command == "init-campaign":
         try:
             return cmd_init_campaign(args)
         except Exception as e:
             return _json_out({"error": str(e), "type": type(e).__name__}, 1)
 
+    if args.command == "archive-all":
+        try:
+            return cmd_archive_all(args)
+        except Exception as e:
+            return _json_out({"error": str(e), "type": type(e).__name__}, 1)
+
+    if args.command == "archive":
+        if not args.campaign:
+            parser.error("--campaign is required for 'archive'")
+        try:
+            return cmd_archive(args)
+        except Exception as e:
+            return _json_out({"error": str(e), "type": type(e).__name__}, 1)
+
     if not args.campaign:
-        parser.error("--campaign is required for all commands except init-campaign")
+        parser.error("--campaign is required for all commands except init-campaign and archive-all")
 
     try:
         spec = load_spec(args.campaign)
         campaign_dir = args.campaign_dir or spec.workspace_root
+
+        # Reload dynamic stages from resolved spec (same logic as heartbeat)
+        resolved_path = os.path.join(campaign_dir, "resolved_campaign_spec.json")
+        if os.path.exists(resolved_path):
+            try:
+                from consortium.campaign.spec import Stage
+                with open(resolved_path) as f:
+                    resolved = json.load(f)
+                resolved_stages = [
+                    Stage.from_dict(s) for s in resolved.get("stages", [])
+                ]
+                if resolved_stages:
+                    yaml_dir = os.path.dirname(os.path.abspath(args.campaign))
+                    for s in resolved_stages:
+                        if s.task_file and not os.path.isabs(s.task_file):
+                            s.task_file = os.path.join(yaml_dir, s.task_file)
+                        if s.launcher_script and not os.path.isabs(s.launcher_script):
+                            s.launcher_script = os.path.join(yaml_dir, s.launcher_script)
+                    spec.stages = resolved_stages
+            except (json.JSONDecodeError, KeyError):
+                pass
+
         status = init_status(campaign_dir, spec, args.campaign)
 
         cmd_map = {
             "status": cmd_status,
+            "dashboard": cmd_dashboard,
             "stage-logs": cmd_stage_logs,
             "stage-artifacts": cmd_stage_artifacts,
             "launch": cmd_launch,

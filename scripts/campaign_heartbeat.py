@@ -19,6 +19,7 @@ Exit codes:
     1  — campaign is in progress (normal heartbeat tick, nothing to do)
     2  — campaign has a failed stage (human attention required)
     3  — campaign was just advanced (new stage launched this tick)
+    4  — campaign is stuck (max idle ticks reached, dependencies unsatisfiable)
 """
 
 from __future__ import annotations
@@ -44,7 +45,7 @@ sys.path.insert(0, os.path.dirname(_HERE))
 from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(_HERE), ".env"), override=False)
 
-from consortium.campaign.spec import load_spec
+from consortium.campaign.spec import Stage, load_spec
 from consortium.campaign.status import (
     COMPLETED, FAILED, IN_PROGRESS, PENDING, REPAIRING,
     check_stage_artifacts, init_status, is_pid_alive, is_slurm_job_alive,
@@ -57,6 +58,7 @@ from consortium.campaign.notify import (
     notify_stage_complete, notify_stage_failed, notify_stage_launched,
     notify_repair_started, notify_repair_succeeded, notify_repair_failed,
 )
+from consortium.campaign.budget_manager import CampaignBudgetManager
 from consortium.campaign.repair_agent import (
     attempt_repair, submit_slurm_repair, poll_slurm_repair,
 )
@@ -106,6 +108,30 @@ def print_status_report(spec, status, campaign_dir: str) -> None:
         missing_str = f" MISSING={missing}" if missing else ""
         print(f"  [{st:12s}] {sid:30s} {ws}{pid_str}{missing_str}")
     print()
+
+
+def _preflight_api_check() -> bool:
+    """Quick check that the primary API (Anthropic) is reachable and has credits.
+
+    Makes a minimal API call (max_tokens=1) with the cheapest model.
+    Returns True if OK, False if the API is unreachable or credits are exhausted.
+    Cost: ~$0.001 per call.
+    """
+    try:
+        import litellm
+        resp = litellm.completion(
+            model="claude-haiku-4-5-20251001",
+            messages=[{"role": "user", "content": "ping"}],
+            max_tokens=1,
+        )
+        return True
+    except Exception as exc:
+        err_str = str(exc).lower()
+        if "credit" in err_str or "balance" in err_str or "limit" in err_str:
+            print(f"[heartbeat] API credit check failed: {exc}")
+        else:
+            print(f"[heartbeat] API pre-flight check error: {exc}")
+        return False
 
 
 def _check_campaign_wall_time(spec, status, campaign_dir: str) -> bool:
@@ -223,9 +249,10 @@ def _apply_campaign_plan(spec, status, campaign_dir: str):
             print(f"[heartbeat] Plan not approved (action={approval.get('action')}). Halting.")
             return None
 
-    # Generate task files
+    # Generate task files (namespaced per campaign to prevent cross-contamination)
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    task_dir = os.path.join(repo_root, "automation_tasks", "generated")
+    campaign_slug = os.path.basename(campaign_dir)
+    task_dir = os.path.join(repo_root, "automation_tasks", "generated", campaign_slug)
     generate_task_files(plan, task_dir)
     print(f"[heartbeat] Generated task files in {task_dir}")
 
@@ -280,6 +307,7 @@ def _write_resolved_spec(spec, campaign_dir: str) -> None:
                 "context_from": s.context_from,
                 "memory_dirs": s.memory_dirs,
                 "success_artifacts": s.success_artifacts,
+                "artifact_validators": s.artifact_validators,
                 "launcher_script": s.launcher_script,
             }
             for s in spec.stages
@@ -368,6 +396,41 @@ def run_heartbeat(
     """
     Core heartbeat logic. Returns exit code.
     """
+    # ----------------------------------------------------------------
+    # -3. Pre-flight API credit check
+    # ----------------------------------------------------------------
+    api_ok = _preflight_api_check()
+    if not api_ok:
+        sentinel = os.path.join(campaign_dir, ".api_credit_alert")
+        if not os.path.exists(sentinel):
+            msg = "API pre-flight check FAILED — credits may be exhausted or API unreachable."
+            print(f"[heartbeat] {msg}")
+            notify(msg, spec.notification)
+            with open(sentinel, "w") as f:
+                f.write(datetime.now(timezone.utc).isoformat())
+        else:
+            print("[heartbeat] API still unavailable (alert already sent).")
+        # Don't launch new stages or repairs, but allow monitoring of running ones
+        # by continuing past this check.
+
+    # ----------------------------------------------------------------
+    # -2. Budget threshold alerts
+    # ----------------------------------------------------------------
+    if spec.budget_usd > 0:
+        budget_mgr = CampaignBudgetManager(campaign_dir, spec.budget_usd)
+        for alert in budget_mgr.check_thresholds():
+            sentinel = os.path.join(campaign_dir, f".budget_alert_{alert}")
+            if not os.path.exists(sentinel):
+                msg = (
+                    f"Budget alert [{alert}]: "
+                    f"${budget_mgr.total_spent:.2f} / ${budget_mgr.usd_limit:.2f} "
+                    f"({budget_mgr.spend_fraction * 100:.0f}%)"
+                )
+                print(f"[heartbeat] {msg}")
+                notify(msg, spec.notification)
+                with open(sentinel, "w") as f:
+                    f.write(datetime.now(timezone.utc).isoformat())
+
     # ----------------------------------------------------------------
     # -1. Campaign wall-time check (P3-11)
     # ----------------------------------------------------------------
@@ -492,6 +555,27 @@ def run_heartbeat(
             notify_stage_failed(sid, reason, spec.notification)
             return 2
 
+    # ----------------------------------------------------------------
+    # 1.5. Catch-up memory distillation for completed stages
+    # ----------------------------------------------------------------
+    # Safety net: if any stage is marked completed but has no memory
+    # summary, distill it now.  This handles stages that completed
+    # between ticks, stages that were dynamically injected and completed
+    # before the heartbeat knew about them, or stages whose distillation
+    # failed on the first try.
+    for stage in spec.stages:
+        sid = stage.id
+        if status.is_complete(sid):
+            memory_path = os.path.join(campaign_dir, "memory", f"{sid}_summary.md")
+            if not os.path.exists(memory_path):
+                workspace = status.stage_workspace(sid)
+                if workspace and os.path.isdir(workspace):
+                    print(f"[heartbeat] Catch-up distillation for '{sid}' (memory summary missing).")
+                    try:
+                        distill_stage_memory(stage, workspace, campaign_dir)
+                    except Exception as exc:
+                        print(f"[heartbeat] Catch-up distillation failed for '{sid}': {exc}")
+
     if any_alive and not any_completed_this_tick:
         summary = _build_summary(spec, status)
         notify_heartbeat(summary, spec.notification)
@@ -577,6 +661,23 @@ def run_heartbeat(
             _save_idle_tick_count(campaign_dir, 0)
             return 1
 
+    # Budget hard-cap: block new stage launches if budget is exceeded.
+    # Only blocks NEW launches — running stages are allowed to finish.
+    if spec.budget_usd > 0:
+        budget_mgr = CampaignBudgetManager(campaign_dir, spec.budget_usd)
+        if budget_mgr.is_budget_exceeded():
+            print(
+                f"[heartbeat] Budget exceeded "
+                f"(${budget_mgr.total_spent:.2f} / ${budget_mgr.usd_limit:.2f}). "
+                f"No new stages will be launched."
+            )
+            notify(
+                f"Campaign '{spec.name}' budget exceeded. "
+                f"No new stages will launch. Human attention required.",
+                spec.notification,
+            )
+            return 2
+
     launched_any = False
     for stage in spec.stages:
         sid = stage.id
@@ -606,9 +707,15 @@ def run_heartbeat(
     if spec.max_idle_ticks > 0 and idle_ticks >= spec.max_idle_ticks:
         print(
             f"[heartbeat] {idle_ticks} consecutive idle ticks (limit={spec.max_idle_ticks}). "
-            f"Campaign is stuck or done. Exiting with code 0 to stop cron."
+            f"Campaign is stuck — dependencies may be unsatisfiable. "
+            f"Exiting with code 4."
         )
-        return 0
+        notify(
+            f"Campaign '{spec.name}' stuck: {idle_ticks} idle ticks reached. "
+            f"Dependencies may be unsatisfiable. Human attention required.",
+            spec.notification,
+        )
+        return 4
 
     print(f"[heartbeat] No action taken — waiting for dependencies. (idle tick {idle_ticks}/{spec.max_idle_ticks})")
     return 1
@@ -956,6 +1063,36 @@ def main() -> int:
     spec = load_spec(args.campaign)
     campaign_dir = args.campaign_dir or spec.workspace_root
     os.makedirs(campaign_dir, exist_ok=True)
+
+    # Reload dynamic stages from the resolved spec if it exists.
+    # When dynamic planning is enabled, _apply_campaign_plan() writes a
+    # resolved_campaign_spec.json that includes the injected stages.
+    # Without this reload, every heartbeat tick would only see the 2
+    # YAML-defined stages (discovery_plan + planning_counsel) and lose
+    # track of all dynamically generated stages.
+    resolved_path = os.path.join(campaign_dir, "resolved_campaign_spec.json")
+    if os.path.exists(resolved_path):
+        try:
+            with open(resolved_path) as f:
+                resolved = json.load(f)
+            resolved_stages = [
+                Stage.from_dict(s) for s in resolved.get("stages", [])
+            ]
+            if resolved_stages:
+                # Resolve relative task_file paths (same as load_spec does)
+                yaml_dir = os.path.dirname(os.path.abspath(args.campaign))
+                for s in resolved_stages:
+                    if s.task_file and not os.path.isabs(s.task_file):
+                        s.task_file = os.path.join(yaml_dir, s.task_file)
+                    if s.launcher_script and not os.path.isabs(s.launcher_script):
+                        s.launcher_script = os.path.join(yaml_dir, s.launcher_script)
+                spec.stages = resolved_stages
+                print(
+                    f"[heartbeat] Reloaded {len(resolved_stages)} stages from "
+                    f"resolved spec (including dynamic stages)."
+                )
+        except (json.JSONDecodeError, KeyError) as exc:
+            print(f"[heartbeat] Warning: could not reload resolved spec: {exc}")
 
     if args.init:
         init_status(campaign_dir, spec, args.campaign)

@@ -1,0 +1,8 @@
+{
+  "campaign_name": "Muon Implicit Regularization",
+  "slug": "v1",
+  "migrated_from": "deprecated_yaml",
+  "archived_at": "2026-03-18T19:41:51.084655+00:00",
+  "original_yaml": "./campaign_v1_DEPRECATED.yaml",
+  "original_workspace": "./results/muon_campaign"
+}
