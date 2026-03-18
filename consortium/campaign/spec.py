@@ -204,6 +204,7 @@ class CampaignSpec:
     max_campaign_hours: float = 0       # 0 = unlimited; hard wall-time for entire campaign
     counsel_model_timeout_seconds: int = 600  # per-model timeout for counsel sandbox agents
     planning: Optional[PlanningConfig] = None  # dynamic campaign planning config
+    spec_file: str = ""  # absolute path to the campaign YAML that created this spec
 
     def stage(self, stage_id: str) -> Optional[Stage]:
         for s in self.stages:
@@ -220,8 +221,13 @@ def load_spec(path: str) -> CampaignSpec:
     with open(path) as f:
         raw = yaml.safe_load(f)
 
-    name = raw.get("name") or os.path.basename(os.path.dirname(os.path.abspath(path)))
+    abs_path = os.path.abspath(path)
+    yaml_dir = os.path.dirname(abs_path)
+    name = raw.get("name") or os.path.basename(os.path.dirname(abs_path))
     workspace_root = raw.get("workspace_root", "results/campaign")
+    # Resolve relative workspace_root relative to the YAML file's directory
+    if not os.path.isabs(workspace_root):
+        workspace_root = os.path.join(yaml_dir, workspace_root)
 
     # Parse planning config (if present)
     planning_raw = raw.get("planning", {})
@@ -234,6 +240,13 @@ def load_spec(path: str) -> CampaignSpec:
         raise ValueError(f"campaign.yaml at {path} has no stages defined.")
 
     stages = [Stage.from_dict(s) for s in stages_raw]
+
+    # Resolve relative task_file paths relative to the YAML directory
+    for s in stages:
+        if s.task_file and not os.path.isabs(s.task_file):
+            s.task_file = os.path.join(yaml_dir, s.task_file)
+        if s.launcher_script and not os.path.isabs(s.launcher_script):
+            s.launcher_script = os.path.join(yaml_dir, s.launcher_script)
 
     # Auto-inject discovery_plan and planning_counsel stages when planning is enabled
     if planning and planning.enabled:
@@ -311,6 +324,7 @@ def load_spec(path: str) -> CampaignSpec:
         max_campaign_hours=float(raw.get("max_campaign_hours", 0)),
         counsel_model_timeout_seconds=int(raw.get("counsel_model_timeout_seconds", 600)),
         planning=planning,
+        spec_file=abs_path,
     )
 
 

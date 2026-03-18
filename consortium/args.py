@@ -326,9 +326,9 @@ Examples:
         "--pipeline-version",
         type=str,
         choices=["v1", "v2"],
-        default="v1",
-        help="Pipeline version: 'v1' (default, linear flow) or 'v2' (persona-council-driven "
-             "flow with feedback loops and duality check).",
+        default="v2",
+        help="Pipeline version: 'v2' (default, persona-council-driven flow with "
+             "feedback loops and duality check) or 'v1' (deprecated, linear flow).",
     )
 
     parser.add_argument(
@@ -344,6 +344,25 @@ Examples:
         action="store_true",
         default=False,
         help="Disable duality check gate even when using --pipeline-version v2.",
+    )
+
+    # -----------------------------------------------------------------
+    # Autonomous operation
+    # -----------------------------------------------------------------
+    parser.add_argument(
+        "--autonomous-mode",
+        action="store_true",
+        default=True,
+        help="Run fully autonomously with no human-in-the-loop gates "
+             "(default: True). Disables milestone gates and auto-proceeds "
+             "on timeouts.",
+    )
+    parser.add_argument(
+        "--no-autonomous-mode",
+        action="store_false",
+        dest="autonomous_mode",
+        help="Disable autonomous mode — enable milestone gates and "
+             "human approval checkpoints.",
     )
 
     # -----------------------------------------------------------------

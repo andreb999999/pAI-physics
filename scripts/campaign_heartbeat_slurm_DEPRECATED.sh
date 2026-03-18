@@ -20,7 +20,7 @@ source activate /home/mabdel03/conda_envs/consortium 2>/dev/null || true
 # Make tex-live available for paper/editorial stages
 export PATH="/orcd/software/community/001/pkg/tex-live/20251104/bin/x86_64-linux:$PATH"
 
-CAMPAIGN="campaign.yaml"
+CAMPAIGN="campaign_v4.yaml"
 INTERVAL=1800  # 30 minutes in seconds
 MAX_TICKS=332  # 332 * 30min ≈ 6.9 days, leaves ~2h buffer before 7-day wall-time
 FAIL_COUNT=0   # consecutive exit-code-2 (failed) ticks — tolerates repair attempts

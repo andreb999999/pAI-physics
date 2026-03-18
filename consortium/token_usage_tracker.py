@@ -12,8 +12,9 @@ from __future__ import annotations
 import json
 import os
 import threading
+from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Generator, Optional
 
 from .workflow_utils import safe_int as _safe_int
 
@@ -152,6 +153,38 @@ def initialize_run_token_tracker(workspace_dir: str, run_id: str, reset: bool = 
             state["updated_at"] = _now_iso()
             _write_state(path, state)
     return path
+
+
+@contextmanager
+def token_tracker_scope(
+    workspace_dir: str, run_id: str
+) -> Generator[str, None, None]:
+    """Context manager that temporarily redirects token tracking to a scoped file.
+
+    Saves and restores the parent run's token tracker env vars on exit,
+    preventing subprocess/sandbox calls from clobbering the main run's tracker.
+
+    Usage::
+
+        with token_tracker_scope(sandbox_dir, "counsel_debate"):
+            # all token recording in this block goes to sandbox_dir
+            ...
+        # parent tracker is restored automatically
+    """
+    saved_token = os.environ.get(ENV_TOKEN_FILE)
+    saved_run_id = os.environ.get(ENV_RUN_ID)
+    try:
+        path = initialize_run_token_tracker(workspace_dir, run_id, reset=False)
+        yield path
+    finally:
+        if saved_token is not None:
+            os.environ[ENV_TOKEN_FILE] = saved_token
+        else:
+            os.environ.pop(ENV_TOKEN_FILE, None)
+        if saved_run_id is not None:
+            os.environ[ENV_RUN_ID] = saved_run_id
+        else:
+            os.environ.pop(ENV_RUN_ID, None)
 
 
 def record_token_usage(

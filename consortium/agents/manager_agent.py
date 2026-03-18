@@ -234,8 +234,8 @@ def build_node(
         tools=tools,
         managed_agents=None,
     )
-    from .base_agent import _unwrap_model, _extract_budget_callback
-    budget_callback = _extract_budget_callback(model)
+    from .base_agent import _unwrap_model
+    # Budget is now recorded automatically by the monkey-patched litellm.completion()
     react_agent = create_react_agent(
         model=_unwrap_model(model),
         tools=tools,
@@ -246,7 +246,6 @@ def build_node(
         os.makedirs(os.path.join(workspace_dir, "inter_agent_messages"), exist_ok=True)
 
     default_stages = list(pipeline_stages or [])
-    _budget_invoke_config = {"callbacks": [budget_callback]} if budget_callback else None
 
     def _invoke_for_handoff_task(state: dict, next_agent: str, notes: list[str]) -> str:
         context = _build_context_message(state)
@@ -260,7 +259,7 @@ def build_node(
             "AGENT_TASK:\n"
             f"<detailed task for {next_agent}>\n"
         )
-        result = react_agent.invoke({"messages": [HumanMessage(content=prompt)]}, config=_budget_invoke_config)
+        result = react_agent.invoke({"messages": [HumanMessage(content=prompt)]})
         last_msg = result["messages"][-1] if result.get("messages") else None
         last_content = last_msg.content if last_msg and hasattr(last_msg, "content") else ""
         return _extract_agent_task(last_content, next_agent)

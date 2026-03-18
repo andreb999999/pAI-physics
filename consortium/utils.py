@@ -2,8 +2,13 @@ import json
 import logging
 import os
 import re
-from typing import Optional
+from typing import Any, Optional
 from langchain_community.chat_models import ChatLiteLLM
+
+# Configure litellm retries globally for transient API errors
+import litellm as _litellm
+_litellm.num_retries = 3
+_litellm.request_timeout = 300  # 5 min timeout per request
 
 from .models import AVAILABLE_MODELS  # noqa: F401 — re-exported for backward compat
 
@@ -153,9 +158,93 @@ def create_model(
             hard_stop=bool(budget_config.get("hard_stop", True)),
             fail_closed=bool(budget_config.get("fail_closed", True)),
         )
+        # Register globally so the monkey-patched litellm.completion() can
+        # record budget without every callsite passing BudgetManager explicitly.
+        from .budget import set_global_budget_manager
+        set_global_budget_manager(manager)
         return BudgetedLiteLLMModel(base_model, manager)
 
     return base_model
+
+
+# ---------------------------------------------------------------------------
+# Per-agent model tiering
+# ---------------------------------------------------------------------------
+
+class ModelRegistry:
+    """Maps agent names to model instances with a default fallback.
+
+    Used by the graph builder to assign different models to different agents
+    based on the ``per_agent_models`` config section in ``.llm_config.yaml``.
+    """
+
+    def __init__(self, default_model: Any, agent_models: Optional[dict[str, Any]] = None):
+        self._default = default_model
+        self._agent_models = agent_models or {}
+
+    def get(self, agent_name: str) -> Any:
+        """Return the model for *agent_name*, falling back to the default."""
+        return self._agent_models.get(agent_name, self._default)
+
+    @property
+    def default_model(self) -> Any:
+        return self._default
+
+
+def create_model_registry(
+    llm_config: Optional[dict],
+    default_model: Any,
+    budget_config: Optional[dict] = None,
+    budget_dir: Optional[str] = None,
+) -> ModelRegistry:
+    """Build a :class:`ModelRegistry` from the ``per_agent_models`` config.
+
+    All tier models share the same :class:`BudgetManager` extracted from
+    *default_model* so that spend is tracked against a single ledger and
+    USD limit.  If ``per_agent_models.enabled`` is falsy the registry simply
+    wraps the default model and every agent gets the same instance.
+    """
+    cfg = (llm_config or {}).get("per_agent_models", {})
+    if not cfg.get("enabled"):
+        return ModelRegistry(default_model)
+
+    # Shared budget manager — all tier models record to the same ledger.
+    budget_manager = getattr(default_model, "_budget_manager", None)
+
+    tier_models: dict[str, Any] = {}
+    for tier_name, tier_spec in cfg.get("tiers", {}).items():
+        bare = create_model(
+            tier_spec["model"],
+            reasoning_effort=tier_spec.get("reasoning_effort", "medium"),
+            budget_tokens=tier_spec.get("budget_tokens"),
+            effort=tier_spec.get("effort"),
+            # Deliberately omit budget_config so create_model returns an
+            # unwrapped ChatLiteLLM.  We wrap with the *shared* manager below.
+        )
+        if budget_manager is not None:
+            from .budget import BudgetedLiteLLMModel
+            bare = BudgetedLiteLLMModel(bare, budget_manager)
+        tier_models[tier_name] = bare
+
+    # Map agent names → tier model instances.
+    agent_models: dict[str, Any] = {}
+    for agent_name, tier_name in cfg.get("agent_tiers", {}).items():
+        if tier_name in tier_models:
+            agent_models[agent_name] = tier_models[tier_name]
+        else:
+            logger.warning(
+                "per_agent_models.agent_tiers: unknown tier %r for agent %r — using default",
+                tier_name, agent_name,
+            )
+
+    tier_summary = {}
+    for agent_name, m in agent_models.items():
+        model_id = getattr(m, "model", "unknown")
+        tier_summary[model_id] = tier_summary.get(model_id, 0) + 1
+    logger.info("Per-agent model registry: %s (default → %s)",
+                tier_summary, getattr(default_model, "model", "unknown"))
+
+    return ModelRegistry(default_model, agent_models)
 
 
 def build_research_graph(

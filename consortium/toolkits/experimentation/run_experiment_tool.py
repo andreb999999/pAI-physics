@@ -170,7 +170,11 @@ class RunExperimentTool(BaseTool):
             workspace_abs = os.path.abspath(self.workspace_dir)
             run_base_dir = os.path.join(workspace_abs, "experiment_runs")
         else:
-            run_base_dir = "/tmp/experiment_runs"
+            # Use RESULTS_BASE_DIR if set (campaign workspace), else isolated temp
+            run_base_dir = os.path.join(
+                os.environ.get("RESULTS_BASE_DIR", "/tmp"),
+                "experiment_runs",
+            )
         os.makedirs(run_base_dir, exist_ok=True)
         run_dir = os.path.join(run_base_dir, str(uuid.uuid4()))
         os.makedirs(run_dir)

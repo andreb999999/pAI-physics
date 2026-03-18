@@ -84,11 +84,20 @@ def build_stage_workspace(
     import shutil
 
     # Always create a fresh, isolated workspace for this stage
-    workspace = os.path.join(spec.workspace_root, stage.id)
-    os.makedirs(workspace, exist_ok=True)
-    workspace = os.path.abspath(workspace)
+    workspace = os.path.abspath(os.path.join(spec.workspace_root, stage.id))
 
-    # Copy artifacts from upstream stages into this workspace
+    if not stage.context_from:
+        # No upstream artifacts — just create the directory
+        os.makedirs(workspace, exist_ok=True)
+        return workspace
+
+    # --- Atomic workspace build: copy artifacts to a staging dir, then rename ---
+    # This prevents partial artifact corruption if the process is killed mid-copy.
+    staging_dir = workspace + "._staging"
+    if os.path.exists(staging_dir):
+        shutil.rmtree(staging_dir)
+    os.makedirs(staging_dir, exist_ok=True)
+
     for ctx_id in stage.context_from:
         prior_workspace = status.stage_workspace(ctx_id)
         if not prior_workspace or not os.path.isdir(prior_workspace):
@@ -106,7 +115,7 @@ def build_stage_workspace(
         )
         for artifact in all_artifacts:
             src = os.path.join(prior_workspace, artifact)
-            dst = os.path.join(workspace, artifact)
+            dst = os.path.join(staging_dir, artifact)
 
             if artifact.endswith("/"):
                 # Directory artifact
@@ -123,9 +132,25 @@ def build_stage_workspace(
         # Also copy memory_dirs if defined on the upstream stage
         for mem_dir in ctx_stage.memory_dirs:
             src_dir = os.path.join(prior_workspace, mem_dir).rstrip("/")
-            dst_dir = os.path.join(workspace, mem_dir).rstrip("/")
+            dst_dir = os.path.join(staging_dir, mem_dir).rstrip("/")
             if os.path.isdir(src_dir) and not os.path.exists(dst_dir):
                 shutil.copytree(src_dir, dst_dir, dirs_exist_ok=True)
+
+    # Atomic swap: if workspace already exists, merge staging into it;
+    # otherwise rename staging to workspace.
+    if os.path.exists(workspace):
+        # Merge staging artifacts into existing workspace
+        for item in os.listdir(staging_dir):
+            s = os.path.join(staging_dir, item)
+            d = os.path.join(workspace, item)
+            if os.path.isdir(s):
+                shutil.copytree(s, d, dirs_exist_ok=True)
+            else:
+                os.makedirs(os.path.dirname(d), exist_ok=True)
+                shutil.copy2(s, d)
+        shutil.rmtree(staging_dir)
+    else:
+        os.rename(staging_dir, workspace)
 
     return workspace
 
@@ -335,8 +360,12 @@ def launch_stage_slurm(
     config_path = os.environ.get("ENGAGING_CONFIG", os.path.join(repo_dir, "engaging_config.yaml"))
     cluster_config = {}
     if os.path.exists(config_path):
+        from ..workflow_utils import expand_env_vars
         with open(config_path) as f:
-            raw = yaml.safe_load(f) or {}
+            raw_text = f.read()
+        # Expand ${VAR:-default} patterns before parsing YAML
+        raw_text = expand_env_vars(raw_text)
+        raw = yaml.safe_load(raw_text) or {}
         cluster_config = raw.get("cluster", {})
 
     orch_config = cluster_config.get("orchestrator", {})

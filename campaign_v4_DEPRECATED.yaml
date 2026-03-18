@@ -1,0 +1,252 @@
+# Muon Campaign v4 — v2 pipeline (persona-council-driven) at max settings
+# Benefiting from 15+ reliability fixes (hang detection, timeouts, atomic writes, etc.)
+# Run: python scripts/campaign_heartbeat.py --campaign campaign_v4.yaml --init
+# Then have OpenClaw (or a cron job) call:
+#        python scripts/campaign_heartbeat.py --campaign campaign_v4.yaml
+# every heartbeat_interval_minutes.
+
+name: "Muon Implicit Regularization v4"
+
+# All stage workspaces live under this directory.
+# Stage 2+ will --resume the workspace of their upstream dependency
+# so they can see its artifacts directly.
+workspace_root: "results/muon_campaign_v4"
+
+# How often (minutes) to tick the heartbeat.
+heartbeat_interval_minutes: 15
+
+# --- Circuit Breakers ---
+max_idle_ticks: 6                       # auto-exit after 6 consecutive no-op heartbeat ticks
+max_campaign_hours: 96                  # 4 days — covers all stage timeouts + repair overhead
+counsel_model_timeout_seconds: 600      # per-model timeout for counsel sandbox/debate phases
+
+# --- Autonomous Repair (deploys Claude Code agents on failure) ---
+repair:
+  enabled: true
+  max_attempts: 2                     # repair tries per stage before escalating to human
+  launcher: slurm                     # "local" (blocking) or "slurm" (async on Engaging)
+  claude_binary: auto                 # "auto" finds claude from conda env PATH
+  model: claude-opus-4-6              # strongest model for repair
+  effort: max                         # maximum thinking/reasoning effort
+  budget_usd: 10.0                    # max spend per repair attempt (opus is pricier)
+  timeout_seconds: 600                # hard timeout per repair agent (10 min)
+  retry_delay_seconds: 10             # pause before relaunching after successful repair
+  allowed_actions:
+    - edit_code                       # fix Python/LaTeX/config bugs
+    - fix_config                      # repair YAML/JSON configs
+    - generate_missing_artifacts      # create files the stage failed to produce
+    - install_dependencies            # note missing packages (no global pip)
+  # --- Two-phase plan→review→execute flow ---
+  two_phase: true                     # Phase 1: plan (read-only) → review → Phase 2: execute
+  plan_model: claude-opus-4-6         # opus for planning too (strongest reasoning)
+  plan_effort: max                    # max effort for planning phase
+  plan_budget_usd: 5.0                # budget for planning phase only
+  plan_timeout_seconds: 300           # planning phase timeout (5 min)
+  review_model: claude-opus-4-6      # OpenClaw reviewer model (judges the plan)
+  review_temperature: 0.2            # low temp for deterministic review
+  min_review_score: 7                # plan must score >= 7/10 to proceed to execution
+  # --- Backoff & Escalation ---
+  backoff_base_seconds: 60            # initial backoff after failed repair (exponential)
+  backoff_max_seconds: 900            # max backoff cap (15 min)
+  repairing_timeout_seconds: 3600     # 1hr max in REPAIRING state before timeout
+  max_review_failures: 3              # reject plans after 3 consecutive review LLM failures
+  escalation_timeout_minutes: 60      # auto-retry after 60min with no human response
+  auto_retry_on_timeout: true         # auto-retry on escalation timeout (vs halt)
+
+# --- Notifications (all optional) ---
+notification:
+  # ntfy.sh push notifications — install the ntfy app and subscribe to your topic.
+  ntfy_topic: "OpenClaw-Engaging"
+  # Telegram — sends stage summary PDFs as a zip on stage completion.
+  telegram_bot_token: "${TELEGRAM_BOT_TOKEN}"
+  telegram_chat_id: "${TELEGRAM_CHAT_ID}"
+  on_stage_complete: true
+  on_failure: true
+  on_heartbeat: true   # progress ping every 15 minutes
+
+# --- Stages (all at MAX settings with v2 pipeline) ---
+stages:
+
+  - id: theory1
+    task_file: automation_tasks/v2_theory1_task.txt
+    args:
+      - "--pipeline-version"
+      - "v2"
+      - "--pipeline-mode"
+      - "full_research"
+      - "--enable-math-agents"
+      - "--enable-counsel"
+      - "--counsel-max-debate-rounds"
+      - "5"
+      - "--enable-tree-search"
+      - "--tree-max-breadth"
+      - "5"
+      - "--tree-max-depth"
+      - "6"
+      - "--tree-max-parallel"
+      - "8"
+      - "--tree-pruning-threshold"
+      - "0.1"
+      - "--tree-counsel-mode"
+      - "all_nodes"
+      - "--persona-debate-rounds"
+      - "5"
+      - "--adversarial-verification"
+      - "--followup-max-iterations"
+      - "5"
+      - "--max-rebuttal-iterations"
+      - "3"
+      - "--max-run-seconds"
+      - "57600"
+    success_artifacts:
+      required:
+        - math_workspace/claim_graph.json
+      optional:
+        - math_workspace/proofs/
+        - math_workspace/checks/
+        - working_idea.json
+    memory_dirs:
+      - math_workspace/
+
+  - id: experiment1
+    task_file: automation_tasks/v2_experiment1_task.txt
+    depends_on: theory1
+    context_from: theory1
+    args:
+      - "--pipeline-version"
+      - "v2"
+      - "--pipeline-mode"
+      - "full_research"
+      - "--enable-counsel"
+      - "--counsel-max-debate-rounds"
+      - "5"
+      - "--enable-tree-search"
+      - "--tree-max-breadth"
+      - "5"
+      - "--tree-max-depth"
+      - "6"
+      - "--tree-max-parallel"
+      - "8"
+      - "--tree-pruning-threshold"
+      - "0.1"
+      - "--tree-counsel-mode"
+      - "all_nodes"
+      - "--persona-debate-rounds"
+      - "5"
+      - "--adversarial-verification"
+      - "--followup-max-iterations"
+      - "5"
+      - "--max-rebuttal-iterations"
+      - "3"
+      - "--max-run-seconds"
+      - "43200"
+    success_artifacts:
+      required:
+        - experiment_results.json
+        - experiment_analysis.md
+      optional:
+        - fairness_protocol.json
+        - experiment_plan.md
+        - nuclear_norm_trajectories.json
+    artifact_validators:
+      experiment_results.json:
+        min_size_bytes: 100
+        must_not_contain:
+          - '"status": "not_executed"'
+          - '"status":"not_executed"'
+      experiment_analysis.md:
+        min_size_bytes: 500
+
+  - id: theory2
+    task_file: automation_tasks/v2_theory2_task.txt
+    depends_on: experiment1
+    context_from:
+      - experiment1
+      - theory1
+    args:
+      - "--pipeline-version"
+      - "v2"
+      - "--pipeline-mode"
+      - "full_research"
+      - "--enable-math-agents"
+      - "--enable-counsel"
+      - "--counsel-max-debate-rounds"
+      - "5"
+      - "--enable-tree-search"
+      - "--tree-max-breadth"
+      - "5"
+      - "--tree-max-depth"
+      - "6"
+      - "--tree-max-parallel"
+      - "8"
+      - "--tree-pruning-threshold"
+      - "0.1"
+      - "--tree-counsel-mode"
+      - "all_nodes"
+      - "--persona-debate-rounds"
+      - "5"
+      - "--adversarial-verification"
+      - "--followup-max-iterations"
+      - "5"
+      - "--max-rebuttal-iterations"
+      - "3"
+      - "--max-run-seconds"
+      - "43200"
+    success_artifacts:
+      required:
+        - math_workspace/scaling_claims.json
+      optional:
+        - math_workspace/scaling_proofs/
+        - math_workspace/scaling_checks/
+    memory_dirs:
+      - math_workspace/
+
+  - id: paper
+    task_file: automation_tasks/v2_paper_task.txt
+    depends_on:
+      - theory1
+      - experiment1
+      - theory2
+    context_from:
+      - theory2
+      - experiment1
+      - theory1
+    args:
+      - "--pipeline-version"
+      - "v2"
+      - "--pipeline-mode"
+      - "full_research"
+      - "--require-pdf"
+      - "--enforce-paper-artifacts"
+      - "--enable-counsel"
+      - "--counsel-max-debate-rounds"
+      - "5"
+      - "--enable-tree-search"
+      - "--tree-max-breadth"
+      - "5"
+      - "--tree-max-depth"
+      - "6"
+      - "--tree-max-parallel"
+      - "8"
+      - "--tree-pruning-threshold"
+      - "0.1"
+      - "--tree-counsel-mode"
+      - "all_nodes"
+      - "--persona-debate-rounds"
+      - "5"
+      - "--adversarial-verification"
+      - "--followup-max-iterations"
+      - "5"
+      - "--max-rebuttal-iterations"
+      - "3"
+      - "--max-run-seconds"
+      - "28800"
+    success_artifacts:
+      required:
+        - final_paper.tex
+        - final_paper.pdf
+      optional:
+        - paper_workspace/final_paper.tex
+        - paper_workspace/final_paper.pdf
+        - analysis_connection.md
+        - artifacts_index.md

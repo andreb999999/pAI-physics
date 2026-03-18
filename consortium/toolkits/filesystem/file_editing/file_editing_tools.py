@@ -65,8 +65,12 @@ class ListDir(BaseTool):
             return '\n'.join(files)
 
 
-    def _safe_path(self, path: str) -> str:
-        """Convert path to absolute workspace path with clear error messages for agents."""
+    def _safe_path(self, path: str, write: bool = False) -> str:
+        """Convert path to absolute workspace path.
+
+        Reads are allowed anywhere on the filesystem.
+        Writes are restricted to within the workspace directory.
+        """
         if not self.working_dir:
             return path
 
@@ -74,18 +78,15 @@ class ListDir(BaseTool):
 
         # Check if input path is absolute or relative
         if os.path.isabs(path):
-            # Absolute path handling
             abs_path = os.path.abspath(path)
 
-            # Check if within workspace
-            if abs_path.startswith(abs_working_dir):
+            # Reads allowed anywhere; writes must stay in workspace
+            if not write or abs_path.startswith(abs_working_dir):
                 return abs_path
             else:
-                # Provide actionable error for agent
                 raise PermissionError(
-                    f"Access denied: The absolute path '{path}' is outside the workspace. "
-                    f"Please use a relative path or an absolute path within '{abs_working_dir}'. "
-                    f"Example: Use 'subdirectory/' instead of the full path."
+                    f"Write denied: '{path}' is outside the workspace. "
+                    f"Writes are restricted to '{abs_working_dir}'."
                 )
         else:
             # Relative path - join with workspace
@@ -142,34 +143,18 @@ class SeeFile(BaseTool):
         return _truncate_text(content, max_chars=max_chars, tool_name="see_file")
 
 
-    def _safe_path(self, path: str) -> str:
-        """Convert path to absolute workspace path with clear error messages for agents."""
+    def _safe_path(self, path: str, write: bool = False) -> str:
+        """Convert path to absolute. Reads allowed anywhere; writes restricted to workspace."""
         if not self.working_dir:
             return path
-
         abs_working_dir = os.path.abspath(self.working_dir)
-
-        # Check if input path is absolute or relative
         if os.path.isabs(path):
-            # Absolute path handling
             abs_path = os.path.abspath(path)
-
-            # Check if within workspace
-            if abs_path.startswith(abs_working_dir):
-                return abs_path
-            else:
-                # Provide actionable error for agent
-                raise PermissionError(
-                    f"Access denied: The absolute path '{path}' is outside the workspace. "
-                    f"Please use a relative path or an absolute path within '{abs_working_dir}'. "
-                    f"Example: Use 'subdirectory/filename.txt' instead of the full path."
-                )
         else:
-            # Relative path - join with workspace
             abs_path = os.path.abspath(os.path.join(abs_working_dir, path))
-
-            # Return path (existence checks handled by individual tools as needed)
-            return abs_path
+        if write and not abs_path.startswith(abs_working_dir):
+            raise PermissionError(f"Write denied: '{path}' is outside workspace '{abs_working_dir}'.")
+        return abs_path
 
 
 class ModifyFileInput(BaseModel):
@@ -195,7 +180,7 @@ class ModifyFile(BaseTool):
 
     def _run(self, filename: str, start_line: int, end_line: int, new_content: str) -> str:
         try:
-            filepath = self._safe_path(filename)
+            filepath = self._safe_path(filename, write=True)
         except PermissionError as e:
             return str(e)
         if not os.path.exists(filepath):
@@ -209,34 +194,18 @@ class ModifyFile(BaseTool):
         return "Content modified."
 
 
-    def _safe_path(self, path: str) -> str:
-        """Convert path to absolute workspace path with clear error messages for agents."""
+    def _safe_path(self, path: str, write: bool = False) -> str:
+        """Convert path to absolute. Reads allowed anywhere; writes restricted to workspace."""
         if not self.working_dir:
             return path
-
         abs_working_dir = os.path.abspath(self.working_dir)
-
-        # Check if input path is absolute or relative
         if os.path.isabs(path):
-            # Absolute path handling
             abs_path = os.path.abspath(path)
-
-            # Check if within workspace
-            if abs_path.startswith(abs_working_dir):
-                return abs_path
-            else:
-                # Provide actionable error for agent
-                raise PermissionError(
-                    f"Access denied: The absolute path '{path}' is outside the workspace. "
-                    f"Please use a relative path or an absolute path within '{abs_working_dir}'. "
-                    f"Example: Use 'subdirectory/filename.txt' instead of the full path."
-                )
         else:
-            # Relative path - join with workspace
             abs_path = os.path.abspath(os.path.join(abs_working_dir, path))
-
-            # Return path (existence checks handled by individual tools as needed)
-            return abs_path
+        if write and not abs_path.startswith(abs_working_dir):
+            raise PermissionError(f"Write denied: '{path}' is outside workspace '{abs_working_dir}'.")
+        return abs_path
 
 
 class CreateFileWithContentInput(BaseModel):
@@ -259,7 +228,7 @@ class CreateFileWithContent(BaseTool):
 
     def _run(self, filename: str, content: str) -> str:
         try:
-            filepath = self._safe_path(filename)
+            filepath = self._safe_path(filename, write=True)
         except PermissionError as e:
             return str(e)
         with open(filepath, "w") as file:
@@ -267,34 +236,18 @@ class CreateFileWithContent(BaseTool):
         return "File created successfully."
 
 
-    def _safe_path(self, path: str) -> str:
-        """Convert path to absolute workspace path with clear error messages for agents."""
+    def _safe_path(self, path: str, write: bool = False) -> str:
+        """Convert path to absolute. Reads allowed anywhere; writes restricted to workspace."""
         if not self.working_dir:
             return path
-
         abs_working_dir = os.path.abspath(self.working_dir)
-
-        # Check if input path is absolute or relative
         if os.path.isabs(path):
-            # Absolute path handling
             abs_path = os.path.abspath(path)
-
-            # Check if within workspace
-            if abs_path.startswith(abs_working_dir):
-                return abs_path
-            else:
-                # Provide actionable error for agent
-                raise PermissionError(
-                    f"Access denied: The absolute path '{path}' is outside the workspace. "
-                    f"Please use a relative path or an absolute path within '{abs_working_dir}'. "
-                    f"Example: Use 'subdirectory/filename.txt' instead of the full path."
-                )
         else:
-            # Relative path - join with workspace
             abs_path = os.path.abspath(os.path.join(abs_working_dir, path))
-
-            # Return path (existence checks handled by individual tools as needed)
-            return abs_path
+        if write and not abs_path.startswith(abs_working_dir):
+            raise PermissionError(f"Write denied: '{path}' is outside workspace '{abs_working_dir}'.")
+        return abs_path
 
 
 class SearchKeywordInput(BaseModel):
@@ -385,34 +338,18 @@ class SearchKeyword(BaseTool):
         max_chars = _safe_int_env("CONSORTIUM_SEARCH_MAX_CHARS", 12000)
         return _truncate_text(body, max_chars=max_chars, tool_name="search_keyword")
 
-    def _safe_path(self, path: str) -> str:
-        """Convert path to absolute workspace path with clear error messages for agents."""
+    def _safe_path(self, path: str, write: bool = False) -> str:
+        """Convert path to absolute. Reads allowed anywhere; writes restricted to workspace."""
         if not self.working_dir:
             return path
-
         abs_working_dir = os.path.abspath(self.working_dir)
-
-        # Check if input path is absolute or relative
         if os.path.isabs(path):
-            # Absolute path handling
             abs_path = os.path.abspath(path)
-
-            # Check if within workspace
-            if abs_path.startswith(abs_working_dir):
-                return abs_path
-            else:
-                # Provide actionable error for agent
-                raise PermissionError(
-                    f"Access denied: The absolute path '{path}' is outside the workspace. "
-                    f"Please use a relative path or an absolute path within '{abs_working_dir}'. "
-                    f"Example: Use 'subdirectory/filename.txt' instead of the full path."
-                )
         else:
-            # Relative path - join with workspace
             abs_path = os.path.abspath(os.path.join(abs_working_dir, path))
-
-            # Return path (existence checks handled by individual tools as needed)
-            return abs_path
+        if write and not abs_path.startswith(abs_working_dir):
+            raise PermissionError(f"Write denied: '{path}' is outside workspace '{abs_working_dir}'.")
+        return abs_path
 
 
 class DeleteFileOrFolderInput(BaseModel):
@@ -453,7 +390,7 @@ class DeleteFileOrFolder(BaseTool):
             return "All files and folders in the working directory have been deleted."
         else:
             try:
-                filepath = self._safe_path(filename)
+                filepath = self._safe_path(filename, write=True)
             except PermissionError as e:
                 return str(e)
             if os.path.exists(filepath):
@@ -469,34 +406,18 @@ class DeleteFileOrFolder(BaseTool):
                 return f"The file or folder {filename} does not exist."
 
 
-    def _safe_path(self, path: str) -> str:
-        """Convert path to absolute workspace path with clear error messages for agents."""
+    def _safe_path(self, path: str, write: bool = False) -> str:
+        """Convert path to absolute. Reads allowed anywhere; writes restricted to workspace."""
         if not self.working_dir:
             return path
-
         abs_working_dir = os.path.abspath(self.working_dir)
-
-        # Check if input path is absolute or relative
         if os.path.isabs(path):
-            # Absolute path handling
             abs_path = os.path.abspath(path)
-
-            # Check if within workspace
-            if abs_path.startswith(abs_working_dir):
-                return abs_path
-            else:
-                # Provide actionable error for agent
-                raise PermissionError(
-                    f"Access denied: The absolute path '{path}' is outside the workspace. "
-                    f"Please use a relative path or an absolute path within '{abs_working_dir}'. "
-                    f"Example: Use 'subdirectory/filename.txt' instead of the full path."
-                )
         else:
-            # Relative path - join with workspace
             abs_path = os.path.abspath(os.path.join(abs_working_dir, path))
-
-            # Return path (existence checks handled by individual tools as needed)
-            return abs_path
+        if write and not abs_path.startswith(abs_working_dir):
+            raise PermissionError(f"Write denied: '{path}' is outside workspace '{abs_working_dir}'.")
+        return abs_path
 
 
 # class LoadObjectFromPythonFile(BaseTool):
@@ -514,7 +435,7 @@ class DeleteFileOrFolder(BaseTool):
 
 #     def forward(self, filename: str, object_name: str) -> Any:
 #         try:
-#             file_path = self._safe_path(filename)
+#             file_path = self._safe_path(filename, write=True)
 #         except PermissionError as e:
 #             raise FileNotFoundError(str(e))
 #         if not os.path.exists(file_path):

@@ -598,6 +598,240 @@ def cmd_launchable(args, spec, status, campaign_dir: str) -> int:
     })
 
 
+def cmd_check_credits(args, spec, status, campaign_dir: str) -> int:
+    """Check if the Anthropic API is accessible (validates credits/auth)."""
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        return _json_out({
+            "api_accessible": False,
+            "error": "ANTHROPIC_API_KEY not set in environment",
+        }, 1)
+
+    try:
+        import litellm
+        # Minimal API call to verify access
+        resp = litellm.completion(
+            model="claude-haiku-4-5-20251001",
+            messages=[{"role": "user", "content": "ping"}],
+            max_tokens=5,
+        )
+        return _json_out({
+            "api_accessible": True,
+            "model_used": "claude-haiku-4-5-20251001",
+            "message": "API access verified.",
+        })
+    except Exception as e:
+        err_str = str(e)
+        is_credit_issue = "credit" in err_str.lower() or "balance" in err_str.lower()
+        return _json_out({
+            "api_accessible": False,
+            "error": err_str,
+            "is_credit_issue": is_credit_issue,
+        }, 1)
+
+
+def cmd_validate_pipeline(args, spec, status, campaign_dir: str) -> int:
+    """Validate that all stages use pipeline v2."""
+    issues = []
+    for stage in spec.stages:
+        has_v2 = False
+        has_v1 = False
+        for i, arg in enumerate(stage.args):
+            if arg == "--pipeline-version" and i + 1 < len(stage.args):
+                if stage.args[i + 1] == "v2":
+                    has_v2 = True
+                elif stage.args[i + 1] == "v1":
+                    has_v1 = True
+        if has_v1:
+            issues.append(f"Stage '{stage.id}' explicitly uses deprecated v1 pipeline")
+        # Note: omitting --pipeline-version is now fine since default is v2
+    return _json_out({
+        "valid": len(issues) == 0,
+        "issues": issues,
+        "note": "Default pipeline is now v2; stages without --pipeline-version will use v2.",
+    })
+
+
+def cmd_init_campaign(args) -> int:
+    """Create a new campaign YAML + initialize status from scratch.
+
+    This is the single entrypoint for starting a new campaign with full
+    isolation guarantees.
+    """
+    import shutil
+    import yaml
+
+    name = args.name
+    task_file = args.task
+    budget = args.budget
+    venue = args.venue
+
+    # Derive a slug from name for workspace + yaml filename
+    slug = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
+    yaml_filename = f"campaign_{slug}.yaml"
+    yaml_path = os.path.join(REPO_ROOT, yaml_filename)
+    workspace_root = f"results/{slug}"
+    workspace_abs = os.path.join(REPO_ROOT, workspace_root)
+
+    # --- Campaign isolation check ---
+    if os.path.exists(yaml_path) and not args.force:
+        return _json_out({
+            "error": f"Campaign YAML already exists: {yaml_filename}. "
+                     f"Use --force to overwrite or choose a different --name.",
+        }, 1)
+
+    if os.path.exists(workspace_abs) and not args.force:
+        return _json_out({
+            "error": f"Workspace directory already exists: {workspace_root}. "
+                     f"Use --force to overwrite or choose a different --name.",
+        }, 1)
+
+    # Check for collision with other campaigns' workspace_root
+    existing_yamls = [
+        f for f in os.listdir(REPO_ROOT)
+        if f.startswith("campaign_") and f.endswith(".yaml")
+        and not f.endswith("_DEPRECATED.yaml")
+    ]
+    for yf in existing_yamls:
+        if yf == yaml_filename:
+            continue
+        try:
+            with open(os.path.join(REPO_ROOT, yf)) as fh:
+                existing_raw = yaml.safe_load(fh)
+            existing_ws = existing_raw.get("workspace_root", "")
+            if existing_ws == workspace_root:
+                return _json_out({
+                    "error": f"workspace_root '{workspace_root}' collides with "
+                             f"existing campaign '{yf}'. Choose a different --name.",
+                }, 1)
+        except Exception:
+            pass
+
+    # Validate task file exists
+    task_path = task_file
+    if not os.path.isabs(task_path):
+        task_path = os.path.join(REPO_ROOT, task_path)
+    if not os.path.exists(task_path):
+        return _json_out({"error": f"Task file not found: {task_file}"}, 1)
+
+    # --- Build the campaign YAML ---
+    campaign_config = {
+        "name": name,
+        "workspace_root": workspace_root,
+        "heartbeat_interval_minutes": 15,
+        "max_idle_ticks": 6,
+        "max_campaign_hours": 96,
+        "counsel_model_timeout_seconds": 3600,
+        "planning": {
+            "enabled": True,
+            "base_task_file": task_file,
+            "max_stages": 6,
+            "max_parallel": 2,
+            "human_review": not args.auto_approve,
+            "planning_budget_usd": 5.0,
+            "planning_timeout_seconds": 600,
+        },
+        "stages": [],
+        "repair": {
+            "enabled": True,
+            "max_attempts": 2,
+            "launcher": "slurm",
+            "claude_binary": "auto",
+            "model": "claude-opus-4-6",
+            "effort": "max",
+            "budget_usd": 10.0,
+            "timeout_seconds": 600,
+            "retry_delay_seconds": 10,
+            "allowed_actions": [
+                "edit_code",
+                "fix_config",
+                "generate_missing_artifacts",
+                "install_dependencies",
+            ],
+            "two_phase": True,
+            "plan_model": "claude-opus-4-6",
+            "plan_effort": "max",
+            "plan_budget_usd": 5.0,
+            "plan_timeout_seconds": 300,
+            "review_model": "claude-opus-4-6",
+            "review_temperature": 0.2,
+            "min_review_score": 7,
+            "backoff_base_seconds": 60,
+            "backoff_max_seconds": 900,
+            "repairing_timeout_seconds": 3600,
+            "max_review_failures": 3,
+            "escalation_timeout_minutes": 60,
+            "auto_retry_on_timeout": True,
+        },
+        "notification": {
+            "ntfy_topic": "OpenClaw-Engaging",
+            "telegram_bot_token": "${TELEGRAM_BOT_TOKEN}",
+            "telegram_chat_id": "${TELEGRAM_CHAT_ID}",
+            "on_stage_complete": True,
+            "on_failure": True,
+            "on_heartbeat": True,
+        },
+    }
+
+    # Add venue as a comment/metadata field if specified
+    if venue:
+        campaign_config["target_venue"] = venue
+
+    # Write YAML
+    with open(yaml_path, "w") as fh:
+        fh.write(f"# {name}\n")
+        fh.write(f"# Created: {datetime.now(timezone.utc).isoformat()}\n")
+        fh.write(f"# Task: {task_file}\n")
+        if venue:
+            fh.write(f"# Target venue: {venue}\n")
+        fh.write(f"# Init: python scripts/campaign_heartbeat.py --campaign {yaml_filename} --init\n")
+        fh.write(f"# Run:  python scripts/campaign_heartbeat.py --campaign {yaml_filename}\n\n")
+        yaml.dump(campaign_config, fh, default_flow_style=False, sort_keys=False)
+
+    # --- Initialize status ---
+    spec = load_spec(yaml_path)
+    campaign_dir = workspace_abs
+    os.makedirs(campaign_dir, exist_ok=True)
+    os.makedirs(os.path.join(campaign_dir, "logs"), exist_ok=True)
+    status = init_status(campaign_dir, spec, yaml_path)
+
+    # --- Provider health check (lightweight) ---
+    health_results = {}
+    try:
+        import litellm
+        for model_name in ["claude-opus-4-6", "gpt-5.4", "gemini/gemini-3-pro-preview"]:
+            try:
+                resp = litellm.completion(
+                    model=model_name,
+                    messages=[{"role": "user", "content": "ping"}],
+                    max_tokens=5,
+                    timeout=15,
+                )
+                health_results[model_name] = "ok"
+            except Exception as e:
+                health_results[model_name] = f"error: {type(e).__name__}: {str(e)[:100]}"
+    except ImportError:
+        health_results["litellm"] = "not installed"
+
+    return _json_out({
+        "action": "init-campaign",
+        "yaml_file": yaml_filename,
+        "workspace_root": workspace_root,
+        "campaign_name": name,
+        "task_file": task_file,
+        "target_venue": venue or "not set",
+        "auto_approve_plan": args.auto_approve,
+        "budget_usd": budget,
+        "status_initialized": True,
+        "provider_health": health_results,
+        "next_steps": [
+            f"Review the generated YAML: {yaml_filename}",
+            f"Launch: python scripts/campaign_cli.py --campaign {yaml_filename} launch discovery_plan",
+            f"Or let heartbeat auto-launch: python scripts/campaign_heartbeat.py --campaign {yaml_filename}",
+        ],
+    })
+
+
 def cmd_approve_plan(args, spec, status, campaign_dir: str) -> int:
     """Approve the dynamic campaign plan for execution."""
     approval_path = os.path.join(campaign_dir, "plan_approval.json")
@@ -692,7 +926,7 @@ def main() -> int:
         description="Campaign CLI bridge for OpenClaw overseer.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--campaign", required=True, help="Path to campaign.yaml")
+    parser.add_argument("--campaign", required=False, help="Path to campaign.yaml")
     parser.add_argument("--campaign-dir", help="Override campaign directory")
 
     subs = parser.add_subparsers(dest="command", required=True)
@@ -730,12 +964,35 @@ def main() -> int:
     p_rewrite.add_argument("--append", required=True)
 
     subs.add_parser("launchable", help="List stages ready to launch")
+    subs.add_parser("check-credits", help="Verify API access and credit balance")
+    subs.add_parser("validate-pipeline", help="Validate all stages use v2 pipeline")
 
     subs.add_parser("approve-plan", help="Approve the dynamic campaign plan")
     subs.add_parser("reject-plan", help="Reject the dynamic campaign plan")
     subs.add_parser("show-plan", help="Show the proposed campaign plan")
 
+    p_init = subs.add_parser(
+        "init-campaign",
+        help="Create a new campaign YAML + initialize workspace (does NOT require --campaign)",
+    )
+    p_init.add_argument("--name", required=True, help="Campaign name (e.g. 'Muon Regularization v6')")
+    p_init.add_argument("--task", required=True, help="Path to research proposal task file")
+    p_init.add_argument("--budget", type=float, default=2000.0, help="Total budget in USD")
+    p_init.add_argument("--venue", default=None, help="Target venue (neurips, icml, iclr)")
+    p_init.add_argument("--auto-approve", action="store_true", help="Skip human plan approval")
+    p_init.add_argument("--force", action="store_true", help="Overwrite existing YAML/workspace")
+
     args = parser.parse_args()
+
+    # init-campaign is special: it creates the YAML, so --campaign is not required.
+    if args.command == "init-campaign":
+        try:
+            return cmd_init_campaign(args)
+        except Exception as e:
+            return _json_out({"error": str(e), "type": type(e).__name__}, 1)
+
+    if not args.campaign:
+        parser.error("--campaign is required for all commands except init-campaign")
 
     try:
         spec = load_spec(args.campaign)
@@ -754,6 +1011,8 @@ def main() -> int:
             "distill": cmd_distill,
             "rewrite-task": cmd_rewrite_task,
             "launchable": cmd_launchable,
+            "check-credits": cmd_check_credits,
+            "validate-pipeline": cmd_validate_pipeline,
             "approve-plan": cmd_approve_plan,
             "reject-plan": cmd_reject_plan,
             "show-plan": cmd_show_plan,

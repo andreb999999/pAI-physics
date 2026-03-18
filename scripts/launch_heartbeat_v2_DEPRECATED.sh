@@ -18,7 +18,7 @@ set -uo pipefail
 # operation (1=in_progress, 2=failed, 3=stage_launched). We handle them explicitly.
 
 REPO_ROOT="/orcd/scratch/orcd/012/mabdel03/AI_Researcher/phdlabor-1"
-CAMPAIGN_YAML="campaign_v2.yaml"
+CAMPAIGN_YAML="campaign_v4.yaml"
 INTERVAL_SECONDS=900   # 15 minutes
 MAX_TICKS=46           # ~11.5 hours (leave 30 min buffer for resubmit)
 

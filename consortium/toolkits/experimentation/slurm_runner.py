@@ -46,8 +46,12 @@ def load_engaging_config() -> dict:
             here = os.path.dirname(here)
 
     if config_path and os.path.exists(config_path):
+        from ...workflow_utils import expand_env_vars
         with open(config_path) as f:
-            return yaml.safe_load(f) or {}
+            raw = f.read()
+        # Expand ${VAR:-default} patterns before parsing YAML
+        raw = expand_env_vars(raw)
+        return yaml.safe_load(raw) or {}
     return {}
 
 

@@ -56,7 +56,7 @@ from .workflow_utils import (
 )
 
 # ---------------------------------------------------------------------------
-# Deterministic stage roster
+# Deterministic stage roster — V1 (DEPRECATED: use V2 stages below)
 # ---------------------------------------------------------------------------
 
 DISCOVERY_STAGES = [
@@ -405,36 +405,42 @@ def build_theory_track_subgraph(
     authorized_imports: Optional[List[str]] = None,
     counsel_models: Optional[List[Any]] = None,
     summary_model_id: Optional[str] = "claude-sonnet-4-6",
+    model_registry: Optional[Any] = None,
 ):
     graph = StateGraph(ResearchState)
     counsel_kwargs = {"counsel_models": counsel_models} if counsel_models else {}
+
+    def _m(agent_name: str) -> Any:
+        if model_registry is not None:
+            return model_registry.get(agent_name)
+        return model
 
     def _wrap(node, name):
         return with_pdf_summary(node, name, workspace_dir, summary_model_id)
 
     graph.add_node(
         "math_literature_agent",
-        _wrap(build_math_literature_node(model, workspace_dir, authorized_imports, **counsel_kwargs), "math_literature_agent"),
+        _wrap(build_math_literature_node(_m("math_literature_agent"), workspace_dir, authorized_imports, **counsel_kwargs), "math_literature_agent"),
     )
     graph.add_node(
         "math_proposer_agent",
-        _wrap(build_math_proposer_node(model, workspace_dir, authorized_imports, **counsel_kwargs), "math_proposer_agent"),
+        _wrap(build_math_proposer_node(_m("math_proposer_agent"), workspace_dir, authorized_imports, **counsel_kwargs), "math_proposer_agent"),
     )
     graph.add_node(
         "math_prover_agent",
-        _wrap(build_math_prover_node(model, workspace_dir, authorized_imports, **counsel_kwargs), "math_prover_agent"),
+        _wrap(build_math_prover_node(_m("math_prover_agent"), workspace_dir, authorized_imports, **counsel_kwargs), "math_prover_agent"),
     )
     graph.add_node(
         "math_rigorous_verifier_agent",
-        _wrap(build_math_rigorous_verifier_node(model, workspace_dir, authorized_imports, **counsel_kwargs), "math_rigorous_verifier_agent"),
+        _wrap(build_math_rigorous_verifier_node(_m("math_rigorous_verifier_agent"), workspace_dir, authorized_imports, **counsel_kwargs), "math_rigorous_verifier_agent"),
     )
     graph.add_node(
         "math_empirical_verifier_agent",
-        _wrap(build_math_empirical_verifier_node(model, workspace_dir, authorized_imports, **counsel_kwargs), "math_empirical_verifier_agent"),
+        _wrap(build_math_empirical_verifier_node(_m("math_empirical_verifier_agent"), workspace_dir, authorized_imports, **counsel_kwargs), "math_empirical_verifier_agent"),
     )
     graph.add_node(
         "proof_transcription_agent",
-        _wrap(build_proof_transcription_node(model, workspace_dir, authorized_imports, **counsel_kwargs), "proof_transcription_agent"),
+        _wrap(build_proof_transcription_node(_m("proof_transcription_agent"), workspace_dir, authorized_imports, **counsel_kwargs), "proof_transcription_agent"),
     )
     graph.set_entry_point("math_literature_agent")
     graph.add_edge("math_literature_agent", "math_proposer_agent")
@@ -452,32 +458,38 @@ def build_experiment_track_subgraph(
     authorized_imports: Optional[List[str]] = None,
     counsel_models: Optional[List[Any]] = None,
     summary_model_id: Optional[str] = "claude-sonnet-4-6",
+    model_registry: Optional[Any] = None,
 ):
     graph = StateGraph(ResearchState)
     counsel_kwargs = {"counsel_models": counsel_models} if counsel_models else {}
+
+    def _m(agent_name: str) -> Any:
+        if model_registry is not None:
+            return model_registry.get(agent_name)
+        return model
 
     def _wrap(node, name):
         return with_pdf_summary(node, name, workspace_dir, summary_model_id)
 
     graph.add_node(
         "experiment_literature_agent",
-        _wrap(build_experiment_literature_node(model, workspace_dir, authorized_imports, **counsel_kwargs), "experiment_literature_agent"),
+        _wrap(build_experiment_literature_node(_m("experiment_literature_agent"), workspace_dir, authorized_imports, **counsel_kwargs), "experiment_literature_agent"),
     )
     graph.add_node(
         "experiment_design_agent",
-        _wrap(build_experiment_design_node(model, workspace_dir, authorized_imports, **counsel_kwargs), "experiment_design_agent"),
+        _wrap(build_experiment_design_node(_m("experiment_design_agent"), workspace_dir, authorized_imports, **counsel_kwargs), "experiment_design_agent"),
     )
     graph.add_node(
         "experimentation_agent",
-        _wrap(build_experimentation_node(model, workspace_dir, authorized_imports, **counsel_kwargs), "experimentation_agent"),
+        _wrap(build_experimentation_node(_m("experimentation_agent"), workspace_dir, authorized_imports, **counsel_kwargs), "experimentation_agent"),
     )
     graph.add_node(
         "experiment_verification_agent",
-        _wrap(build_experiment_verification_node(model, workspace_dir, authorized_imports, **counsel_kwargs), "experiment_verification_agent"),
+        _wrap(build_experiment_verification_node(_m("experiment_verification_agent"), workspace_dir, authorized_imports, **counsel_kwargs), "experiment_verification_agent"),
     )
     graph.add_node(
         "experiment_transcription_agent",
-        _wrap(build_experiment_transcription_node(model, workspace_dir, authorized_imports, **counsel_kwargs), "experiment_transcription_agent"),
+        _wrap(build_experiment_transcription_node(_m("experiment_transcription_agent"), workspace_dir, authorized_imports, **counsel_kwargs), "experiment_transcription_agent"),
     )
     graph.set_entry_point("experiment_literature_agent")
     graph.add_edge("experiment_literature_agent", "experiment_design_agent")
@@ -550,7 +562,7 @@ def build_synthesis_literature_node(
 # Graph builder
 # ---------------------------------------------------------------------------
 
-def build_research_graph(
+def build_research_graph(  # DEPRECATED: V1 pipeline — use build_research_graph_v2
     model: Any,
     workspace_dir: str,
     pipeline_mode: str = "default",
@@ -1203,6 +1215,7 @@ def build_research_graph_v2(
     duality_check_model: str = "claude-opus-4-6",
     enable_duality_check: bool = True,
     budget_manager: Optional[Any] = None,
+    model_registry: Optional[Any] = None,
 ):
     """
     Build the V2 persona-council-driven research pipeline.
@@ -1222,6 +1235,12 @@ def build_research_graph_v2(
     from .persona_council import create_persona_council_node, create_duality_check_node
 
     counsel_kwargs = {"counsel_models": counsel_models} if counsel_models else {}
+
+    def _m(agent_name: str) -> Any:
+        """Resolve the model for *agent_name* from the registry or fallback."""
+        if model_registry is not None:
+            return model_registry.get(agent_name)
+        return model
 
     def _wrap(node, name):
         return with_pdf_summary(node, name, workspace_dir, summary_model_id)
@@ -1249,6 +1268,7 @@ def build_research_graph_v2(
                 authorized_imports=authorized_imports,
                 counsel_models=counsel_models,
                 summary_model_id=summary_model_id,
+                model_registry=model_registry,
             )
         theory_track_node = build_track_subgraph_node(theory_subgraph, "theory_track_status")
 
@@ -1272,6 +1292,7 @@ def build_research_graph_v2(
             authorized_imports=authorized_imports,
             counsel_models=counsel_models,
             summary_model_id=summary_model_id,
+            model_registry=model_registry,
         )
 
     # Build all nodes
@@ -1285,16 +1306,16 @@ def build_research_graph_v2(
             budget_manager=budget_manager,
         ),
         "literature_review_agent": _wrap(
-            build_literature_review_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+            build_literature_review_node(_m("literature_review_agent"), workspace_dir, authorized_imports, **counsel_kwargs),
             "literature_review_agent",
         ),
         "lit_review_gate": build_lit_review_gate_node(workspace_dir),
         "brainstorm_agent": _wrap(
-            build_brainstorm_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+            build_brainstorm_node(_m("brainstorm_agent"), workspace_dir, authorized_imports, **counsel_kwargs),
             "brainstorm_agent",
         ),
         "formalize_goals_agent": _wrap(
-            build_formalize_goals_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+            build_formalize_goals_node(_m("formalize_goals_agent"), workspace_dir, authorized_imports, **counsel_kwargs),
             "formalize_goals_agent",
         ),
         "milestone_goals": build_milestone_gate_node("research_plan", workspace_dir),
@@ -1305,28 +1326,28 @@ def build_research_graph_v2(
         # Post-track verification (new v2 gates)
         "verify_completion": build_verify_completion_node(workspace_dir),
         "formalize_results_agent": _wrap(
-            build_formalize_results_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+            build_formalize_results_node(_m("formalize_results_agent"), workspace_dir, authorized_imports, **counsel_kwargs),
             "formalize_results_agent",
         ),
         "followup_lit_review": _wrap(
-            build_followup_lit_review_node(model, workspace_dir, authorized_imports, counsel_models),
+            build_followup_lit_review_node(_m("followup_lit_review"), workspace_dir, authorized_imports, counsel_models),
             "followup_lit_review",
         ),
         # Paper production chain (reused from v1)
         "resource_preparation_agent": _wrap(
-            build_resource_preparation_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+            build_resource_preparation_node(_m("resource_preparation_agent"), workspace_dir, authorized_imports, **counsel_kwargs),
             "resource_preparation_agent",
         ),
         "writeup_agent": _wrap(
-            build_writeup_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+            build_writeup_node(_m("writeup_agent"), workspace_dir, authorized_imports, **counsel_kwargs),
             "writeup_agent",
         ),
         "proofreading_agent": _wrap(
-            build_proofreading_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+            build_proofreading_node(_m("proofreading_agent"), workspace_dir, authorized_imports, **counsel_kwargs),
             "proofreading_agent",
         ),
         "reviewer_agent": _wrap(
-            build_reviewer_node(model, workspace_dir, authorized_imports, **counsel_kwargs),
+            build_reviewer_node(_m("reviewer_agent"), workspace_dir, authorized_imports, **counsel_kwargs),
             "reviewer_agent",
         ),
         "validation_gate": build_validation_gate_node(),

@@ -723,12 +723,23 @@ APPROVED: <true|false>
                 suggestions="Review LLM is unreliable. Fix API access before retrying.",
             )
 
-        auto_approve = plan["confidence"] in ("high", "medium")
+        # Only auto-approve on "high" confidence — "medium" is too risky without review
+        auto_approve = plan["confidence"] == "high"
+        if auto_approve:
+            print(
+                f"[repair:review] WARNING: Review LLM failed ({e}). "
+                f"Auto-approving high-confidence plan."
+            )
+        else:
+            print(
+                f"[repair:review] Review LLM failed ({e}). "
+                f"Rejecting plan with confidence={plan['confidence']} (only 'high' auto-approved)."
+            )
         return PlanReview(
             approved=auto_approve,
-            score=6 if auto_approve else 3,
-            reasoning=f"Review LLM unavailable ({e}). Auto-{'approved' if auto_approve else 'rejected'} based on plan confidence={plan['confidence']}.",
-            suggestions="Review was skipped due to LLM error.",
+            score=7 if auto_approve else 3,
+            reasoning=f"Review LLM unavailable ({e}). Auto-{'approved' if auto_approve else 'rejected'} based on plan confidence={plan['confidence']}. Only 'high' confidence plans are auto-approved.",
+            suggestions="Review was skipped due to LLM error." if auto_approve else "Escalate to human — review LLM unavailable and plan confidence too low for auto-approval.",
         )
 
     # Parse the review
@@ -1100,8 +1111,12 @@ def _load_engaging_config(repo_root: Optional[str] = None) -> dict:
         os.path.join(repo_root or ".", "engaging_config.yaml"),
     )
     if os.path.exists(config_path):
+        from ..workflow_utils import expand_env_vars
         with open(config_path) as f:
-            return yaml.safe_load(f) or {}
+            raw = f.read()
+        # Expand ${VAR:-default} patterns before parsing YAML
+        raw = expand_env_vars(raw)
+        return yaml.safe_load(raw) or {}
     return {}
 
 
@@ -1170,7 +1185,7 @@ def submit_slurm_repair(
 
     # The SLURM script calls attempt_repair() via Python, so it inherits
     # the full two-phase plan→review→execute flow automatically.
-    campaign_yaml = os.path.join(repo_root, "campaign.yaml")
+    campaign_yaml = spec.spec_file
     script_content = f"""#!/bin/bash
 #SBATCH --job-name=repair_{stage.id}
 #SBATCH --partition={partition}

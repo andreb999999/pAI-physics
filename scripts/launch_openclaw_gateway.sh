@@ -4,8 +4,8 @@
 #SBATCH --time=12:00:00
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=8G
-#SBATCH --output=/orcd/scratch/orcd/012/mabdel03/AI_Researcher/phdlabor-1/results/muon_campaign_v3/logs/openclaw_gw_%j.log
-#SBATCH --error=/orcd/scratch/orcd/012/mabdel03/AI_Researcher/phdlabor-1/results/muon_campaign_v3/logs/openclaw_gw_%j.log
+#SBATCH --output=/orcd/scratch/orcd/012/mabdel03/AI_Researcher/phdlabor-1/results/muon_campaign_v5/logs/openclaw_gw_%j.log
+#SBATCH --error=/orcd/scratch/orcd/012/mabdel03/AI_Researcher/phdlabor-1/results/muon_campaign_v5/logs/openclaw_gw_%j.log
 
 # OpenClaw Gateway SLURM launcher — runs the gateway as a long-running service.
 # Self-resubmits before wall time expires.

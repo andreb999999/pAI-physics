@@ -1,11 +1,34 @@
 import json
 import logging
 import os
+import threading
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
+from langchain_core.callbacks import BaseCallbackHandler
+
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Module-level singleton so that the monkey-patched litellm.completion()
+# (see config.py) can record budget without every callsite threading
+# BudgetManager through its arguments.
+# ---------------------------------------------------------------------------
+_global_budget_manager: Optional["BudgetManager"] = None
+_global_lock = threading.Lock()
+
+
+def set_global_budget_manager(manager: "BudgetManager") -> None:
+    """Set the process-wide BudgetManager singleton. Called once at startup."""
+    global _global_budget_manager
+    with _global_lock:
+        _global_budget_manager = manager
+
+
+def get_global_budget_manager() -> Optional["BudgetManager"]:
+    """Return the process-wide BudgetManager, or None if not configured."""
+    return _global_budget_manager
 
 
 class BudgetExceededError(RuntimeError):
@@ -41,6 +64,7 @@ class BudgetManager:
         self.fail_closed = fail_closed
         self.total_usd = 0.0
         self.by_model: Dict[str, float] = {}
+        self._record_lock = threading.Lock()
         self._load_state()
 
     def _load_state(self) -> None:
@@ -173,9 +197,12 @@ class BudgetManager:
         call_id: Optional[str] = None,
     ) -> float:
         cost = self._compute_cost(model_id, prompt_tokens, completion_tokens)
-        self.total_usd += cost
-        self.by_model[model_id] = round(self.by_model.get(model_id, 0.0) + cost, 6)
-        self._save_state()
+
+        with self._record_lock:
+            self.total_usd += cost
+            self.by_model[model_id] = round(self.by_model.get(model_id, 0.0) + cost, 6)
+            snapshot_total = round(self.total_usd, 6)
+            self._save_state()
 
         entry = {
             "call_id": call_id or str(uuid.uuid4()),
@@ -184,7 +211,7 @@ class BudgetManager:
             "prompt_tokens": int(prompt_tokens),
             "completion_tokens": int(completion_tokens),
             "cost_usd": round(cost, 6),
-            "total_usd": round(self.total_usd, 6),
+            "total_usd": snapshot_total,
             "usd_limit": self.usd_limit,
         }
         self._write_ledger(entry)
@@ -213,7 +240,7 @@ class BudgetManager:
         return cost
 
 
-class BudgetTrackingCallback:
+class BudgetTrackingCallback(BaseCallbackHandler):
     """LangChain callback that records token usage to BudgetManager.
 
     When BudgetedLiteLLMModel must be unwrapped (e.g. for LangGraph's
@@ -221,27 +248,83 @@ class BudgetTrackingCallback:
     via ``config={"callbacks": [cb]}`` to keep budget tracking active.
     """
 
-    # Required by LangChain's callback protocol (BaseCallbackHandler interface)
-    raise_error = False
-    run_inline = False
-
     def __init__(self, budget_manager: "BudgetManager", model_id: str = "unknown"):
         self.budget_manager = budget_manager
         self.model_id = model_id
 
+    def on_llm_start(self, serialized: Any, prompts: Any, **kwargs: Any) -> None:
+        pass
+
     def on_llm_end(self, response: Any, **kwargs: Any) -> None:
         """Extract token usage from LLMResult and record it."""
-        llm_output = getattr(response, "llm_output", None) or {}
-        usage = llm_output.get("token_usage", {})
-        prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
-        completion_tokens = int(usage.get("completion_tokens", 0) or 0)
-        if prompt_tokens or completion_tokens:
-            model_id = llm_output.get("model_name") or self.model_id
-            self.budget_manager.record_usage(
-                model_id=model_id,
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-            )
+        try:
+            llm_output = getattr(response, "llm_output", None) or {}
+            usage = llm_output.get("token_usage", {})
+            # Usage may be a dict or a pydantic Usage object — handle both
+            if hasattr(usage, "prompt_tokens"):
+                prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+                completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+            elif isinstance(usage, dict):
+                prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
+                completion_tokens = int(usage.get("completion_tokens", 0) or 0)
+            else:
+                prompt_tokens = completion_tokens = 0
+            if prompt_tokens or completion_tokens:
+                # model_name may be under "model_name" or "model" key
+                model_id = (
+                    llm_output.get("model_name")
+                    or llm_output.get("model")
+                    or self.model_id
+                )
+                self.budget_manager.record_usage(
+                    model_id=model_id,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                )
+        except (FileNotFoundError, OSError):
+            pass  # sandbox dir may not have budget files; silently skip
+
+    def on_llm_error(self, error: Any, **kwargs: Any) -> None:
+        pass
+
+    def on_chain_start(self, serialized: Any, inputs: Any, **kwargs: Any) -> None:
+        pass
+
+    def on_chain_end(self, outputs: Any, **kwargs: Any) -> None:
+        pass
+
+    def on_chain_error(self, error: Any, **kwargs: Any) -> None:
+        pass
+
+    def on_chat_model_start(self, serialized: Any, messages: Any, **kwargs: Any) -> None:
+        pass
+
+    def on_tool_start(self, serialized: Any, input_str: str, **kwargs: Any) -> None:
+        pass
+
+    def on_tool_end(self, output: str, **kwargs: Any) -> None:
+        pass
+
+    def on_tool_error(self, error: Any, **kwargs: Any) -> None:
+        pass
+
+    def on_retriever_start(self, serialized: Any, query: str, **kwargs: Any) -> None:
+        pass
+
+    def on_retriever_end(self, documents: Any, **kwargs: Any) -> None:
+        pass
+
+    def on_retriever_error(self, error: Any, **kwargs: Any) -> None:
+        pass
+
+    def on_text(self, text: str, **kwargs: Any) -> None:
+        pass
+
+    def on_agent_action(self, action: Any, **kwargs: Any) -> None:
+        pass
+
+    def on_agent_finish(self, finish: Any, **kwargs: Any) -> None:
+        pass
 
 
 class BudgetedLiteLLMModel:
@@ -327,24 +410,12 @@ class BudgetedLiteLLMModel:
         return None
 
     def generate(self, messages, *args, **kwargs):
+        # Budget check and recording are now handled automatically by the
+        # monkey-patched litellm.completion() in config.py.  This method
+        # only performs a pre-call check; the post-call recording happens
+        # inside litellm.completion via the global singleton.
         self.budget_manager.check_budget()
-        response = self.model.generate(messages, *args, **kwargs)
-        usage = self._extract_token_usage(response)
-        if not usage:
-            # Fail closed after the call if token usage isn't reported
-            if self.budget_manager.fail_closed:
-                raise BudgetExceededError(
-                    "Budget enforcement: model response did not include token_usage. "
-                    "Cannot account for cost; refusing further calls."
-                )
-            return response
-        model_id = self._get_model_id()
-        self.budget_manager.record_usage(
-            model_id=model_id,
-            prompt_tokens=usage.get("prompt_tokens", 0),
-            completion_tokens=usage.get("completion_tokens", 0),
-        )
-        return response
+        return self.model.generate(messages, *args, **kwargs)
 
     def __call__(self, *args, **kwargs):
         return self.generate(*args, **kwargs)

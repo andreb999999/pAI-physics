@@ -9,9 +9,9 @@ from .experiment_design_agent import build_node as build_experiment_design_node
 from .experiment_literature_agent import build_node as build_experiment_literature_node
 from .experiment_transcription_agent import build_node as build_experiment_transcription_node
 from .experiment_verification_agent import build_node as build_experiment_verification_node
-from .ideation_agent import build_node as build_ideation_node
+from .ideation_agent import build_node as build_ideation_node  # DEPRECATED: V1-only
 from .literature_review_agent import build_node as build_literature_review_node
-from .research_planner_agent import build_node as build_research_planner_node
+from .research_planner_agent import build_node as build_research_planner_node  # DEPRECATED: V1-only
 from .results_analysis_agent import build_node as build_results_analysis_node
 from .experimentation_agent import build_node as build_experimentation_node
 from .resource_preparation_agent import build_node as build_resource_preparation_node

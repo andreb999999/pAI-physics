@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Any, Optional
 
 from datetime import datetime, timezone
@@ -19,6 +20,26 @@ from .supervision import (
     validate_review_verdict,
     save_cross_track_report,
 )
+
+
+_ENV_DEFAULT_RE = re.compile(r"\$\{([A-Za-z_]\w*)(?::-(.*?))?\}")
+
+
+def expand_env_vars(text: str) -> str:
+    """Expand ``${VAR}`` and ``${VAR:-default}`` patterns in *text*.
+
+    Unlike :func:`os.path.expandvars`, this supports the ``:-`` default-value
+    syntax used in shell scripts and YAML config files.
+    """
+    def _replace(m: re.Match) -> str:
+        var_name = m.group(1)
+        default = m.group(2)  # None when no ``:-`` was present
+        val = os.environ.get(var_name)
+        if val is not None:
+            return val
+        return default if default is not None else m.group(0)
+
+    return _ENV_DEFAULT_RE.sub(_replace, text)
 
 
 def safe_int(value: Any, default: int = 0) -> int:

@@ -1,0 +1,63 @@
+Discovery and research planning for Muon optimizer — implicit regularization, scaling laws, and empirical validation.
+
+This is the discovery phase of a multi-stage campaign. Your goal is to perform a comprehensive literature review, formulate precise research questions, and decompose the research program into executable tracks that downstream stages will carry out.
+
+=== RESEARCH PROGRAM ===
+
+We propose a systematic investigation into the theoretical and empirical properties of the Muon optimizer, focusing on two foundational questions. First, we ask whether Muon induces an implicit regularization effect analogous to known results for SGD and Adam — specifically, whether training under Muon on a given loss landscape is equivalent to gradient descent on a regularized objective (i.e., whether there exist loss-algorithm pairs (L_1, Muon) ~ (L_2, GD) for some implicitly regularized loss L_2). Establishing such a correspondence would provide principled insight into Muon's inductive biases and generalization behavior, and constitutes a standalone theoretical contribution. Second, we investigate whether Muon admits a scaling rule relating batch size to step size — that is, whether there exists a critical batch size regime and a precise functional relationship governing how step size must adjust with batch size to preserve per-step loss reduction. Such scaling laws are well-characterized for SGD but remain unexplored for Muon, and understanding them is essential for efficient large-scale training.
+
+To ground these theoretical inquiries empirically, we conduct a controlled comparison of Muon against Adam(W) on language modeling using the NanoGPT framework. A key methodological priority is ensuring fairness in this comparison; we will perform a thorough literature review of best practices for optimizer benchmarking — including matched compute budgets, hyperparameter tuning protocols (e.g., grid search vs. population-based training), and normalization of effective learning rates — to avoid conflating optimizer-intrinsic effects with tuning artifacts. Together, these three threads — implicit regularization theory, scaling law analysis, and rigorous empirical validation — aim to provide a comprehensive characterization of Muon's optimization dynamics, bridging the gap between its emerging practical adoption and formal theoretical understanding.
+
+=== LITERATURE SEARCH DIRECTIVES ===
+
+Perform thorough literature searches across ALL three research threads before planning:
+
+Thread 1 — Implicit Regularization:
+- Search ArXiv for prior work on implicit regularization in sign-gradient descent, signSGD, and Muon optimizer.
+- Search for papers on steepest descent under non-Euclidean norms (operator norm, nuclear norm duality).
+- Search for papers on implicit bias of mirror descent, natural gradient, and matrix-valued optimization.
+- Key terms: "implicit regularization signSGD", "Muon optimizer", "steepest descent operator norm", "nuclear norm implicit bias", "mirror descent implicit regularization", "polar decomposition gradient".
+- Search for recent work on implicit regularization in nonlinear networks and transformers.
+
+Thread 2 — Scaling Laws:
+- Search for papers on batch size scaling laws for optimizers. Key terms: "critical batch size", "batch size scaling rule", "linear scaling rule SGD", "batch size learning rate scaling", "signSGD batch size".
+- Search for: "gradient noise scale" (McCandlish et al., 2018), "large batch training" scaling laws, "sign gradient noise", "majority vote gradient".
+- Search for any existing scaling analysis of Muon or sign-based optimizers.
+- Search for: "operator norm steepest descent scaling", "mirror descent batch size".
+
+Thread 3 — Empirical Methodology:
+- Search for papers on fair optimizer comparison methodology. Key terms: "fair optimizer comparison", "optimizer benchmark methodology", "Adam vs SGD comparison", "hyperparameter tuning budget", "compute-matched comparison".
+- Search for: "Muon optimizer" papers (Jordan et al.), "AdamW vs Adam language model", "decoupled weight decay regularization" (Loshchilov & Hutter, 2019).
+- Search for NanoGPT benchmark papers and any existing Muon vs Adam comparisons.
+
+Download and analyze the most relevant papers from each thread.
+
+=== CORE MATHEMATICAL CONTEXT ===
+
+- Muon update: W_{t+1} = W_t - eta * polar(grad L(W_t)), where polar(G) = U_G V_G^T from the SVD G = U_G Sigma V_G^T.
+- This is steepest descent under the operator (spectral) norm. By norm duality, we conjecture implicit regularization toward minimum nuclear norm solutions.
+- We seek R(W) such that Muon dynamics are equivalent (fixed points/trajectory limits/implicit bias) to GD on L + lambda * R.
+- The polar factor has FIXED norm (||polar(G)||_F = sqrt(min(m,n))), so increasing batch size improves direction accuracy but not magnitude — this is key for the scaling law analysis.
+
+=== REQUIRED OUTPUTS ===
+
+1. paper_workspace/research_plan.tex — A LaTeX document containing:
+   - Comprehensive literature review across all three threads
+   - Precise formal research questions derived from the literature gaps
+   - Proposed methodology for each thread
+   - Expected contributions and novelty assessment
+   - Risk analysis: which results are likely provable vs conjectural
+
+2. paper_workspace/track_decomposition.json — A structured JSON specifying:
+   - Research tracks (theory, experiment, synthesis) with descriptions
+   - Dependencies between tracks
+   - For each track: research questions, required tools/resources, expected artifacts, estimated complexity
+   - Recommended stage ordering and parallelism opportunities
+   - Which tracks can run independently vs which require sequential execution
+
+=== EXECUTION GUIDANCE ===
+
+- Use ALL available tools: ArXiv search (fetch_arxiv_papers), web search, paper search (Semantic Scholar), citation search, VLM document analysis for reading downloaded PDFs.
+- Prioritize breadth of literature coverage over depth — the goal is to map the landscape so downstream stages can go deep.
+- Be specific in the track decomposition about what each stage should produce and what tools/compute it needs.
+- Flag any literature findings that change the research direction (e.g., if the implicit regularization result is already known, the contribution shifts to extension/empirical validation).

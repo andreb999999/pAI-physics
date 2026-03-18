@@ -490,6 +490,7 @@ class LaTeXCompilerTool(BaseTool):
             pass
 
         common_paths = [
+            "/orcd/software/community/001/pkg/tex-live/20251104/bin/x86_64-linux/pdflatex",
             "/usr/bin/pdflatex",
             "/usr/local/bin/pdflatex",
             "/home/tl784/texlive/2025/bin/x86_64-linux/pdflatex",

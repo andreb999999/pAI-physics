@@ -56,7 +56,8 @@ def create_specialist_agent(
     if workspace_dir:
         os.makedirs(os.path.join(workspace_dir, agent_name), exist_ok=True)
 
-    budget_callback = _extract_budget_callback(model)
+    # Budget is now recorded automatically by the monkey-patched litellm.completion()
+    # in config.py — no need for BudgetTrackingCallback on invoke.
 
     react_agent = create_react_agent(
         model=_unwrap_model(model),
@@ -67,10 +68,8 @@ def create_specialist_agent(
     def node_fn(state: dict) -> dict:
         task = state.get("agent_task") or state.get("task", "")
 
-        invoke_config = {"callbacks": [budget_callback]} if budget_callback else None
         result = react_agent.invoke(
             {"messages": [HumanMessage(content=task)]},
-            config=invoke_config,
         )
 
         last_msg = result["messages"][-1] if result.get("messages") else None

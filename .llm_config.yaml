@@ -1,83 +1,83 @@
-# LLM Configuration File
-# This file controls which language models are used by different components
-
 main_agents:
-  # Model for all main agents (Manager, Ideation, Experimentation, Writeup)
   model: claude-opus-4-6
   reasoning_effort: high
   budget_tokens: 128000
-
 run_experiment_tool:
-  # Models for RunExperimentTool (AI-Scientist-v2 subprocess)
   code_model: claude-opus-4-6
   feedback_model: claude-opus-4-6
   vlm_model: claude-opus-4-6
   report_model: claude-opus-4-6
-
-# HARD COST CAP (requires pricing to be filled in)
-# If usd_limit is set, the system will stop once the running total reaches the limit.
-# IMPORTANT: You must provide accurate per-model prices to enforce the cap.
 budget:
-  usd_limit: 500
+  usd_limit: 700
   hard_stop: true
   fail_closed: true
   pricing:
     gpt-5:
-      input_per_1k: 0.00200
-      output_per_1k: 0.01200
+      input_per_1k: 0.002
+      output_per_1k: 0.012
     gpt-5.2:
       input_per_1k: 0.00175
-      output_per_1k: 0.01400
+      output_per_1k: 0.014
     gpt-5.4:
-      input_per_1k: 0.00250
-      output_per_1k: 0.01500
+      input_per_1k: 0.0025
+      output_per_1k: 0.015
     gemini-3-pro-preview:
       input_per_1k: 0.00125
-      output_per_1k: 0.01000
+      output_per_1k: 0.01
     gpt-5.3-codex:
-      input_per_1k: 0.00200
-      output_per_1k: 0.01000
+      input_per_1k: 0.002
+      output_per_1k: 0.01
     claude-opus-4-6:
-      input_per_1k: 0.00500
-      output_per_1k: 0.02500
+      input_per_1k: 0.005
+      output_per_1k: 0.025
     claude-sonnet-4-6:
-      input_per_1k: 0.00300
-      output_per_1k: 0.01500
+      input_per_1k: 0.003
+      output_per_1k: 0.015
     claude-sonnet-4-5:
-      input_per_1k: 0.00300
-      output_per_1k: 0.01500
-
-# COUNSEL (multi-model debate at each pipeline stage)
-# WARNING: counsel mode uses ~5-6x the token cost per stage. Raise usd_limit accordingly (600+ recommended).
+      input_per_1k: 0.003
+      output_per_1k: 0.015
 counsel:
-  enabled: true           # set true or use --enable-counsel to activate
+  enabled: true
   max_debate_rounds: 3
   synthesis_model: claude-opus-4-6
   models:
-    - model: claude-opus-4-6
-      reasoning_effort: high
-    - model: claude-sonnet-4-6
-      reasoning_effort: high
-    - model: gpt-5.4
-      reasoning_effort: high
-      verbosity: high
-    - model: gemini-3-pro-preview
-      thinking_budget: 131072
-
-# PERSONA COUNCIL (V2 pipeline — prompt-diverse debate before research)
-# Three personas with distinct evaluation lenses debate the research proposal.
-# Use --pipeline-version v2 to activate.
+  - model: claude-opus-4-6
+    reasoning_effort: high
+  - model: gpt-5.4
+    reasoning_effort: high
+    verbosity: high
+  - model: gemini-3-pro-preview
+    thinking_budget: 131072
 persona_council:
   max_debate_rounds: 3
   synthesis_model: claude-opus-4-6
-  # Optional: override default persona specs. Each entry needs 'name' and 'system_prompt'.
-  # If omitted, uses built-in Practical Compass / Rigor & Novelty / Narrative Architect.
-  # personas:
-  #   - name: "Practical Compass"
-  #     system_prompt: "..."
-
-# DUALITY CHECK (V2 pipeline — dual-lens evaluation of formalized results)
-# Two parallel LLM evaluations assess results from complementary angles.
-# Disable with --no-duality-check.
 duality_check:
   model: claude-opus-4-6
+per_agent_models:
+  enabled: true
+  tiers:
+    opus:
+      model: claude-opus-4-6
+      reasoning_effort: high
+      budget_tokens: 128000
+    sonnet:
+      model: claude-sonnet-4-6
+      reasoning_effort: high
+      budget_tokens: 128000
+    economy:
+      model: claude-sonnet-4-6
+      reasoning_effort: low
+  agent_tiers:
+    literature_review_agent: sonnet
+    math_literature_agent: sonnet
+    experiment_literature_agent: sonnet
+    math_empirical_verifier_agent: sonnet
+    formalize_results_agent: sonnet
+    writeup_agent: sonnet
+    reviewer_agent: sonnet
+    experimentation_agent: sonnet
+    followup_lit_review: sonnet
+    proofreading_agent: economy
+    proof_transcription_agent: economy
+    experiment_transcription_agent: economy
+    resource_preparation_agent: economy

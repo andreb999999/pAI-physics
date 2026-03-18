@@ -36,7 +36,6 @@ from .utils import normalize_model_for_litellm
 # Used for debate-phase litellm.completion calls (where we need the model name string).
 DEFAULT_COUNSEL_MODEL_SPECS = [
     {"model": "claude-opus-4-6",  "reasoning_effort": "high"},
-    {"model": "claude-sonnet-4-6", "reasoning_effort": "high"},
     {"model": "gpt-5.4",          "reasoning_effort": "high", "verbosity": "high"},
     {"model": "gemini-3-pro-preview",   "thinking_budget": 65536},
 ]
@@ -45,7 +44,7 @@ SYNTHESIS_MODEL = "claude-opus-4-6"
 
 # Per-model timeout for sandbox and debate phases.
 # Set via set_counsel_timeout() at pipeline init, or COUNSEL_MODEL_TIMEOUT_SECONDS env var.
-DEFAULT_MODEL_TIMEOUT_SECONDS: int = int(os.environ.get("COUNSEL_MODEL_TIMEOUT_SECONDS", "600"))
+DEFAULT_MODEL_TIMEOUT_SECONDS: int = int(os.environ.get("COUNSEL_MODEL_TIMEOUT_SECONDS", "3600"))
 
 
 def set_counsel_timeout(seconds: int) -> None:
@@ -97,7 +96,10 @@ def _populate_sandbox(workspace_dir: str, sandbox_dir: str) -> None:
             shutil.copytree(
                 workspace_dir,
                 sandbox_dir,
-                ignore=shutil.ignore_patterns("counsel_sandboxes", "*.db", "*.lock"),
+                ignore=shutil.ignore_patterns(
+                    "counsel_sandboxes", "_test_sandboxes", "*_sandboxes",
+                    "*.db", "*.lock", "__pycache__",
+                ),
             )
             return
         except (InterruptedError, OSError) as exc:
@@ -214,19 +216,91 @@ def run_counsel_stage(
     # ------------------------------------------------------------------
 
     def _run_one_sandbox(idx: int) -> tuple[int, str]:
+        import time as _time
         model = counsel_models[idx]
         label = specs[idx]["model"] if idx < len(specs) else f"model_{idx}"
         sandbox_dir = sandbox_dirs[idx]
         _populate_sandbox(workspace_dir, sandbox_dir)
         s_tools = _sandbox_tools(tools, sandbox_dir)
         try:
-            from .agents.base_agent import _unwrap_model, _extract_budget_callback
-            budget_cb = _extract_budget_callback(model)
+            from .agents.base_agent import _unwrap_model
+            # Budget is now recorded automatically by the monkey-patched litellm.completion()
             agent = create_react_agent(model=_unwrap_model(model), tools=s_tools, prompt=system_prompt)
-            invoke_cfg = {"callbacks": [budget_cb]} if budget_cb else None
-            result = agent.invoke({"messages": [HumanMessage(content=task)]}, config=invoke_cfg)
-            last = result["messages"][-1] if result.get("messages") else None
-            output = last.content if last and hasattr(last, "content") else ""
+            invoke_cfg = None
+
+            # Retry on transient API errors (auth, service unavailable, rate limit)
+            _RETRYABLE = (
+                "AuthenticationError", "ServiceUnavailableError",
+                "RateLimitError", "APIConnectionError", "APIError",
+                "InternalServerError", "Timeout", "ClientError",
+                "BadRequestError", "HTTPStatusError",
+            )
+            _RETRYABLE_SUBSTRINGS = ("429", "500", "502", "503", "rate limit", "overloaded")
+            _MAX_RETRIES = 3
+            result = None
+            for _attempt in range(_MAX_RETRIES):
+                try:
+                    result = agent.invoke({"messages": [HumanMessage(content=task)]}, config=invoke_cfg)
+                    break
+                except Exception as _api_err:
+                    err_type = type(_api_err).__name__
+                    err_str = str(_api_err).lower()
+                    is_retryable = (
+                        any(r in err_type for r in _RETRYABLE)
+                        or any(r in str(type(_api_err)) for r in _RETRYABLE)
+                        or any(s in err_str for s in _RETRYABLE_SUBSTRINGS)
+                    )
+                    if is_retryable:
+                        wait = 5 * (2 ** _attempt)  # 5s, 10s, 20s
+                        print(f"[counsel:{agent_name}] model_{idx} ({label}) transient error (attempt {_attempt+1}/{_MAX_RETRIES}): {err_type}. Retrying in {wait}s...")
+                        _time.sleep(wait)
+                        if _attempt == _MAX_RETRIES - 1:
+                            raise  # final attempt, propagate
+                    else:
+                        raise  # non-retryable, propagate immediately
+            # Extract the last AIMessage with non-empty text content.
+            # The final message may be a ToolMessage or an AIMessage with only
+            # tool_calls and no text — walk backwards to find actual content.
+            output = ""
+            for msg in reversed(result.get("messages", [])):
+                # Skip ToolMessages — they contain tool output, not the agent's answer
+                if type(msg).__name__ == "ToolMessage":
+                    continue
+                raw = getattr(msg, "content", "")
+                # Anthropic models return content as a list of blocks
+                if isinstance(raw, list):
+                    text_parts = []
+                    for block in raw:
+                        if isinstance(block, dict) and block.get("type") == "text":
+                            text_parts.append(block.get("text", ""))
+                        elif isinstance(block, str):
+                            text_parts.append(block)
+                    text = "\n".join(text_parts)
+                else:
+                    text = str(raw) if raw else ""
+                if text.strip():
+                    output = text
+                    break
+            # DEBUG: log what we found
+            if not output:
+                msg_types = [type(m).__name__ for m in result.get("messages", [])[-5:]]
+                last_contents = []
+                for m in result.get("messages", [])[-3:]:
+                    c = getattr(m, "content", None)
+                    last_contents.append(f"{type(m).__name__}:type={type(c).__name__}:len={len(str(c)[:100])}")
+                print(f"[counsel:DEBUG] model_{idx} empty output. Last 5 msg types: {msg_types}. Last 3: {last_contents}")
+            # Fallback: if no text found, summarize the workspace diff
+            if not output:
+                import os
+                new_files = []
+                for root, dirs, files in os.walk(sandbox_dir):
+                    for f in files:
+                        fp = os.path.join(root, f)
+                        if not any(x in fp for x in ["__pycache__", "token_usage", "budget_", "checkpoint"]):
+                            new_files.append(os.path.relpath(fp, sandbox_dir))
+                if new_files:
+                    output = f"Agent completed. Files created/modified in sandbox: {len(new_files)} files."
+            print(f"[counsel:DEBUG] model_{idx} output len={len(output)} starts_with_bracket={output[:1]=='['} first80={repr(output[:80])}")
         except Exception as e:
             output = f"[{label} failed: {e}]"
         print(f"[counsel:{agent_name}] model_{idx} ({label}) complete.")
@@ -235,25 +309,35 @@ def run_counsel_stage(
     sandbox_outputs: List[str] = [""] * len(counsel_models)
     with ThreadPoolExecutor(max_workers=len(counsel_models)) as pool:
         futures = {pool.submit(_run_one_sandbox, i): i for i in range(len(counsel_models))}
-        for future in as_completed(futures, timeout=model_timeout_seconds + 60):
-            try:
-                idx, output = future.result(timeout=model_timeout_seconds)
-                sandbox_outputs[idx] = output
-            except TimeoutError:
-                # Identify which model timed out
-                for f, i in futures.items():
-                    if f is future:
-                        label = specs[i]["model"] if i < len(specs) else f"model_{i}"
-                        sandbox_outputs[i] = f"[{label} timed out after {model_timeout_seconds}s]"
-                        print(f"[counsel:{agent_name}] model_{i} ({label}) TIMED OUT after {model_timeout_seconds}s")
-                        break
-            except Exception as e:
-                for f, i in futures.items():
-                    if f is future:
-                        label = specs[i]["model"] if i < len(specs) else f"model_{i}"
-                        sandbox_outputs[i] = f"[{label} error: {e}]"
-                        print(f"[counsel:{agent_name}] model_{i} ({label}) error: {e}")
-                        break
+        try:
+            for future in as_completed(futures, timeout=model_timeout_seconds + 60):
+                try:
+                    idx, output = future.result(timeout=model_timeout_seconds)
+                    sandbox_outputs[idx] = output
+                except TimeoutError:
+                    # Identify which model timed out
+                    for f, i in futures.items():
+                        if f is future:
+                            label = specs[i]["model"] if i < len(specs) else f"model_{i}"
+                            sandbox_outputs[i] = f"[{label} timed out after {model_timeout_seconds}s]"
+                            print(f"[counsel:{agent_name}] model_{i} ({label}) TIMED OUT after {model_timeout_seconds}s")
+                            break
+                except Exception as e:
+                    for f, i in futures.items():
+                        if f is future:
+                            label = specs[i]["model"] if i < len(specs) else f"model_{i}"
+                            sandbox_outputs[i] = f"[{label} error: {e}]"
+                            print(f"[counsel:{agent_name}] model_{i} ({label}) error: {e}")
+                            break
+        except TimeoutError:
+            # as_completed() outer timeout — some futures didn't finish.
+            # Completed futures already populated sandbox_outputs; downstream quorum logic handles gaps.
+            for f, i in futures.items():
+                if not f.done():
+                    label = specs[i]["model"] if i < len(specs) else f"model_{i}"
+                    sandbox_outputs[i] = f"[{label} timed out after {model_timeout_seconds}s]"
+                    print(f"[counsel:{agent_name}] model_{i} ({label}) TIMED OUT (outer as_completed timeout)")
+                    f.cancel()
 
     # ------------------------------------------------------------------
     # 1b. Quorum check — skip debate if too few models succeeded
@@ -263,6 +347,10 @@ def run_counsel_stage(
         i for i, out in enumerate(sandbox_outputs)
         if out and not out.startswith("[") and not out.endswith("timed out]") and not out.endswith("failed]")
     ]
+    # DEBUG: show what each sandbox produced
+    for i, out in enumerate(sandbox_outputs):
+        is_valid = i in valid_outputs
+        print(f"[counsel:QUORUM_DEBUG] model_{i}: valid={is_valid} len={len(out)} truthy={bool(out)} first60={repr(out[:60])}")
     if len(valid_outputs) < _MIN_QUORUM and len(counsel_models) >= _MIN_QUORUM:
         print(
             f"[counsel:{agent_name}] Only {len(valid_outputs)}/{len(counsel_models)} models "
@@ -308,12 +396,7 @@ def run_counsel_stage(
                     **extra_params,
                 )
                 critique = resp.choices[0].message.content or ""
-                if _budget_mgr and hasattr(resp, "usage") and resp.usage:
-                    _budget_mgr.record_usage(
-                        model_id=spec["model"],
-                        prompt_tokens=int(getattr(resp.usage, "prompt_tokens", 0) or 0),
-                        completion_tokens=int(getattr(resp.usage, "completion_tokens", 0) or 0),
-                    )
+                # Budget recorded automatically via litellm.completion monkey-patch
             except Exception as e:
                 critique = f"[{spec['model']} debate error: {e}]"
             return i, f"Model {i} ({spec['model']}):\n{critique}"
@@ -322,25 +405,58 @@ def run_counsel_stage(
         critiques: List[str] = [""] * len(specs)
         with ThreadPoolExecutor(max_workers=len(specs)) as pool:
             futures = {pool.submit(_one_critique, i): i for i in range(len(specs))}
-            for future in as_completed(futures, timeout=debate_timeout + 60):
-                try:
-                    i, text = future.result(timeout=debate_timeout)
-                    critiques[i] = text
-                except TimeoutError:
-                    for f, idx in futures.items():
-                        if f is future:
-                            label = specs[idx]["model"] if idx < len(specs) else f"model_{idx}"
-                            critiques[idx] = f"Model {idx} ({label}):\n[debate timed out after {debate_timeout}s]"
-                            print(f"[counsel:{agent_name}] debate model_{idx} ({label}) TIMED OUT")
-                            break
-                except Exception as e:
-                    for f, idx in futures.items():
-                        if f is future:
-                            critiques[idx] = f"Model {idx}:\n[debate error: {e}]"
-                            break
+            try:
+                for future in as_completed(futures, timeout=debate_timeout + 60):
+                    try:
+                        i, text = future.result(timeout=debate_timeout)
+                        critiques[i] = text
+                    except TimeoutError:
+                        for f, idx in futures.items():
+                            if f is future:
+                                label = specs[idx]["model"] if idx < len(specs) else f"model_{idx}"
+                                critiques[idx] = f"Model {idx} ({label}):\n[debate timed out after {debate_timeout}s]"
+                                print(f"[counsel:{agent_name}] debate model_{idx} ({label}) TIMED OUT")
+                                break
+                    except Exception as e:
+                        for f, idx in futures.items():
+                            if f is future:
+                                critiques[idx] = f"Model {idx}:\n[debate error: {e}]"
+                                break
+            except TimeoutError:
+                # as_completed() outer timeout — some debate critiques didn't finish.
+                # Partial debate results are better than crashing the entire pipeline.
+                print(f"[counsel:{agent_name}] debate round timeout — some critiques did not complete within {debate_timeout + 60}s")
+                for f, idx in futures.items():
+                    if not f.done():
+                        label = specs[idx]["model"] if idx < len(specs) else f"model_{idx}"
+                        critiques[idx] = f"Model {idx} ({label}):\n[debate timed out after {debate_timeout}s]"
+                        f.cancel()
 
         debate_history.append(f"[Round {rnd + 1}]\n" + "\n\n".join(critiques))
+        # Circuit breaker: if >50% of debate models failed, skip remaining
+        # rounds and warn — synthesis from mostly-failed inputs is unreliable
+        failed_count = sum(
+            1 for c in critiques if "error:" in c or "timed out" in c
+        )
+        if failed_count > len(specs) / 2:
+            print(
+                f"[counsel:{agent_name}] CIRCUIT BREAKER: {failed_count}/{len(specs)} "
+                f"debate models failed in round {rnd + 1}. Skipping remaining rounds."
+            )
+            break
         print(f"[counsel:{agent_name}] debate round {rnd + 1} complete.")
+
+    # ------------------------------------------------------------------
+    # 3. Pre-synthesis circuit breaker
+    # ------------------------------------------------------------------
+    sandbox_failures = sum(1 for o in sandbox_outputs if "error:" in o)
+    if sandbox_failures == len(sandbox_outputs):
+        # All sandbox runs failed — synthesis would be meaningless
+        print(
+            f"[counsel:{agent_name}] ALL {len(sandbox_outputs)} sandbox models failed. "
+            f"Returning first sandbox error instead of synthesizing garbage."
+        )
+        return sandbox_outputs[0]
 
     # ------------------------------------------------------------------
     # 3. Synthesis
@@ -372,12 +488,7 @@ def run_counsel_stage(
             **_synth_params,
         )
         final_output = resp.choices[0].message.content or sandbox_outputs[0]
-        if _budget_mgr and hasattr(resp, "usage") and resp.usage:
-            _budget_mgr.record_usage(
-                model_id=SYNTHESIS_MODEL,
-                prompt_tokens=int(getattr(resp.usage, "prompt_tokens", 0) or 0),
-                completion_tokens=int(getattr(resp.usage, "completion_tokens", 0) or 0),
-            )
+        # Budget recorded automatically via litellm.completion monkey-patch
     except Exception as e:
         print(f"[counsel:{agent_name}] synthesis failed ({e}), using first sandbox output.")
         final_output = sandbox_outputs[0] if sandbox_outputs else ""

@@ -30,7 +30,7 @@ from pydantic import BaseModel, Field, ConfigDict
 # Builtins that agent code must not access directly
 # ---------------------------------------------------------------------------
 _DANGEROUS_BUILTINS = frozenset({
-    "eval", "exec", "compile", "breakpoint", "exit", "quit",
+    "breakpoint", "exit", "quit",
     "__import__",
 })
 
@@ -65,21 +65,15 @@ def _execute_in_workspace(
     allowed = set(authorized_imports or [])
 
     def _restricted_import(name, *args, **kwargs):
-        root = name.split(".")[0]
-        if allowed and root not in allowed:
-            raise ImportError(
-                f"Forbidden import '{name}'. Add it to authorized_imports to allow it."
-            )
+        # Relaxed: allow all imports. Agents need to read/analyze freely.
         return importlib.__import__(name, *args, **kwargs)
 
     abs_workspace = os.path.abspath(workspace_dir)
     original_chdir = os.chdir
 
     def _safe_chdir(path):
-        abs_path = os.path.abspath(path)
-        if not abs_path.startswith(abs_workspace):
-            raise PermissionError(f"Cannot chdir outside workspace: {path}")
-        return original_chdir(abs_path)
+        # Relaxed: allow chdir anywhere for reads, writes are still workspace-scoped
+        return original_chdir(path)
 
     original_dir = os.getcwd()
     stdout_buf = io.StringIO()
@@ -101,14 +95,39 @@ def _execute_in_workspace(
         compiled = compile(code, "<agent_code>", "exec")
 
         # Set execution timeout (Unix only; on other platforms skip)
-        use_alarm = platform.system() != "Windows" and hasattr(signal, "SIGALRM")
+        # signal.alarm only works in the main thread; when counsel runs agents
+        # inside ThreadPoolExecutor we must fall back to threading-based timeout.
+        import threading as _threading
+        _is_main = _threading.current_thread() is _threading.main_thread()
+        use_alarm = (
+            _is_main
+            and platform.system() != "Windows"
+            and hasattr(signal, "SIGALRM")
+        )
         if use_alarm:
             old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
             signal.alarm(_CODE_EXEC_TIMEOUT)
 
         try:
-            with redirect_stdout(stdout_buf), redirect_stderr(stderr_buf):
-                exec(compiled, exec_globals)  # noqa: S102
+            if not _is_main:
+                # Thread-safe timeout: run exec in a sub-thread with join timeout
+                _exec_err = []
+                def _run_exec():
+                    try:
+                        with redirect_stdout(stdout_buf), redirect_stderr(stderr_buf):
+                            exec(compiled, exec_globals)  # noqa: S102
+                    except Exception as e:
+                        _exec_err.append(e)
+                t = _threading.Thread(target=_run_exec, daemon=True)
+                t.start()
+                t.join(timeout=_CODE_EXEC_TIMEOUT)
+                if t.is_alive():
+                    return f"ERROR: Code execution timed out after {_CODE_EXEC_TIMEOUT}s"
+                if _exec_err:
+                    return f"ERROR: {_exec_err[0]}"
+            else:
+                with redirect_stdout(stdout_buf), redirect_stderr(stderr_buf):
+                    exec(compiled, exec_globals)  # noqa: S102
         finally:
             if use_alarm:
                 signal.alarm(0)
@@ -126,7 +145,8 @@ def _execute_in_workspace(
     except Exception as exc:
         err_out = stderr_buf.getvalue()
         logging.error("Code execution error: %s", exc)
-        raise RuntimeError(f"{exc}\n{err_out}".strip()) from exc
+        # Return error as string instead of raising — let the agent recover
+        return f"ERROR: {exc}\n{err_out}".strip()
     finally:
         os.chdir(original_dir)
 

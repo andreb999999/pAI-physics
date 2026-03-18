@@ -48,6 +48,21 @@ def _record_response_token_usage(response: Any, model_id: str, source: str) -> N
             source=source,
             model_id=model_id,
         )
+
+        # Also record USD cost to BudgetManager (VLM uses raw OpenAI/Anthropic
+        # clients, not litellm.completion, so the monkey-patch doesn't cover these).
+        try:
+            from .budget import get_global_budget_manager
+            mgr = get_global_budget_manager()
+            if mgr and (prompt_tokens or completion_tokens):
+                mgr.record_usage(
+                    model_id=model_id,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                )
+        except Exception:
+            pass  # Never break VLM calls for budget tracking errors
+
     except Exception:
         logger.debug("Failed to record VLM token usage", exc_info=True)
 

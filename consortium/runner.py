@@ -28,7 +28,7 @@ from .supervision import sanitize_result_payload
 from .token_usage_tracker import initialize_run_token_tracker
 from .counsel import create_counsel_models, DEFAULT_COUNSEL_MODEL_SPECS, set_counsel_timeout
 from .graph import build_pipeline_stages, build_pipeline_stages_v2, get_default_checkpointer
-from .utils import create_model, build_research_graph, save_agent_memory
+from .utils import create_model, create_model_registry, build_research_graph, save_agent_memory
 
 load_dotenv(override=True)
 
@@ -586,11 +586,18 @@ def main():
     if args.enable_math_agents:
         print("Math agent workflow enabled.")
 
-    pipeline_version = getattr(args, "pipeline_version", "v1")
+    pipeline_version = getattr(args, "pipeline_version", "v2")
     if pipeline_version == "v2":
         pipeline_stages = build_pipeline_stages_v2(args.enable_math_agents)
-        print(f"Pipeline version: v2 (persona-council-driven)")
+        print("Pipeline version: v2 (persona-council-driven)")
     else:
+        import warnings
+        warnings.warn(
+            "V1 pipeline is deprecated and will be removed in a future release. "
+            "Use --pipeline-version v2.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         pipeline_stages = build_pipeline_stages(args.enable_math_agents)
     try:
         start_stage_index = (
@@ -650,6 +657,17 @@ def main():
     )
     print(f"Created model: {getattr(model, 'model', model_name)}")
 
+    # --- Per-agent model tiering ---
+    model_registry = create_model_registry(
+        llm_config, model, budget_config=budget_config, budget_dir=results_base_dir,
+    )
+    if model_registry._agent_models:
+        tier_counts: dict[str, int] = {}
+        for _agent, _m in model_registry._agent_models.items():
+            mid = getattr(_m, "model", "unknown")
+            tier_counts[mid] = tier_counts.get(mid, 0) + 1
+        print(f"Per-agent model tiers: {tier_counts}")
+
     essential_imports = _filter_installed_imports([
         "json", "os", "posixpath", "ntpath", "sys", "datetime", "uuid", "typing",
         "pathlib", "shutil", "textwrap", "functools", "copy", "pickle", "logging",
@@ -705,7 +723,12 @@ def main():
         )
 
     try:
+        autonomous_mode = getattr(args, "autonomous_mode", True)
         enable_milestone_gates = getattr(args, "enable_milestone_gates", False)
+        # In autonomous mode, force milestone gates off regardless of other flags
+        if autonomous_mode and enable_milestone_gates:
+            print("Autonomous mode: milestone gates disabled.")
+            enable_milestone_gates = False
         milestone_timeout = getattr(args, "milestone_timeout", 3600)
         adversarial_verification = getattr(args, "adversarial_verification", False)
 
@@ -725,13 +748,14 @@ def main():
 
             # Extract budget manager if available
             budget_manager = None
-            if hasattr(model, "_budget_manager"):
-                budget_manager = model._budget_manager
+            if hasattr(model, "budget_manager"):
+                budget_manager = model.budget_manager
 
             from .graph import build_research_graph_v2
             checkpointer = get_default_checkpointer(results_base_dir)
             graph = build_research_graph_v2(
                 model=model,
+                model_registry=model_registry,
                 workspace_dir=results_base_dir,
                 pipeline_mode=effective_pipeline_mode,
                 enable_math_agents=args.enable_math_agents,
@@ -828,6 +852,7 @@ def main():
             "finished": False,
             # V2 pipeline fields (safe to include for v1 — ignored by v1 graph)
             "pipeline_version": pipeline_version,
+            "autonomous_mode": autonomous_mode,
             "research_proposal": None,
             "brainstorm_output": None,
             "brainstorm_history": [],

@@ -53,7 +53,7 @@ def build_node(
     **cfg: Any,
 ) -> Callable:
     from ..toolkits.model_utils import get_raw_model
-    from .base_agent import _unwrap_model, _extract_budget_callback
+    from .base_agent import _unwrap_model
 
     model_id = get_raw_model(model)
     tools = get_tools(workspace_dir, model_id)
@@ -78,7 +78,7 @@ def build_node(
         counsel_with_track_decomposition.__name__ = "research_planner_agent"
         return counsel_with_track_decomposition
 
-    budget_callback = _extract_budget_callback(model)
+    # Budget is now recorded automatically by the monkey-patched litellm.completion()
     react_agent = create_react_agent(
         model=_unwrap_model(model),
         tools=tools,
@@ -87,10 +87,8 @@ def build_node(
 
     def node_fn(state: dict) -> dict:
         task = state.get("agent_task") or state.get("task", "")
-        invoke_config = {"callbacks": [budget_callback]} if budget_callback else None
         result = react_agent.invoke(
             {"messages": [HumanMessage(content=task)]},
-            config=invoke_config,
         )
         last_msg = result["messages"][-1] if result.get("messages") else None
         output = last_msg.content if last_msg and hasattr(last_msg, "content") else str(last_msg)

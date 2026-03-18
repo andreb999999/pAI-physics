@@ -79,6 +79,7 @@ def _find_pdflatex_path() -> Optional[str]:
 
     # Common install locations
     common = [
+        "/orcd/software/community/001/pkg/tex-live/20251104/bin/x86_64-linux/pdflatex",
         "/usr/bin/pdflatex",
         "/usr/local/bin/pdflatex",
         "/home/tl784/texlive/2025/bin/x86_64-linux/pdflatex",

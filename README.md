@@ -893,13 +893,13 @@ curl -s http://127.0.0.1:5002/status
 
 ### SLURM / HPC Deployment
 
-The `scripts/campaign_heartbeat_slurm.sh` script runs as a 7-day SLURM job on `pi_tpoggio` that ticks every 30 minutes (332 ticks with a 2-hour buffer before wall-time expiry). The heartbeat uses configurable circuit breakers (`max_idle_ticks`, `max_campaign_hours`) to detect and halt stuck campaigns — see [Circuit Breakers](#circuit-breakers) below.
+The `scripts/campaign_heartbeat_slurm_DEPRECATED.sh` script (deprecated — v5 uses OpenClaw cron instead) runs as a 7-day SLURM job on `pi_tpoggio` that ticks every 30 minutes (332 ticks with a 2-hour buffer before wall-time expiry). The heartbeat uses configurable circuit breakers (`max_idle_ticks`, `max_campaign_hours`) to detect and halt stuck campaigns — see [Circuit Breakers](#circuit-breakers) below.
 
 All cluster-specific settings — partitions, GPU types, conda paths, module loads — are centralized in `engaging_config.yaml`. The heartbeat runs on a CPU partition; experiment GPU jobs and repair agents are submitted as separate SLURM jobs.
 
 ```bash
 # Submit the 7-day heartbeat loop on Engaging
-sbatch scripts/campaign_heartbeat_slurm.sh
+sbatch scripts/campaign_heartbeat_slurm_DEPRECATED.sh
 
 # Check heartbeat job status
 squeue -u $USER --name=openclaw-heartbeat

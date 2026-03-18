@@ -106,14 +106,8 @@ def _parse_json_response(text: str) -> Optional[dict]:
     return None
 
 
-def _record_budget(budget_manager: Optional[Any], model_id: str, resp: Any) -> None:
-    """Record token usage to BudgetManager if available."""
-    if budget_manager and hasattr(resp, "usage") and resp.usage:
-        budget_manager.record_usage(
-            model_id=model_id,
-            prompt_tokens=int(getattr(resp.usage, "prompt_tokens", 0) or 0),
-            completion_tokens=int(getattr(resp.usage, "completion_tokens", 0) or 0),
-        )
+## _record_budget removed — budget is now recorded automatically by the
+# monkey-patched litellm.completion() in config.py.
 
 
 # ---------------------------------------------------------------------------
@@ -178,7 +172,7 @@ def run_persona_council(
                 **extra_params,
             )
             output = resp.choices[0].message.content or ""
-            _record_budget(budget_manager, model_id, resp)
+            # Budget recorded automatically via litellm.completion monkey-patch
         except Exception as e:
             output = f"[{persona_name} error: {e}]"
         print(f"[persona_council] Phase 1 — {persona_name} evaluation complete.")
@@ -187,24 +181,32 @@ def run_persona_council(
     evaluations: List[str] = [""] * len(specs)
     with ThreadPoolExecutor(max_workers=len(specs)) as pool:
         futures = {pool.submit(_evaluate, i): i for i in range(len(specs))}
-        for future in as_completed(futures, timeout=timeout_seconds + 60):
-            try:
-                idx, output = future.result(timeout=timeout_seconds)
-                evaluations[idx] = output
-            except TimeoutError:
-                for f, i in futures.items():
-                    if f is future:
-                        name = specs[i]["persona"]
-                        evaluations[i] = f"[{name} error: timed out after {timeout_seconds}s]"
-                        print(f"[persona_council] Phase 1 — {name} TIMED OUT.")
-                        break
-            except Exception as e:
-                for f, i in futures.items():
-                    if f is future:
-                        name = specs[i]["persona"]
-                        evaluations[i] = f"[{name} error: {e}]"
-                        print(f"[persona_council] Phase 1 — {name} error: {e}")
-                        break
+        try:
+            for future in as_completed(futures, timeout=timeout_seconds + 60):
+                try:
+                    idx, output = future.result(timeout=timeout_seconds)
+                    evaluations[idx] = output
+                except TimeoutError:
+                    for f, i in futures.items():
+                        if f is future:
+                            name = specs[i]["persona"]
+                            evaluations[i] = f"[{name} error: timed out after {timeout_seconds}s]"
+                            print(f"[persona_council] Phase 1 — {name} TIMED OUT.")
+                            break
+                except Exception as e:
+                    for f, i in futures.items():
+                        if f is future:
+                            name = specs[i]["persona"]
+                            evaluations[i] = f"[{name} error: {e}]"
+                            print(f"[persona_council] Phase 1 — {name} error: {e}")
+                            break
+        except TimeoutError:
+            print(f"[persona_council] Phase 1 evaluation timeout — some personas did not complete within {timeout_seconds + 60}s")
+            for f, i in futures.items():
+                if not f.done():
+                    name = specs[i]["persona"]
+                    evaluations[i] = f"[{name} error: timed out after {timeout_seconds}s]"
+                    f.cancel()
 
     # Format evaluations for debate context
     formatted_evals = "\n\n".join(
@@ -248,7 +250,7 @@ def run_persona_council(
                     **extra_params,
                 )
                 critique = resp.choices[0].message.content or ""
-                _record_budget(budget_manager, model_id, resp)
+                # Budget recorded automatically via litellm.completion monkey-patch
             except Exception as e:
                 critique = f"[{persona_name} error: {e}]"
             return i, f"{persona_name}:\n{critique}"
@@ -256,23 +258,31 @@ def run_persona_council(
         critiques: List[str] = [""] * len(specs)
         with ThreadPoolExecutor(max_workers=len(specs)) as pool:
             futures = {pool.submit(_one_critique, i): i for i in range(len(specs))}
-            for future in as_completed(futures, timeout=timeout_seconds + 60):
-                try:
-                    i, text = future.result(timeout=timeout_seconds)
-                    critiques[i] = text
-                except TimeoutError:
-                    for f, idx in futures.items():
-                        if f is future:
-                            name = specs[idx]["persona"]
-                            critiques[idx] = f"{name}:\n[debate timed out after {timeout_seconds}s]"
-                            print(f"[persona_council] Debate round {rnd + 1} — {name} TIMED OUT.")
-                            break
-                except Exception as e:
-                    for f, idx in futures.items():
-                        if f is future:
-                            name = specs[idx]["persona"]
-                            critiques[idx] = f"{name}:\n[debate error: {e}]"
-                            break
+            try:
+                for future in as_completed(futures, timeout=timeout_seconds + 60):
+                    try:
+                        i, text = future.result(timeout=timeout_seconds)
+                        critiques[i] = text
+                    except TimeoutError:
+                        for f, idx in futures.items():
+                            if f is future:
+                                name = specs[idx]["persona"]
+                                critiques[idx] = f"{name}:\n[debate timed out after {timeout_seconds}s]"
+                                print(f"[persona_council] Debate round {rnd + 1} — {name} TIMED OUT.")
+                                break
+                    except Exception as e:
+                        for f, idx in futures.items():
+                            if f is future:
+                                name = specs[idx]["persona"]
+                                critiques[idx] = f"{name}:\n[debate error: {e}]"
+                                break
+            except TimeoutError:
+                print(f"[persona_council] Debate round {rnd + 1} timeout — some personas did not complete within {timeout_seconds + 60}s")
+                for f, idx in futures.items():
+                    if not f.done():
+                        name = specs[idx]["persona"]
+                        critiques[idx] = f"{name}:\n[debate timed out after {timeout_seconds}s]"
+                        f.cancel()
 
         debate_history.append(f"[Round {rnd + 1}]\n" + "\n\n".join(critiques))
         print(f"[persona_council] Phase 2 — debate round {rnd + 1}/{max_debate_rounds} complete.")
@@ -297,7 +307,7 @@ def run_persona_council(
             reasoning_effort="high",
         )
         proposal_text = resp.choices[0].message.content or ""
-        _record_budget(budget_manager, synthesis_model, resp)
+        # Budget recorded automatically via litellm.completion monkey-patch
     except Exception as e:
         print(f"[persona_council] Synthesis failed ({e}), using first evaluation as fallback.")
         proposal_text = evaluations[0] if evaluations else f"[synthesis error: {e}]"
@@ -378,7 +388,7 @@ def run_duality_check(
                 reasoning_effort="high",
             )
             raw = resp.choices[0].message.content or ""
-            _record_budget(budget_manager, check_model, resp)
+            # Budget recorded automatically via litellm.completion monkey-patch
 
             parsed = _parse_json_response(raw)
             if parsed is None:
@@ -411,27 +421,39 @@ def run_duality_check(
     with ThreadPoolExecutor(max_workers=2) as pool:
         future_a = pool.submit(_run_check, DUALITY_CHECK_A_PROMPT, "check_a")
         future_b = pool.submit(_run_check, DUALITY_CHECK_B_PROMPT, "check_b")
-        for future in as_completed([future_a, future_b], timeout=timeout_seconds + 60):
-            try:
-                label, result = future.result(timeout=timeout_seconds)
-                results[label] = result
-            except TimeoutError:
-                check_label = "check_a" if future is future_a else "check_b"
-                results[check_label] = {
-                    "passed": False,
-                    "reasoning": f"Timed out after {timeout_seconds}s",
-                    "score": 0,
-                    "suggestions": [],
-                }
-                print(f"[duality_check] {check_label} TIMED OUT.")
-            except Exception as e:
-                check_label = "check_a" if future is future_a else "check_b"
-                results[check_label] = {
-                    "passed": False,
-                    "reasoning": f"Execution error: {e}",
-                    "score": 0,
-                    "suggestions": [],
-                }
+        try:
+            for future in as_completed([future_a, future_b], timeout=timeout_seconds + 60):
+                try:
+                    label, result = future.result(timeout=timeout_seconds)
+                    results[label] = result
+                except TimeoutError:
+                    check_label = "check_a" if future is future_a else "check_b"
+                    results[check_label] = {
+                        "passed": False,
+                        "reasoning": f"Timed out after {timeout_seconds}s",
+                        "score": 0,
+                        "suggestions": [],
+                    }
+                    print(f"[duality_check] {check_label} TIMED OUT.")
+                except Exception as e:
+                    check_label = "check_a" if future is future_a else "check_b"
+                    results[check_label] = {
+                        "passed": False,
+                        "reasoning": f"Execution error: {e}",
+                        "score": 0,
+                        "suggestions": [],
+                    }
+        except TimeoutError:
+            print(f"[duality_check] outer timeout — one or both checks did not complete within {timeout_seconds + 60}s")
+            for future, check_label in [(future_a, "check_a"), (future_b, "check_b")]:
+                if not future.done():
+                    results[check_label] = {
+                        "passed": False,
+                        "reasoning": f"Timed out after {timeout_seconds}s",
+                        "score": 0,
+                        "suggestions": [],
+                    }
+                    future.cancel()
 
     both_passed = results["check_a"]["passed"] and results["check_b"]["passed"]
     final = {"both_passed": both_passed, "check_a": results["check_a"], "check_b": results["check_b"]}
