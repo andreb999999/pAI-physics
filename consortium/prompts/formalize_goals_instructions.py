@@ -42,14 +42,34 @@ Read and parse these files before formalizing:
 6) `paper_workspace/references.bib` (if present)
    - Ensure each goal can cite at least one motivating reference.
 
-If brainstorm outputs are missing, report the gap clearly and attempt to derive goals
-directly from the research proposal, flagging reduced specificity.
+If `paper_workspace/brainstorm.json` is missing:
+  1. Check if `paper_workspace/brainstorm.md` exists. If yes, attempt to parse structured
+     data from the markdown (approach tables, priority ordering sections) as a degraded
+     substitute.
+  2. Write a warning file `paper_workspace/brainstorm_missing_warning.txt` documenting
+     that formalization proceeded without structured brainstorm data.
+  3. Set `"brainstorm_data_quality": "degraded"` at the top level of `research_goals.json`
+     so downstream agents and verify_completion can detect this.
+  4. Limit goal count to 2 maximum when operating in degraded mode — avoid over-committing
+     to goals without feasibility grounding.
+  5. Derive goals directly from the research proposal, flagging reduced specificity.
 
 ## GOAL FORMALIZATION METHODOLOGY
 
 **Step 1 -- Goal Extraction:**
 - Select the top approaches from the brainstorm (guided by priority_rank and feasibility).
-- Merge overlapping approaches into unified goals.
+- Merge overlapping approaches into unified goals. When merging, document the merge
+  explicitly: write `merge_rationale` explaining why the approaches were unified, and
+  `per_approach_deliverables` mapping each approach ID to its specific expected output.
+  The `verify_completion` node reads goal descriptions to assess completion — if the
+  merged goal's description doesn't capture both deliverables, one will be silently
+  ignored.
+- If an approach has `novelty_reframed: true` in brainstorm.json, the corresponding goal
+  MUST carry `novelty_reframed: true`, `reframed_from_claim` (the blocked claim ID), and
+  `reframing_strategy` (a one-sentence description of what makes the new direction novel —
+  e.g., "novel proof technique", "strict generalization to non-convex setting", "adjacent
+  open problem"). The goal description must lead with the reframing strategy and make clear
+  that the contribution is NOT the base result.
 - Ensure every core hypothesis from the proposal maps to at least one goal.
 - Each goal must be independently verifiable -- no goal should require reading another
   goal's outputs to determine success or failure.
@@ -78,6 +98,11 @@ directly from the research proposal, flagging reduced specificity.
 - empirical_questions: list of precise questions that the experiment track must answer.
 - recommended_track: "both", "theory", "empirical", or "none" based on the goal mix.
 - Include a rationale explaining the track choice.
+- After assigning questions to tracks, check for cross-track dependencies: does any
+  empirical question assume a theorem or result that is itself a theory question? If yes,
+  populate `cross_track_dependencies` for each such pair. Include a
+  `fallback_if_theory_fails` for each dependency — what should the experiment track do
+  if the theory track does not produce the needed result?
 
 ## MANDATORY OUTPUTS
 
@@ -92,6 +117,14 @@ directly from the research proposal, flagging reduced specificity.
          "description": "One-paragraph description of the goal",
          "hypothesis_id": "H1",
          "approach_ids": ["approach_001", "approach_003"],
+         "merge_rationale": "Both approaches test the same hypothesis under different compute regimes; unified to share infrastructure.",
+         "per_approach_deliverables": {
+           "approach_001": "Theoretical bound proof under convex assumptions",
+           "approach_003": "Empirical validation on CIFAR-10 at 3 learning rate scales"
+         },
+         "novelty_reframed": false,
+         "reframed_from_claim": null,
+         "reframing_strategy": null,
          "track": "theory" | "experiment" | "both",
          "success_criteria": {
            "strong": "What full success looks like",
@@ -123,7 +156,15 @@ directly from the research proposal, flagging reduced specificity.
        "Precise question 2 ..."
      ],
      "recommended_track": "both" | "theory" | "empirical" | "none",
-     "rationale": "Explanation of why this track configuration was chosen"
+     "rationale": "Explanation of why this track configuration was chosen",
+     "cross_track_dependencies": [
+       {
+         "empirical_question_index": 2,
+         "depends_on_theory_question_index": 0,
+         "dependency_type": "assumes_result",
+         "fallback_if_theory_fails": "Run experiment under relaxed assumption X instead."
+       }
+     ]
    }
    ```
    VALIDATION: Before writing this file, verify that:
@@ -153,12 +194,36 @@ directly from the research proposal, flagging reduced specificity.
   empirical_questions should be empty or contain only optional validation questions.
 - Goals must be ordered by dependency: no goal should depend on a higher-numbered goal.
 - Include at least one fallback goal that provides value even if the main results fail.
+- Any goal with `novelty_reframed: true` must have a `reframing_strategy` that is
+  distinct from the base result in `reframed_from_claim`. The success criteria must
+  explicitly reference the reframed contribution, not the base result.
 
 ## FOLLOW-UP CYCLE BEHAVIOR
-- If `paper_workspace/followup_decision.json` exists, read it before planning.
-- In follow-up cycles, produce a focused amendment to existing goals rather than a full
-  restart. Carry forward unresolved goals and tighten success criteria based on prior
-  execution outcomes.
+
+If your `agent_task` begins with `VERIFY COMPLETION: INCOMPLETE`, you are on a re-entry
+cycle because one or more goals failed to be met by the execution tracks. You MUST follow
+this procedure:
+
+1. If `paper_workspace/followup_decision.json` exists, read it first — it may contain
+   additional guidance from the pipeline's follow-up gate.
+2. Read `paper_workspace/research_goals.json` to identify the currently active goals.
+3. Read the failed goal list from your `agent_task` message carefully — it includes the
+   goal ID and what evidence was found or missing.
+4. For each failed goal, open `paper_workspace/brainstorm.json` and check:
+   - Are there alternative approaches in the brainstorm menu (same `hypothesis_ids`,
+     different `id`) that were not selected in the previous formalization?
+   - If yes: substitute the failed approach with the highest-ranked alternative. Update
+     `research_goals.json` to replace the failed approach reference.
+   - If no alternative exists: tighten the success criteria to a more achievable
+     `minimum_viable` threshold, or split the goal into two smaller goals that are
+     independently achievable.
+5. Do NOT restart from scratch. Carry forward all goals that were successfully met
+   (ratio >= 0.8 on their individual criteria). Only rewrite failed goals.
+6. Re-write `track_decomposition.json` to reflect only the questions that remain
+   unanswered. Remove questions already satisfied by prior execution.
+
+For non-INCOMPLETE follow-up cycles (e.g., duality gate re-entry), produce a focused
+amendment to existing goals rather than a full restart.
 
 ## ANTI-HALLUCINATION RULES
 - Do not invent success criteria that cannot be computed from available tools.

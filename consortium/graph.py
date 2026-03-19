@@ -109,7 +109,7 @@ def _format_track_task(state: dict, track_name: str, questions: list[str]) -> st
         return f"No {track_name} questions were identified for this cycle."
 
     question_lines = "\n".join(f"- {question}" for question in questions)
-    return (
+    base = (
         f"Research cycle: {cycle}\n"
         f"Execute the {track_name} track for the current research plan.\n"
         f"Questions assigned to this track:\n{question_lines}\n\n"
@@ -117,6 +117,31 @@ def _format_track_task(state: dict, track_name: str, questions: list[str]) -> st
         "produce the mandatory artifacts for your track, and ground all work "
         "in workspace evidence and cited literature."
     )
+
+    # Inject cross-track dependency context for the experiment track
+    if track_name == "experiment":
+        td = state.get("track_decomposition") or {}
+        deps = td.get("cross_track_dependencies") or []
+        if deps:
+            dep_lines = []
+            for dep in deps:
+                eq_idx = dep.get("empirical_question_index", "?")
+                tq_idx = dep.get("depends_on_theory_question_index", "?")
+                dtype = dep.get("dependency_type", "assumes_result")
+                fallback = dep.get(
+                    "fallback_if_theory_fails",
+                    "Proceed with relaxed assumptions."
+                )
+                dep_lines.append(
+                    f"  - Empirical Q{eq_idx} depends on Theory Q{tq_idx} "
+                    f"({dtype}). If theory result unavailable: {fallback}"
+                )
+            base += (
+                "\n\nCROSS-TRACK DEPENDENCIES (theory results may not be "
+                "available yet):\n" + "\n".join(dep_lines)
+            )
+
+    return base
 
 
 def track_router(state: ResearchState) -> list[Send]:
@@ -168,6 +193,135 @@ def track_router(state: ResearchState) -> list[Send]:
             )
         )
     return sends
+
+
+def build_track_decomposition_gate_node(
+    workspace_dir: str,
+    enable_math_agents: bool = False,
+) -> Any:
+    """
+    Validate track_decomposition.json before milestone_goals and track_router().
+
+    Catches:
+    - Empty theory_questions when theory track is requested
+    - Empty empirical_questions when experiment track is requested
+    - recommended_track requesting theory when enable_math_agents=False
+    - Missing or malformed track_decomposition.json
+    """
+    def track_decomposition_gate_node(state: dict) -> dict:
+        paper_ws = os.path.join(workspace_dir, "paper_workspace")
+        td_path = os.path.join(paper_ws, "track_decomposition.json")
+
+        default_td = {
+            "theory_questions": [],
+            "empirical_questions": [
+                "Execute the research plan as specified in research_goals.json."
+            ],
+            "recommended_track": "empirical",
+            "rationale": "",
+        }
+
+        if not os.path.exists(td_path):
+            print(
+                "[track_decomposition_gate] WARNING: track_decomposition.json "
+                "missing — defaulting to empirical only."
+            )
+            default_td["rationale"] = (
+                "track_decomposition.json was missing; defaulted to empirical track."
+            )
+            return {"track_decomposition": default_td, "agent_task": None}
+
+        try:
+            with open(td_path) as f:
+                td = json.load(f)
+        except Exception as e:
+            print(
+                f"[track_decomposition_gate] Failed to parse "
+                f"track_decomposition.json: {e}"
+            )
+            default_td["rationale"] = (
+                f"track_decomposition.json parse failed: {e}"
+            )
+            return {"track_decomposition": default_td, "agent_task": None}
+
+        recommended = (
+            td.get("recommended_track", "empirical").strip().lower()
+        )
+        theory_q = td.get("theory_questions") or []
+        empirical_q = td.get("empirical_questions") or []
+        issues: list[str] = []
+
+        # Enforce math agents constraint
+        if not enable_math_agents and recommended in ("theory", "both"):
+            issues.append(
+                f"recommended_track='{recommended}' but "
+                "enable_math_agents=False. Downgrading to 'empirical'."
+            )
+            recommended = "empirical"
+            td["recommended_track"] = "empirical"
+
+        # Enforce non-empty questions for active tracks
+        goals_path = os.path.join(paper_ws, "research_goals.json")
+
+        if recommended in ("theory", "both") and not theory_q:
+            issues.append(
+                "theory_questions is empty despite theory track being requested."
+            )
+            try:
+                with open(goals_path) as f:
+                    goals_data = json.load(f)
+                theory_q = [
+                    f"Address goal {g['id']}: {g['description']}"
+                    for g in goals_data.get("goals", [])
+                    if g.get("track") in ("theory", "both")
+                ]
+                td["theory_questions"] = theory_q
+                issues.append(
+                    f"Recovered {len(theory_q)} theory questions "
+                    "from research_goals.json."
+                )
+            except Exception:
+                recommended = "empirical"
+                td["recommended_track"] = "empirical"
+                issues.append(
+                    "Could not recover theory questions — "
+                    "downgrading to empirical."
+                )
+
+        if recommended in ("empirical", "both") and not empirical_q:
+            issues.append(
+                "empirical_questions is empty despite empirical track "
+                "being requested."
+            )
+            try:
+                with open(goals_path) as f:
+                    goals_data = json.load(f)
+                empirical_q = [
+                    f"Address goal {g['id']}: {g['description']}"
+                    for g in goals_data.get("goals", [])
+                    if g.get("track") in ("experiment", "both")
+                ]
+                td["empirical_questions"] = empirical_q
+                issues.append(
+                    f"Recovered {len(empirical_q)} empirical questions "
+                    "from research_goals.json."
+                )
+            except Exception:
+                issues.append("Could not recover empirical questions.")
+
+        if issues:
+            print(
+                f"[track_decomposition_gate] Issues corrected: {issues}"
+            )
+
+        # Write corrected version back to disk
+        with open(td_path, "w") as f:
+            json.dump(td, f, indent=2)
+
+        return {"track_decomposition": td, "agent_task": None}
+
+    track_decomposition_gate_node.__name__ = "track_decomposition_gate"
+    return track_decomposition_gate_node
 
 
 def followup_router(state: ResearchState) -> str:
@@ -1244,6 +1398,9 @@ def build_research_graph_v2(config: "ResearchGraphConfig"):
             build_formalize_goals_node(_m("formalize_goals_agent"), workspace_dir, authorized_imports, **counsel_kwargs),
             "formalize_goals_agent",
         ),
+        "track_decomposition_gate": build_track_decomposition_gate_node(
+            workspace_dir, enable_math_agents=enable_math_agents
+        ),
         "milestone_goals": build_milestone_gate_node("research_plan", workspace_dir),
         # Execution tracks (reused from v1)
         "theory_track": theory_track_node,
@@ -1312,7 +1469,8 @@ def build_research_graph_v2(config: "ResearchGraphConfig"):
 
     # Brainstorm → formalize goals → milestone → track execution
     graph.add_edge("brainstorm_agent", "formalize_goals_agent")
-    graph.add_edge("formalize_goals_agent", "milestone_goals")
+    graph.add_edge("formalize_goals_agent", "track_decomposition_gate")
+    graph.add_edge("track_decomposition_gate", "milestone_goals")
     graph.add_conditional_edges("milestone_goals", track_router)
 
     # Track execution → merge → verify
