@@ -178,41 +178,41 @@ The pipeline is a persona-council-driven LangGraph workflow with feedback loops 
 
 ```mermaid
 flowchart TD
-    personaCouncil["PersonaCouncil\n(3-persona debate)"] --> litReview[LiteratureReviewAgent]
-    litReview --> litGate{LitReviewGate}
-    litGate -->|"feasible"| brainstorm[BrainstormAgent]
+    personaCouncil["①PersonaCouncil\n(3-persona debate)"] --> litReview["②LiteratureReviewAgent"]
+    litReview --> litGate{"③LitReviewGate"}
+    litGate -->|"feasible"| brainstorm["④BrainstormAgent"]
     litGate -->|"infeasible"| personaCouncil
 
-    brainstorm --> formalGoals[FormalizeGoalsAgent]
-    formalGoals --> milestoneGoals[MilestoneGoals]
-    milestoneGoals --> trackRouter{TrackRouter}
+    brainstorm --> formalGoals["⑤FormalizeGoalsAgent"]
+    formalGoals --> milestoneGoals["⑥MilestoneGoals"]
+    milestoneGoals --> trackRouter{"⑦TrackRouter"}
 
     subgraph theoryTrack ["TheoryTrack (--enable-math-agents)"]
-        mathLit[MathLiterature] --> mathProp[MathProposer] --> mathProver["MathProver\n(or TreeSearch)"] --> mathRigorous[MathRigorousVerifier] --> mathEmpirical[MathEmpiricalVerifier] --> proofTrans[ProofTranscription]
+        mathLit["⑧MathLiterature"] --> mathProp["⑨MathProposer"] --> mathProver["⑩MathProver\n(or TreeSearch)"] --> mathRigorous["⑪MathRigorousVerifier"] --> mathEmpirical["⑫MathEmpiricalVerifier"] --> proofTrans["⑬ProofTranscription"]
     end
 
     subgraph experimentTrack [ExperimentTrack]
-        expLit[ExperimentLiterature] --> expDesign[ExperimentDesign] --> expExec[Experimentation] --> expVerify[ExperimentVerification] --> expTrans[ExperimentTranscription]
+        expLit["⑭ExperimentLiterature"] --> expDesign["⑮ExperimentDesign"] --> expExec["⑯Experimentation"] --> expVerify["⑰ExperimentVerification"] --> expTrans["⑱ExperimentTranscription"]
     end
 
     trackRouter -->|"theory"| mathLit
     trackRouter -->|"empirical"| expLit
-    proofTrans --> trackMerge[TrackMerge]
+    proofTrans --> trackMerge["⑲TrackMerge"]
     expTrans --> trackMerge
 
-    trackMerge --> verifyCompletion{VerifyCompletion}
-    verifyCompletion -->|"complete"| formalResults[FormalizeResultsAgent]
+    trackMerge --> verifyCompletion{"⑳VerifyCompletion"}
+    verifyCompletion -->|"complete"| formalResults["㉑FormalizeResultsAgent"]
     verifyCompletion -->|"incomplete"| formalGoals
     verifyCompletion -->|"rethink"| brainstorm
 
-    formalResults --> dualityCheck["DualityCheck\n(--no-duality-check to skip)"]
-    dualityCheck --> dualityGate{DualityGate}
-    dualityGate -->|"pass"| resourcePrep[ResourcePreparation]
-    dualityGate -->|"fail"| followupLit[FollowupLitReview] --> brainstorm
+    formalResults --> dualityCheck["㉒DualityCheck\n(--no-duality-check to skip)"]
+    dualityCheck --> dualityGate{"㉓DualityGate"}
+    dualityGate -->|"pass"| resourcePrep["㉔ResourcePreparation"]
+    dualityGate -->|"fail"| followupLit["㉕FollowupLitReview"] --> brainstorm
 
-    resourcePrep --> writeup[Writeup] --> proofread[Proofreading] --> reviewer[Reviewer]
-    reviewer --> validationGate{ValidationGate}
-    validationGate -->|"pass"| endNode((END))
+    resourcePrep --> writeup["㉖Writeup"] --> proofread["㉗Proofreading"] --> reviewer["㉘Reviewer"]
+    reviewer --> validationGate{"㉙ValidationGate"}
+    validationGate -->|"pass"| endNode(("㉚END"))
     validationGate -->|"fail"| writeup
 
     classDef counselNode stroke:#6366f1,stroke-width:2px,stroke-dasharray:5
@@ -221,7 +221,7 @@ flowchart TD
 
 If no execution tracks are selected, the graph falls through directly to `track_merge`, then continues through verify-completion.
 
-**Counsel mode** (`--enable-counsel`): Nodes with dashed purple borders run multi-model debate when counsel is enabled. Each specialist node runs four independent model executions (Opus, Sonnet, GPT-5.4, Gemini 3.0 Pro), then a debate + synthesis round before promoting consensus artifacts. See [Counsel Mode](#counsel-mode-multi-model-debate).
+**Counsel mode** (`--enable-counsel`): Nodes with dashed purple borders run multi-model debate when counsel is enabled. Each specialist node runs three independent model executions (Opus, GPT-5.4, Gemini 3 Pro Preview), then a debate + synthesis round before promoting consensus artifacts. See [Counsel Mode](#counsel-mode-multi-model-debate).
 
 **Tree search** (`--enable-tree-search`): In the theory track, the linear `MathProver` stage is replaced by a tree search controller that explores multiple proof strategies in parallel via DAG-layered best-first search. See [Agentic Tree Search](#agentic-tree-search).
 
@@ -232,7 +232,7 @@ If no execution tracks are selected, the graph falls through directly to `track_
 
 ## Quick Start
 
-From repository root (`consortium`):
+From the repository root:
 
 ```bash
 ./scripts/bootstrap.sh researchlab full
@@ -244,6 +244,7 @@ python scripts/preflight_check.py --with-docs --with-web --with-experiment --wit
 # Recommended first run (single-model, lower cost):
 python launch_multiagent.py \
   --task "Investigate this topic and produce a paper draft with evidence-backed claims." \
+  --output-format markdown \
   --no-counsel \
   --no-log-to-files
 ```
@@ -286,7 +287,11 @@ conda env create -f environment.cross-platform.yml
 conda activate consortium
 ```
 
-This installs the core runtime without running bootstrap scripts.
+This installs the core runtime without running bootstrap scripts. You must also copy the config template manually:
+
+```bash
+cp .llm_config.yaml.example .llm_config.yaml
+```
 
 ### API Keys (`.env`)
 
@@ -971,7 +976,7 @@ results/consortium_YYYYMMDD_HHMMSS/
       model_0_claude-opus-4-6/
       model_1_claude-sonnet-4-6/
       model_2_gpt-5.4/
-      model_3_gemini-3.0-pro/
+      model_3_gemini-3-pro-preview/
   tree_search_state.json             # when --enable-tree-search
   tree_branches/                     # when --enable-tree-search
     <branch_id>/                     # forked workspace per branch
@@ -1145,14 +1150,14 @@ Counsel mode (`--enable-counsel`) replaces single-model execution at each pipeli
 
 ### Participating Models
 
-By default, four frontier models run independently:
+By default, three frontier models run independently, with a separate synthesis model:
 
 | Slot | Model | Provider | Notes |
 |------|-------|----------|-------|
-| 0 | `claude-opus-4-6` | Anthropic | `effort=max`; also serves as synthesis model |
-| 1 | `claude-sonnet-4-6` | Anthropic | `effort=max` |
-| 2 | `gpt-5.4` | OpenAI | `reasoning_effort=high` |
-| 3 | `gemini-3.0-pro` | Google | `thinking_budget=131072` |
+| 0 | `claude-opus-4-6` | Anthropic | `reasoning_effort=high` |
+| 1 | `gpt-5.4` | OpenAI | `reasoning_effort=high` |
+| 2 | `gemini-3-pro-preview` | Google | `thinking_budget=65536` |
+| synthesis | `claude-sonnet-4-6` | Anthropic | Reviews all solutions and debate rounds |
 
 Custom model specs can be set in `.llm_config.yaml` under `counsel.models`.
 
@@ -1160,9 +1165,9 @@ Custom model specs can be set in `.llm_config.yaml` under `counsel.models`.
 
 Each pipeline stage runs through four phases:
 
-1. **Sandbox phase** (parallel): Each model receives the same task and system prompt but works in an isolated copy of the workspace (`counsel_sandboxes/<agent>/<model>/`). All four models execute simultaneously via `ThreadPoolExecutor`.
-2. **Debate phase** (parallel per round): After all sandbox runs complete, each model critiques all four solutions. This runs for `max_debate_rounds` rounds (default: 3, configurable via `--counsel-max-debate-rounds` or `CONSORTIUM_COUNSEL_MAX_DEBATE_ROUNDS`). Each round's critiques run in parallel.
-3. **Synthesis phase**: Claude Opus 4.6 reviews all solutions and all debate rounds, then produces a single authoritative output for the stage.
+1. **Sandbox phase** (parallel): Each model receives the same task and system prompt but works in an isolated copy of the workspace (`counsel_sandboxes/<agent>/<model>/`). All three models execute simultaneously via `ThreadPoolExecutor`.
+2. **Debate phase** (parallel per round): After all sandbox runs complete, each model critiques all three solutions. This runs for `max_debate_rounds` rounds (default: 3, configurable via `--counsel-max-debate-rounds` or `CONSORTIUM_COUNSEL_MAX_DEBATE_ROUNDS`). Each round's critiques run in parallel.
+3. **Synthesis phase**: The synthesis model (default: `claude-sonnet-4-6`, configurable in `.llm_config.yaml`) reviews all solutions and all debate rounds, then produces a single authoritative output for the stage.
 4. **Artifact promotion**: Files from each sandbox are merged into the main workspace. Later sandboxes win on file-level conflicts (last-write-wins).
 
 ### When to Use Counsel
@@ -1173,7 +1178,7 @@ Each pipeline stage runs through four phases:
 
 ### Cost and Performance Impact
 
-- Counsel multiplies per-stage cost by roughly 5-6x (4 independent model runs + 3 rounds of 4 debate calls + 1 synthesis call).
+- Counsel multiplies per-stage cost by roughly 4-5x (3 independent model runs + 3 rounds of 3 debate calls + 1 synthesis call).
 - Wall-clock time increases modestly because sandbox and debate phases run in parallel, but total runtime is still longer due to synthesis and sequential stage execution.
 - Requires API keys for all three providers: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`.
 
