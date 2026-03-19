@@ -5,73 +5,80 @@ Tests for consortium/graph.py — pipeline stage construction and routing.
 import pytest
 
 
-class TestBuildPipelineStages:
-    def test_base_pipeline_has_fourteen_stages(self):
-        from consortium.graph import build_pipeline_stages
-        stages = build_pipeline_stages(enable_math_agents=False)
-        # DISCOVERY(3) + EXPERIMENT(5) + POST_TRACK(6) = 14
+class TestBuildPipelineStagesV2:
+    def test_base_pipeline_stage_count(self):
+        from consortium.graph import build_pipeline_stages_v2
+        stages = build_pipeline_stages_v2(enable_math_agents=False)
+        # PRE_TRACK(4) + EXPERIMENT(5) + POST_TRACK(5) = 14
         assert len(stages) == 14
 
-    def test_base_pipeline_stage_names(self):
-        from consortium.graph import build_pipeline_stages
-        stages = build_pipeline_stages(enable_math_agents=False)
-        assert stages[0] == "ideation_agent"
+    def test_base_pipeline_starts_with_persona_council(self):
+        from consortium.graph import build_pipeline_stages_v2
+        stages = build_pipeline_stages_v2(enable_math_agents=False)
+        assert stages[0] == "persona_council"
+
+    def test_base_pipeline_ends_with_reviewer(self):
+        from consortium.graph import build_pipeline_stages_v2
+        stages = build_pipeline_stages_v2(enable_math_agents=False)
         assert stages[-1] == "reviewer_agent"
 
     def test_math_pipeline_has_twenty_stages(self):
-        from consortium.graph import build_pipeline_stages
-        stages = build_pipeline_stages(enable_math_agents=True)
-        # DISCOVERY(3) + MATH(6) + EXPERIMENT(5) + POST_TRACK(6) = 20
+        from consortium.graph import build_pipeline_stages_v2
+        stages = build_pipeline_stages_v2(enable_math_agents=True)
+        # PRE_TRACK(4) + MATH(6) + EXPERIMENT(5) + POST_TRACK(5) = 20
         assert len(stages) == 20
 
-    def test_math_stages_inserted_after_discovery_before_experiment(self):
-        from consortium.graph import build_pipeline_stages
-        stages = build_pipeline_stages(enable_math_agents=True)
-        # Math stages come after discovery, before experiment track
-        planner_idx = stages.index("research_planner_agent")
+    def test_math_stages_before_experiment_stages(self):
+        from consortium.graph import build_pipeline_stages_v2
+        stages = build_pipeline_stages_v2(enable_math_agents=True)
         math_lit_idx = stages.index("math_literature_agent")
         exp_lit_idx = stages.index("experiment_literature_agent")
-        assert math_lit_idx > planner_idx, "Math stages should follow discovery"
         assert math_lit_idx < exp_lit_idx, "Math stages should precede experiment track"
 
-    def test_math_stages_before_resource_preparation(self):
-        from consortium.graph import build_pipeline_stages
-        stages = build_pipeline_stages(enable_math_agents=True)
+    def test_math_stages_after_pre_track(self):
+        from consortium.graph import build_pipeline_stages_v2
+        stages = build_pipeline_stages_v2(enable_math_agents=True)
+        goals_idx = stages.index("formalize_goals_agent")
+        math_lit_idx = stages.index("math_literature_agent")
+        assert math_lit_idx > goals_idx, "Math stages should follow pre-track stages"
+
+    def test_math_stages_before_post_track(self):
+        from consortium.graph import build_pipeline_stages_v2
+        stages = build_pipeline_stages_v2(enable_math_agents=True)
         rp_idx = stages.index("resource_preparation_agent")
         assert stages.index("proof_transcription_agent") < rp_idx
 
     def test_all_base_stages_present_in_math_pipeline(self):
-        from consortium.graph import build_pipeline_stages
-        base = build_pipeline_stages(enable_math_agents=False)
-        math = build_pipeline_stages(enable_math_agents=True)
+        from consortium.graph import build_pipeline_stages_v2
+        base = build_pipeline_stages_v2(enable_math_agents=False)
+        math = build_pipeline_stages_v2(enable_math_agents=True)
         for stage in base:
             assert stage in math, f"Base stage '{stage}' missing from math pipeline"
 
     def test_no_duplicate_stages(self):
-        from consortium.graph import build_pipeline_stages
+        from consortium.graph import build_pipeline_stages_v2
         for enable_math in [False, True]:
-            stages = build_pipeline_stages(enable_math)
+            stages = build_pipeline_stages_v2(enable_math)
             assert len(stages) == len(set(stages)), \
                 f"Duplicate stages found in pipeline (math={enable_math}): {stages}"
 
-    def test_stage_group_order(self):
-        from consortium.graph import build_pipeline_stages
-        stages = build_pipeline_stages(enable_math_agents=False)
-        # Discovery stages come first
-        assert stages[0] == "ideation_agent"
+    def test_pre_track_stage_order(self):
+        from consortium.graph import build_pipeline_stages_v2
+        stages = build_pipeline_stages_v2(enable_math_agents=False)
+        assert stages[0] == "persona_council"
         assert stages[1] == "literature_review_agent"
-        assert stages[2] == "research_planner_agent"
-        # Experiment track follows
-        assert stages[3] == "experiment_literature_agent"
-        # Post-track stages end with reviewer
-        assert stages[-1] == "reviewer_agent"
-        assert "synthesis_literature_review_agent" in stages
+        assert stages[2] == "brainstorm_agent"
+        assert stages[3] == "formalize_goals_agent"
 
 
 class TestStageAliases:
-    def test_canonical_stage_name_ideation(self):
+    def test_canonical_stage_name_council(self):
         from consortium.runner import _STAGE_ALIASES
-        assert _STAGE_ALIASES.get("ideation") == "ideation_agent"
+        assert _STAGE_ALIASES.get("council") == "persona_council"
+
+    def test_canonical_stage_name_brainstorm(self):
+        from consortium.runner import _STAGE_ALIASES
+        assert _STAGE_ALIASES.get("brainstorm") == "brainstorm_agent"
 
     def test_canonical_stage_name_writeup(self):
         from consortium.runner import _STAGE_ALIASES
@@ -83,14 +90,14 @@ class TestStageAliases:
 
     def test_resolve_start_stage_index_valid(self):
         from consortium.runner import _resolve_start_stage_index
-        from consortium.graph import build_pipeline_stages
-        stages = build_pipeline_stages(enable_math_agents=False)
+        from consortium.graph import build_pipeline_stages_v2
+        stages = build_pipeline_stages_v2(enable_math_agents=False)
         idx = _resolve_start_stage_index("writeup", stages)
         assert stages[idx] == "writeup_agent"
 
     def test_resolve_start_stage_index_invalid_raises(self):
         from consortium.runner import _resolve_start_stage_index
-        from consortium.graph import build_pipeline_stages
-        stages = build_pipeline_stages(enable_math_agents=False)
+        from consortium.graph import build_pipeline_stages_v2
+        stages = build_pipeline_stages_v2(enable_math_agents=False)
         with pytest.raises(ValueError, match="Unknown --start-from-stage"):
             _resolve_start_stage_index("nonexistent_stage", stages)

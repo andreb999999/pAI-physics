@@ -31,6 +31,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import litellm
 
 from .prompts.persona_instructions import (
+    PERSONA_POST_SYNTHESIS_VOTE_PROMPT,
     PERSONA_SYSTEM_PROMPTS,
     PERSONA_SYNTHESIS_PROMPT,
 )
@@ -45,9 +46,9 @@ from .prompts.duality_check_instructions import (
 # ---------------------------------------------------------------------------
 
 DEFAULT_PERSONA_MODEL_SPECS: List[Dict[str, Any]] = [
-    {"persona": "practical_compass",  "model": "claude-opus-4-6", "reasoning_effort": "high"},
-    {"persona": "rigor_novelty",      "model": "claude-opus-4-6", "reasoning_effort": "high"},
-    {"persona": "narrative_architect", "model": "claude-opus-4-6", "reasoning_effort": "high"},
+    {"persona": "practical_compass",   "model": "claude-opus-4-6",      "reasoning_effort": "high"},
+    {"persona": "rigor_novelty",       "model": "gpt-5.4",              "reasoning_effort": "high"},
+    {"persona": "narrative_architect",  "model": "gemini-3-pro-preview", "thinking_budget": 32768},
 ]
 
 DEFAULT_SYNTHESIS_MODEL = "claude-opus-4-6"
@@ -227,10 +228,11 @@ def run_persona_council(
         if debate_history:
             debate_prompt += "Prior debate rounds:\n" + "\n---\n".join(debate_history) + "\n\n"
         debate_prompt += (
-            "Now critique the other personas' evaluations from your unique lens. "
-            "Identify: (1) points of agreement, (2) weaknesses or blind spots in "
-            "the other evaluations, (3) aspects that should be emphasized or revised "
-            "in the final proposal. Be specific and constructive."
+            "Your job in this round is to argue that this proposal should be REJECTED from your lens. "
+            "Find the single strongest reason it should not proceed as written. "
+            "Be a harsh critic, not a helpful colleague. "
+            "Only concede a point if the evidence from another persona's evaluation is overwhelming. "
+            "State clearly whether you maintain or change your verdict (ACCEPT/REJECT) and why."
         )
 
         def _one_critique(i: int) -> Tuple[int, str]:
@@ -290,7 +292,19 @@ def run_persona_council(
     # ------------------------------------------------------------------
     # Phase 3 — Synthesis
     # ------------------------------------------------------------------
+
+    # Extract verdicts before synthesis so we can pass them explicitly
+    verdicts: Dict[str, str] = {}
+    for i, spec in enumerate(specs):
+        verdicts[spec["persona"]] = _extract_verdict(evaluations[i])
+
+    verdict_summary = ", ".join(f"{k}={v}" for k, v in verdicts.items())
+    accept_count = sum(1 for v in verdicts.values() if v == "ACCEPT")
+    reject_count = sum(1 for v in verdicts.values() if v == "REJECT")
+
     synthesis_input = (
+        f"VERDICT SUMMARY: {verdict_summary} "
+        f"({accept_count} ACCEPT, {reject_count} REJECT)\n\n"
         f"Original task:\n{task}\n\n"
         f"Persona evaluations:\n\n{formatted_evals}\n\n"
         f"Debate ({len(debate_history)} rounds):\n" + "\n---\n".join(debate_history)
@@ -312,12 +326,109 @@ def run_persona_council(
         print(f"[persona_council] Synthesis failed ({e}), using first evaluation as fallback.")
         proposal_text = evaluations[0] if evaluations else f"[synthesis error: {e}]"
 
-    # Extract verdicts from each persona's evaluation
-    verdicts: Dict[str, str] = {}
-    for i, spec in enumerate(specs):
-        verdicts[spec["persona"]] = _extract_verdict(evaluations[i])
+    # ------------------------------------------------------------------
+    # Phase 4 — Post-synthesis accountability vote (parallel)
+    # ------------------------------------------------------------------
 
-    print(f"[persona_council] Complete. Verdicts: {verdicts}")
+    def _post_vote(idx: int, proposal: str) -> Tuple[int, str, str]:
+        """Ask one persona to vote ACCEPT/REJECT on the synthesized proposal."""
+        spec = specs[idx]
+        persona_name = spec["persona"]
+        model_id = spec["model"]
+        extra_params = {k: v for k, v in spec.items() if k not in ("persona", "model")}
+
+        system_prompt = PERSONA_SYSTEM_PROMPTS.get(persona_name, "")
+        user_content = (
+            f"{PERSONA_POST_SYNTHESIS_VOTE_PROMPT}\n\n"
+            f"YOUR PERSONA: {persona_name}\n\n"
+            f"YOUR INITIAL EVALUATION:\n{evaluations[idx]}\n\n"
+            f"SYNTHESIZED PROPOSAL:\n{proposal}"
+        )
+        try:
+            resp = litellm.completion(
+                model=model_id,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_content},
+                ],
+                max_tokens=1024,
+                **extra_params,
+            )
+            vote_text = resp.choices[0].message.content or ""
+        except Exception as e:
+            vote_text = f"[{persona_name} vote error: {e}]"
+        vote_verdict = _extract_verdict(vote_text)
+        return idx, vote_verdict, vote_text
+
+    max_post_vote_retries = 1
+    for post_vote_attempt in range(max_post_vote_retries + 1):
+        post_verdicts: Dict[str, str] = {}
+        post_vote_texts: Dict[str, str] = {}
+
+        with ThreadPoolExecutor(max_workers=len(specs)) as pool:
+            futures = {pool.submit(_post_vote, i, proposal_text): i for i in range(len(specs))}
+            try:
+                for future in as_completed(futures, timeout=timeout_seconds + 60):
+                    try:
+                        idx, vote_verdict, vote_text = future.result(timeout=timeout_seconds)
+                        name = specs[idx]["persona"]
+                        post_verdicts[name] = vote_verdict
+                        post_vote_texts[name] = vote_text
+                    except (TimeoutError, Exception) as e:
+                        for f, i in futures.items():
+                            if f is future:
+                                name = specs[i]["persona"]
+                                post_verdicts[name] = "UNKNOWN"
+                                post_vote_texts[name] = f"[vote error: {e}]"
+                                break
+            except TimeoutError:
+                for f, i in futures.items():
+                    if not f.done():
+                        name = specs[i]["persona"]
+                        post_verdicts[name] = "UNKNOWN"
+                        post_vote_texts[name] = "[vote timed out]"
+                        f.cancel()
+
+        post_reject_count = sum(1 for v in post_verdicts.values() if v == "REJECT")
+        print(
+            f"[persona_council] Phase 4 — post-synthesis vote "
+            f"(attempt {post_vote_attempt + 1}): {post_verdicts}"
+        )
+
+        if post_reject_count < 2 or post_vote_attempt >= max_post_vote_retries:
+            # Accept or retries exhausted — use current proposal
+            verdicts = post_verdicts
+            break
+
+        # 2+ rejected — re-synthesize with objections appended
+        objections = "\n\n".join(
+            f"=== {name} POST-SYNTHESIS REJECTION ===\n{post_vote_texts[name]}"
+            for name, v in post_verdicts.items() if v == "REJECT"
+        )
+        synthesis_input_retry = (
+            synthesis_input + "\n\n"
+            f"POST-SYNTHESIS VOTE: {post_reject_count} of {len(specs)} personas REJECTED "
+            f"the synthesized proposal. Their objections:\n\n{objections}\n\n"
+            "You MUST address these objections in a revised proposal."
+        )
+        try:
+            resp = litellm.completion(
+                model=synthesis_model,
+                messages=[
+                    {"role": "system", "content": PERSONA_SYNTHESIS_PROMPT},
+                    {"role": "user", "content": synthesis_input_retry},
+                ],
+                max_tokens=8192,
+                reasoning_effort="high",
+            )
+            proposal_text = resp.choices[0].message.content or ""
+            print("[persona_council] Phase 4 — re-synthesis complete after post-vote rejection.")
+        except Exception as e:
+            print(f"[persona_council] Re-synthesis failed ({e}), keeping original proposal.")
+            verdicts = post_verdicts
+            break
+
+    print(f"[persona_council] Complete. Final verdicts: {verdicts}")
     return proposal_text, verdicts
 
 
@@ -488,7 +599,7 @@ def create_persona_council_node(
     """
 
     def persona_council_node(state: dict) -> dict:
-        task = state.get("task", "")
+        task = state.get("agent_task") or state.get("task", "")
 
         proposal, verdicts = run_persona_council(
             task=task,

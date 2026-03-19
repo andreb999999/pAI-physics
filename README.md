@@ -854,20 +854,16 @@ curl -s http://127.0.0.1:5002/status
 
 ### SLURM / HPC Deployment
 
-The `scripts/campaign_heartbeat_slurm_DEPRECATED.sh` script (deprecated — v5 uses OpenClaw cron instead) runs as a 7-day SLURM job on `pi_tpoggio` that ticks every 30 minutes (332 ticks with a 2-hour buffer before wall-time expiry). The heartbeat uses configurable circuit breakers (`max_idle_ticks`, `max_campaign_hours`) to detect and halt stuck campaigns — see [Circuit Breakers](#circuit-breakers) below.
+The heartbeat uses configurable circuit breakers (`max_idle_ticks`, `max_campaign_hours`) to detect and halt stuck campaigns — see [Circuit Breakers](#circuit-breakers) below.
 
 All cluster-specific settings — partitions, GPU types, conda paths, module loads — are centralized in `engaging_config.yaml`. The heartbeat runs on a CPU partition; experiment GPU jobs and repair agents are submitted as separate SLURM jobs.
 
 ```bash
-# Submit the 7-day heartbeat loop on Engaging
-sbatch scripts/campaign_heartbeat_slurm_DEPRECATED.sh
-
-# Check heartbeat job status
-squeue -u $USER --name=openclaw-heartbeat
-
-# For individual stage GPU jobs, use the campaign runner's SLURM integration
-# or submit manually:
+# Submit a stage as a SLURM job
 sbatch scripts/launch_multiagent_slurm.sh [optional_launch_args]
+
+# Check job status
+squeue -u $USER
 ```
 
 See `engaging_config.yaml` for cluster partition/resource definitions and [`OpenClaw_Use_Guide.md`](OpenClaw_Use_Guide.md) for scheduling alternatives (cron, shell loop).
@@ -880,6 +876,7 @@ Use `python launch_multiagent.py --help` for full output.
 
 | Flag | Default | Description |
 |---|---|---|
+| `--mode` | auto-detect | Deployment mode (`local`\|`tinker`\|`hpc`) |
 | `--model` | `None` | Model override for all agents |
 | `--debug` | `false` | Enable debug logging |
 | `--log-to-files` | env-driven | Force stdout/stderr redirection to `logs/` |
@@ -911,6 +908,11 @@ Use `python launch_multiagent.py --help` for full output.
 | `--tree-max-parallel` | `6` | Max concurrent branches executing at once |
 | `--tree-pruning-threshold` | `0.2` | Score threshold below which branches are pruned |
 | `--tree-counsel-mode` | `all_nodes` | When to run counsel within tree branches (`all_nodes`\|`final_only`\|`by_depth`\|`by_node_type`) |
+| `--enable-milestone-gates` | `false` | Pause at strategic milestones and wait for human input via HTTP |
+| `--milestone-timeout` | `3600` | Seconds to wait for human response at milestone gates before auto-proceeding |
+| `--autonomous-mode` | `true` | Run fully autonomously with no human-in-the-loop gates |
+| `--no-autonomous-mode` | — | Enable milestone gates and human approval checkpoints |
+| `--max-run-seconds` | `None` | Hard timeout for the entire pipeline run (SIGALRM kill) |
 | `--dry-run` | `false` | Validate setup without running pipeline |
 | `--output-format` | `latex` | Output format (`latex` or `markdown`) |
 | `--list-runs` | `false` | List past runs and exit |
