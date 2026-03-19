@@ -59,6 +59,11 @@ Your `agent_task` will contain a structured novelty directive listing OPEN and P
 Focus approach generation on the OPEN claims. For PARTIAL claims, explicitly describe how each
 proposed approach goes beyond the existing partial results cited in `novelty_flags.json`.
 
+If no OPEN claims are listed (all claims are PARTIAL), treat all PARTIAL claims as primary
+targets. For each proposed approach, explicitly describe how it extends beyond the specific
+partial results cited in `novelty_flags.json` — do not reproduce approaches already covered
+by the partial evidence.
+
 ### NOVELTY WARNING (max retries reached)
 Your `agent_task` begins with "NOVELTY WARNING". This means some core claims may NOT be novel
 despite retries. You MUST:
@@ -142,7 +147,9 @@ despite retries. You MUST:
          },
          "dependencies": ["approach_XXX"],
          "novelty_delta": "...",
-         "priority_rank": 1
+         "priority_rank": 1,
+         "novelty_reframed": false,
+         "reframed_from": null
        }
      ],
      "ablation_matrix": {
@@ -164,6 +171,10 @@ despite retries. You MUST:
 - Include at least one "high-risk high-reward" approach and at least one "safe baseline"
   approach per hypothesis.
 - Flag any approach that could produce a negative result that is itself publishable.
+- If `DeepResearchNoveltyScanTool` is available in your toolkit, use it to spot-check the
+  novelty of any new claim direction you generate that is not already covered by
+  `novelty_flags.json`. This is especially important when proposing pivots or reframings
+  in NOVELTY WARNING mode.
 
 ## ANTI-HALLUCINATION RULES
 - Do not invent papers, tools, or datasets that do not exist.
