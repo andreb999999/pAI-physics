@@ -1,8 +1,8 @@
 """
-Supervision Manager for the Smolagents Research System.
+Supervision Manager for the OpenPI Research System.
 
 This module manages hierarchical supervision to prevent hallucination and ensure
-quality as specified in the Full Smolagents Agentization Plan.
+quality as specified in the Full OpenPI Agentization Plan.
 """
 
 import logging

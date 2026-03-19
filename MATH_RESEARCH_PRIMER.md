@@ -27,9 +27,10 @@ inspect the outputs. You are not in the loop for every decision.
 You (vague idea)
   |
   v
-ManagerAgent  ---------> coordinates everything
+PersonaCouncil -------> evaluates research direction (3-persona debate)
   |
-  |--- IdeationAgent          literature search + mathematical formalization
+  |--- BrainstormAgent         generates research approaches
+  |--- FormalizeGoalsAgent     structures goals for execution
   |--- MathProposerAgent      builds the formal claim graph (defs, lemmas, theorems)
   |--- MathProverAgent        writes structured proof drafts
   |--- MathRigorousVerifier   audits proofs for symbolic completeness
@@ -55,17 +56,17 @@ IdeationAgent -> MathProposer -> MathProver -> RigorousVerifier -> EmpiricalVeri
 (Experimentation) -> ResourcePreparation -> WriteupAgent -> ReviewerAgent -> ProofreadingAgent
 ```
 
-The ManagerAgent orchestrates both, feeding accepted math claims into the paper pipeline.
+The pipeline orchestrates both tracks via a direct-wired LangGraph workflow, feeding accepted math claims into the paper pipeline.
 
 ---
 
 ## The Math Pipeline in Detail
 
-### 1. IdeationAgent -- From Vague Idea to Mathematical Program
+### 1. Discovery Phase -- From Vague Idea to Mathematical Program
 
-Takes your informal intuition and produces a structured mathematical research program.
-It searches ArXiv for DL theory papers, identifies the right mathematical framework
-(functional analysis, measure theory, optimization theory, etc.), and drafts:
+The persona council and brainstorm agents take your informal intuition and produce a structured mathematical research program.
+They search ArXiv for DL theory papers, identify the right mathematical framework
+(functional analysis, measure theory, optimization theory, etc.), and draft:
 
 - Precise definitions with explicit quantifiers and domains
 - Labeled assumptions (A1, A2, ...) that are falsifiable and motivated
@@ -154,9 +155,9 @@ Takes `verified_symbolic` claims and stress-tests them numerically:
 Upgrades status to `verified_numeric` on pass, or demotes back to `proved_draft`
 with counterexample evidence.
 
-### 6. Acceptance Gate (Manager-Enforced)
+### 6. Acceptance Gate
 
-The ManagerAgent sets a claim to `accepted` only when ALL of:
+A claim is set to `accepted` only when ALL of:
 - Status is `verified_numeric`
 - Proof file exists in `math_workspace/proofs/`
 - Symbolic audit record shows `pass`

@@ -1,13 +1,13 @@
 """
 Central system prompt template for all agents.
-Contains the complete smolagents system prompt with dynamic placeholders for:
+Contains the system prompt with dynamic placeholders for:
 - Tools section
-- Managed agents section  
+- Managed agents section
 - Agent-specific instructions
 - Workspace management guidance
 """
 
-# Complete smolagents system prompt template with placeholders
+# System prompt template with placeholders
 SYSTEM_PROMPT_TEMPLATE = """
 You are a specialized agent in a multi-agent system designed for autonomous, end-to-end AI/ML research. Your primary function is to write code blobs to call tools to accomplish given tasks. You are also given access to a workspace, which is a folder with files potentially relevant to the task at hand.
 

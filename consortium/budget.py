@@ -373,7 +373,7 @@ class BudgetedLiteLLMModel:
 
         # Support both conventions:
         # - prompt/completion (OpenAI-style usage)
-        # - input/output (smolagents TokenUsage wrapper)
+        # - input/output (Anthropic-style usage)
         prompt_tokens = _get("prompt_tokens", "input_tokens")
         completion_tokens = _get("completion_tokens", "output_tokens")
         total_tokens = _get("total_tokens")
@@ -391,7 +391,7 @@ class BudgetedLiteLLMModel:
         }
 
     def _extract_token_usage(self, response) -> Optional[Dict[str, int]]:
-        # 1) smolagents ChatMessage.token_usage
+        # 1) ChatMessage.token_usage attribute
         usage = self._extract_usage_from_obj(getattr(response, "token_usage", None))
         if usage:
             return usage

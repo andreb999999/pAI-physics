@@ -631,24 +631,18 @@ def cmd_check_credits(args, spec, status, campaign_dir: str) -> int:
 
 
 def cmd_validate_pipeline(args, spec, status, campaign_dir: str) -> int:
-    """Validate that all stages use pipeline v2."""
+    """Validate that all stages use the current pipeline (v2)."""
     issues = []
     for stage in spec.stages:
-        has_v2 = False
-        has_v1 = False
         for i, arg in enumerate(stage.args):
-            if arg == "--pipeline-version" and i + 1 < len(stage.args):
-                if stage.args[i + 1] == "v2":
-                    has_v2 = True
-                elif stage.args[i + 1] == "v1":
-                    has_v1 = True
-        if has_v1:
-            issues.append(f"Stage '{stage.id}' explicitly uses deprecated v1 pipeline")
-        # Note: omitting --pipeline-version is now fine since default is v2
+            if arg == "--pipeline-version":
+                issues.append(
+                    f"Stage '{stage.id}' passes --pipeline-version which is no longer "
+                    f"a recognized flag. Remove it from the stage args."
+                )
     return _json_out({
         "valid": len(issues) == 0,
         "issues": issues,
-        "note": "Default pipeline is now v2; stages without --pipeline-version will use v2.",
     })
 
 

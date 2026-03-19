@@ -55,6 +55,9 @@ slurm_outputs/
 archive/*/results/
 archive/*/token_ledger.jsonl
 
+# User-local LLM config (copy from .llm_config.yaml.example)
+.llm_config.yaml
+
 # Local ad-hoc project workspaces (never commit)
 /project*/
 /my_project_*/

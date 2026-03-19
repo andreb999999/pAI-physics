@@ -1,8 +1,7 @@
 """
 Base agent factory — LangGraph migration.
 
-Replaces BaseResearchAgent (smolagents CodeAgent subclass) with a factory
-that creates a LangGraph create_react_agent node.
+Agent factory that creates LangGraph create_react_agent nodes.
 
 Each specialist agent module exposes:
   - get_tools(workspace_dir, model_id)  -> list[BaseTool]

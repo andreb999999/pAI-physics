@@ -21,7 +21,7 @@ This guide explains how to extend consortium: adding new agents, new tools, modi
 ```bash
 ./scripts/bootstrap.sh researchlab minimal
 conda activate researchlab
-pip install -e ".[core]" pytest pytest-cov mypy
+pip install -e . pytest pytest-cov mypy
 cp .env.example .env  # add at least one API key
 ```
 
@@ -191,10 +191,10 @@ All agent system prompts live in `consortium/prompts/`:
 
 | File | Agent |
 |------|-------|
-| `manager_instructions.py` | ManagerAgent (routing, task crafting) |
-| `ideation_instructions.py` | IdeationAgent |
 | `literature_review_instructions.py` | LiteratureReviewAgent |
-| `research_planner_instructions.py` | ResearchPlannerAgent |
+| `persona_council_instructions.py` | PersonaCouncil |
+| `brainstorm_instructions.py` | BrainstormAgent |
+| `formalize_goals_instructions.py` | FormalizeGoalsAgent |
 | `experimentation_instructions.py` | ExperimentationAgent |
 | `results_analysis_instructions.py` | ResultsAnalysisAgent |
 | `writeup_instructions.py` | WriteupAgent |

@@ -10,8 +10,9 @@ import json
 import os
 import numpy as np
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Union, Tuple
-from smolagents import Tool
+from typing import List, Dict, Any, Optional, Union, Tuple, Type
+from langchain_core.tools import BaseTool
+from pydantic import BaseModel, Field, ConfigDict
 
 # Handle matplotlib import with fallback
 try:
@@ -34,11 +35,20 @@ except ImportError:
     PIL_AVAILABLE = False
 
 
-class PlotEnhancementTool(Tool):
-    name = "plot_enhancement_tool" 
-    description = """
+class PlotEnhancementToolInput(BaseModel):
+    plot_specification: str = Field(description="Specification of plots to enhance. Can be: image file paths (comma-separated), directory path containing plots, or description for auto-discovery")
+    enhancement_focus: Optional[str] = Field(default="comprehensive", description="Enhancement focus area (default: 'comprehensive'): 'comprehensive', 'typography', 'colors', 'layout', 'labels', 'accessibility', 'statistical'")
+    target_style: Optional[str] = Field(default="academic", description="Target publication style (default: 'academic'): 'academic', 'nature', 'science', 'ieee', 'neurips', 'custom'")
+    generate_comparison: Optional[bool] = Field(default=True, description="Generate before/after comparison images (default: true)")
+    enhancement_data: Optional[str] = Field(default=None, description="Optional data source for plot reconstruction (if original data is available)")
+    output_filename: Optional[str] = Field(default=None, description="Output filename pattern for enhanced plots (default: auto-generated with '_enhanced' suffix)")
+
+
+class PlotEnhancementTool(BaseTool):
+    name: str = "plot_enhancement_tool"
+    description: str = """
     Enhance existing plots based on visual analysis and publication standards.
-    
+
     This tool specializes in improving plot quality through:
     - Visual issue detection (missing labels, poor legends, overlapping text)
     - Formatting improvements (fonts, colors, spacing, aspect ratios)
@@ -46,7 +56,7 @@ class PlotEnhancementTool(Tool):
     - Accessibility improvements (color-blind friendly palettes, contrast)
     - Statistical enhancement suggestions (error bars, confidence intervals)
     - Layout optimization (margin adjustment, element positioning)
-    
+
     Key capabilities:
     - Analyzes existing plot images to identify improvement opportunities
     - Uses VLM feedback to guide enhancement decisions
@@ -54,7 +64,7 @@ class PlotEnhancementTool(Tool):
     - Generates side-by-side before/after comparisons
     - Provides detailed enhancement reports with justifications
     - Supports various plot types (line plots, bar charts, scatter plots, heatmaps)
-    
+
     Enhancement categories:
     - Typography: font sizes, family, weight, readability
     - Color schemes: publication-appropriate palettes, accessibility
@@ -62,88 +72,40 @@ class PlotEnhancementTool(Tool):
     - Labels: axis labels, titles, legends, annotations
     - Data presentation: error bars, statistical indicators, clarity
     - Professional polish: grid lines, tick marks, overall aesthetics
-    
+
     Input sources:
     - Existing plot image files (PNG, JPG, PDF) for analysis
     - Data files for plot reconstruction with improvements
     - VLM analysis reports for targeted enhancement
     - Publication style guidelines for consistency
-    
+
     Use this tool when existing plots need improvement for publication,
     when reviewers suggest plot quality enhancements, or for standardizing
     plot appearance across a paper.
     """
-    
-    inputs = {
-        "plot_specification": {
-            "type": "string",
-            "description": "Specification of plots to enhance. Can be: image file paths (comma-separated), directory path containing plots, or description for auto-discovery"
-        },
-        "enhancement_focus": {
-            "type": "string",
-            "description": "Enhancement focus area (default: 'comprehensive'):\n" +
-                          "• 'comprehensive': Complete enhancement covering all aspects\n" +
-                          "• 'typography': Focus on font sizes, families, readability, text formatting\n" +
-                          "• 'colors': Improve color schemes, accessibility, publication-appropriate palettes\n" +
-                          "• 'layout': Optimize spacing, margins, aspect ratios, element positioning\n" +
-                          "• 'labels': Enhance axis labels, titles, legends, annotations clarity\n" +
-                          "• 'accessibility': Ensure color-blind friendly design and high contrast\n" +
-                          "• 'statistical': Add error bars, confidence intervals, statistical indicators",
-            "nullable": True
-        },
-        "target_style": {
-            "type": "string",
-            "description": "Target publication style (default: 'academic'):\n" +
-                          "• 'academic': General academic paper style with clear, professional formatting\n" +
-                          "• 'nature': Nature journal style - elegant, minimal, high-quality typography\n" +
-                          "• 'science': Science journal style - clean, professional, data-focused\n" +
-                          "• 'ieee': IEEE conference/journal style - technical, precise formatting\n" +
-                          "• 'neurips': NeurIPS conference style - ML/AI paper formatting standards\n" +
-                          "• 'custom': Use provided style specifications or analyze from existing figures",
-            "nullable": True
-        },
-        "generate_comparison": {
-            "type": "boolean",
-            "description": "Generate before/after comparison images (default: true)",
-            "nullable": True
-        },
-        "enhancement_data": {
-            "type": "string", 
-            "description": "Optional data source for plot reconstruction (if original data is available)",
-            "nullable": True
-        },
-        "output_filename": {
-            "type": "string",
-            "description": "Output filename pattern for enhanced plots (default: auto-generated with '_enhanced' suffix)",
-            "nullable": True
-        }
-    }
-    
-    outputs = {
-        "enhancement_results": {
-            "type": "string",
-            "description": "JSON containing enhancement analysis, improvements made, and generated file paths"
-        }
-    }
-    
-    output_type = "string"
-    
-    def __init__(self, model=None, working_dir: Optional[str] = None):
+    args_schema: Type[BaseModel] = PlotEnhancementToolInput
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    model: Any = None
+    working_dir: Optional[str] = None
+
+    def __init__(self, model=None, working_dir: Optional[str] = None, **kwargs):
         """Initialize PlotEnhancementTool.
-        
+
         Args:
             model: LLM model for intelligent enhancement decisions (optional)
             working_dir: Working directory for workspace-aware file access
         """
-        super().__init__()
         from ..model_utils import get_raw_model
-        self.model = get_raw_model(model)
+        resolved_model = get_raw_model(model)
         # Convert to absolute path to prevent nested directory issues
-        self.working_dir = os.path.abspath(working_dir) if working_dir else None
-        
-    def forward(self, plot_specification: str, enhancement_focus: str = "comprehensive",
-                target_style: str = "academic", generate_comparison: bool = True,
-                enhancement_data: str = None, output_filename: str = None) -> str:
+        resolved_working_dir = os.path.abspath(working_dir) if working_dir else None
+        super().__init__(model=resolved_model, working_dir=resolved_working_dir, **kwargs)
+
+    def _run(self, plot_specification: str, enhancement_focus: Optional[str] = "comprehensive",
+             target_style: Optional[str] = "academic", generate_comparison: Optional[bool] = True,
+             enhancement_data: Optional[str] = None, output_filename: Optional[str] = None) -> str:
         """
         Enhance existing plots based on analysis and best practices.
         

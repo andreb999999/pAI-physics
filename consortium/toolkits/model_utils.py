@@ -12,8 +12,7 @@ def get_raw_model(model):
     Extract a model identifier string (or a raw callable) from whatever
     model object is passed.
 
-    Pre-migration: received a smolagents LiteLLMModel; returned it as-is.
-    Post-migration: receives a langchain ChatLiteLLM; returns the model_id
+    Receives a langchain ChatLiteLLM and returns the model_id
     string so tool internals can call litellm.completion(model=...) directly.
 
     Handles BudgetedLiteLLMModel wrappers by unwrapping one level.

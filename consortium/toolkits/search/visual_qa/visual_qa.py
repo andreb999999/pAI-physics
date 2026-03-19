@@ -10,7 +10,9 @@ import requests
 from dotenv import load_dotenv
 from huggingface_hub import InferenceClient
 
-from smolagents import Tool, tool
+from langchain_core.tools import BaseTool, tool
+from pydantic import BaseModel, Field, ConfigDict
+from typing import Optional, Any, Type
 
 
 load_dotenv(override=True)
@@ -102,21 +104,23 @@ def resize_image(image_path):
     return new_image_path
 
 
-class VisualQATool(Tool):
-    name = "visualizer"
-    description = "A tool that can answer questions about attached images."
-    inputs = {
-        "image_path": {
-            "description": "The path to the image on which to answer the question",
-            "type": "string",
-        },
-        "question": {"description": "the question to answer", "type": "string", "nullable": True},
-    }
-    output_type = "string"
+class VisualQAToolInput(BaseModel):
+    image_path: str = Field(description="The path to the image on which to answer the question")
+    question: Optional[str] = Field(default=None, description="the question to answer")
 
-    client = InferenceClient("HuggingFaceM4/idefics2-8b-chatty")
 
-    def forward(self, image_path: str, question: str | None = None) -> str:
+class VisualQATool(BaseTool):
+    name: str = "visualizer"
+    description: str = "A tool that can answer questions about attached images."
+    args_schema: Type[BaseModel] = VisualQAToolInput
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    client: Any = None
+
+    def __init__(self, **kwargs):
+        super().__init__(client=InferenceClient("HuggingFaceM4/idefics2-8b-chatty"), **kwargs)
+
+    def _run(self, image_path: str, question: str | None = None) -> str:
         output = ""
         add_note = False
         if not question:

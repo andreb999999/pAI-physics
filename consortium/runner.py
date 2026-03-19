@@ -27,8 +27,8 @@ from .prereqs import check_latex_prereqs
 from .supervision import sanitize_result_payload
 from .token_usage_tracker import initialize_run_token_tracker
 from .counsel import create_counsel_models, DEFAULT_COUNSEL_MODEL_SPECS, set_counsel_timeout
-from .graph import build_pipeline_stages, build_pipeline_stages_v2, get_default_checkpointer
-from .utils import create_model, create_model_registry, build_research_graph, save_agent_memory
+from .graph import build_pipeline_stages_v2, get_default_checkpointer
+from .utils import create_model, create_model_registry, save_agent_memory
 
 load_dotenv(override=True)
 
@@ -71,16 +71,10 @@ _CONTINUATION_TASK = (
 )
 
 _STAGE_ALIASES = {
-    "ideation": "ideation_agent",
-    "ideation_agent": "ideation_agent",
     "literature": "literature_review_agent",
     "litreview": "literature_review_agent",
     "literature_review": "literature_review_agent",
     "literature_review_agent": "literature_review_agent",
-    "planning": "research_planner_agent",
-    "plan": "research_planner_agent",
-    "research_planner": "research_planner_agent",
-    "research_planner_agent": "research_planner_agent",
     "experiment": "experimentation_agent",
     "experimentation": "experimentation_agent",
     "experimentation_agent": "experimentation_agent",
@@ -110,7 +104,6 @@ _STAGE_ALIASES = {
     "review": "reviewer_agent",
     "reviewer": "reviewer_agent",
     "reviewer_agent": "reviewer_agent",
-    # V2 pipeline aliases
     "persona_council": "persona_council",
     "council": "persona_council",
     "brainstorm": "brainstorm_agent",
@@ -472,7 +465,7 @@ def main():
         "1", "true", "yes", "on",
     }
     enable_file_logs = env_log_default if args.log_to_files is None else args.log_to_files
-    if enable_file_logs:
+    if enable_file_logs and not getattr(args, "dry_run", False):
         os.makedirs("logs", exist_ok=True)
         out_path = f"logs/consortium_{timestamp}.out"
         err_path = f"logs/consortium_{timestamp}.err"
@@ -497,6 +490,13 @@ def main():
 
     _setup_optional_tracing()
     _install_litellm_token_callback()
+
+    # --- Deployment mode resolution ---
+    from .mode import resolve_mode, load_mode_config, apply_mode_defaults
+    mode = resolve_mode(args)
+    mode_config = load_mode_config(mode)
+    apply_mode_defaults(args, mode_config)
+    print(f"[OpenPI] Running in {mode} mode — {mode_config.get('description', '')}")
 
     llm_config = load_llm_config()
 
@@ -586,19 +586,8 @@ def main():
     if args.enable_math_agents:
         print("Math agent workflow enabled.")
 
-    pipeline_version = getattr(args, "pipeline_version", "v2")
-    if pipeline_version == "v2":
-        pipeline_stages = build_pipeline_stages_v2(args.enable_math_agents)
-        print("Pipeline version: v2 (persona-council-driven)")
-    else:
-        import warnings
-        warnings.warn(
-            "V1 pipeline is deprecated and will be removed in a future release. "
-            "Use --pipeline-version v2.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        pipeline_stages = build_pipeline_stages(args.enable_math_agents)
+    pipeline_stages = build_pipeline_stages_v2(args.enable_math_agents)
+    print("Pipeline version: v2 (persona-council-driven)")
     try:
         start_stage_index = (
             _resolve_start_stage_index(args.start_from_stage, pipeline_stages)
@@ -732,74 +721,54 @@ def main():
         milestone_timeout = getattr(args, "milestone_timeout", 3600)
         adversarial_verification = getattr(args, "adversarial_verification", False)
 
-        if pipeline_version == "v2":
-            # --- V2: persona-council-driven pipeline ---
-            pc_cfg = llm_config.get("persona_council", {}) if llm_config else {}
-            dc_cfg = llm_config.get("duality_check", {}) if llm_config else {}
+        # --- Persona-council-driven pipeline ---
+        pc_cfg = llm_config.get("persona_council", {}) if llm_config else {}
+        dc_cfg = llm_config.get("duality_check", {}) if llm_config else {}
 
-            persona_debate_rounds = getattr(args, "persona_debate_rounds", None)
-            if persona_debate_rounds is None:
-                persona_debate_rounds = int(pc_cfg.get("max_debate_rounds", 3))
+        persona_debate_rounds = getattr(args, "persona_debate_rounds", None)
+        if persona_debate_rounds is None:
+            persona_debate_rounds = int(pc_cfg.get("max_debate_rounds", 3))
 
-            persona_council_specs = pc_cfg.get("personas") or None
-            persona_synthesis_model = pc_cfg.get("synthesis_model", "claude-opus-4-6")
-            duality_check_model = dc_cfg.get("model", "claude-opus-4-6")
-            enable_duality_check = not getattr(args, "no_duality_check", False)
+        persona_council_specs = pc_cfg.get("personas") or None
+        persona_synthesis_model = pc_cfg.get("synthesis_model", "claude-opus-4-6")
+        duality_check_model = dc_cfg.get("model", "claude-opus-4-6")
+        enable_duality_check = not getattr(args, "no_duality_check", False)
 
-            # Extract budget manager if available
-            budget_manager = None
-            if hasattr(model, "budget_manager"):
-                budget_manager = model.budget_manager
+        # Extract budget manager if available
+        budget_manager = None
+        if hasattr(model, "budget_manager"):
+            budget_manager = model.budget_manager
 
-            from .graph import build_research_graph_v2
-            checkpointer = get_default_checkpointer(results_base_dir)
-            graph = build_research_graph_v2(
-                model=model,
-                model_registry=model_registry,
-                workspace_dir=results_base_dir,
-                pipeline_mode=effective_pipeline_mode,
-                enable_math_agents=args.enable_math_agents,
-                enforce_paper_artifacts=enforce_paper_artifacts,
-                enforce_editorial_artifacts=enforce_editorial_artifacts,
-                require_pdf=args.require_pdf,
-                require_experiment_plan=require_experiment_plan,
-                min_review_score=args.min_review_score,
-                followup_max_iterations=args.followup_max_iterations,
-                manager_max_steps=args.manager_max_steps if args.manager_max_steps else 50,
-                authorized_imports=essential_imports,
-                checkpointer=checkpointer,
-                counsel_models=counsel_models_list,
-                tree_search_config=tree_search_config,
-                enable_milestone_gates=enable_milestone_gates,
-                adversarial_verification=adversarial_verification,
-                persona_council_specs=persona_council_specs,
-                persona_debate_rounds=persona_debate_rounds,
-                persona_synthesis_model=persona_synthesis_model,
-                duality_check_model=duality_check_model,
-                enable_duality_check=enable_duality_check,
-                budget_manager=budget_manager,
-            )
-            print(f"V2 pipeline: {persona_debate_rounds} persona debate rounds, "
-                  f"duality_check={'enabled' if enable_duality_check else 'disabled'}")
-        else:
-            graph, checkpointer = build_research_graph(
-                model=model,
-                workspace_dir=results_base_dir,
-                essential_imports=essential_imports,
-                require_pdf=args.require_pdf,
-                enforce_paper_artifacts=enforce_paper_artifacts,
-                require_experiment_plan=require_experiment_plan,
-                enable_math_agents=args.enable_math_agents,
-                enforce_editorial_artifacts=enforce_editorial_artifacts,
-                min_review_score=args.min_review_score,
-                pipeline_mode=effective_pipeline_mode,
-                followup_max_iterations=args.followup_max_iterations,
-                manager_max_steps=args.manager_max_steps if args.manager_max_steps else 50,
-                counsel_models=counsel_models_list,
-                tree_search_config=tree_search_config,
-                enable_milestone_gates=enable_milestone_gates,
-                adversarial_verification=adversarial_verification,
-            )
+        from .graph import build_research_graph_v2
+        checkpointer = get_default_checkpointer(results_base_dir)
+        graph = build_research_graph_v2(
+            model=model,
+            model_registry=model_registry,
+            workspace_dir=results_base_dir,
+            pipeline_mode=effective_pipeline_mode,
+            enable_math_agents=args.enable_math_agents,
+            enforce_paper_artifacts=enforce_paper_artifacts,
+            enforce_editorial_artifacts=enforce_editorial_artifacts,
+            require_pdf=args.require_pdf,
+            require_experiment_plan=require_experiment_plan,
+            min_review_score=args.min_review_score,
+            followup_max_iterations=args.followup_max_iterations,
+            manager_max_steps=args.manager_max_steps if args.manager_max_steps else 50,
+            authorized_imports=essential_imports,
+            checkpointer=checkpointer,
+            counsel_models=counsel_models_list,
+            tree_search_config=tree_search_config,
+            enable_milestone_gates=enable_milestone_gates,
+            adversarial_verification=adversarial_verification,
+            persona_council_specs=persona_council_specs,
+            persona_debate_rounds=persona_debate_rounds,
+            persona_synthesis_model=persona_synthesis_model,
+            duality_check_model=duality_check_model,
+            enable_duality_check=enable_duality_check,
+            budget_manager=budget_manager,
+        )
+        print(f"Pipeline: {persona_debate_rounds} persona debate rounds, "
+              f"duality_check={'enabled' if enable_duality_check else 'disabled'}")
 
         if adversarial_verification:
             print("Adversarial verification enabled — red-team verifiers will "
@@ -850,8 +819,7 @@ def main():
             "milestone_timeout": milestone_timeout,
             "intermediate_validation_log": [],
             "finished": False,
-            # V2 pipeline fields (safe to include for v1 — ignored by v1 graph)
-            "pipeline_version": pipeline_version,
+            # Pipeline fields
             "autonomous_mode": autonomous_mode,
             "research_proposal": None,
             "brainstorm_output": None,

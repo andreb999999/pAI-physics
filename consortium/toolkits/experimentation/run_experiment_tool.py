@@ -320,10 +320,63 @@ class RunExperimentTool(BaseTool):
                 print(f"Log directory created: {log_dir}")
                 print(f"AI-Scientist-v2 working directory: {run_dir}")
 
-            # --- Execute: SLURM or local subprocess ---
+            # --- Execute: dispatch based on deployment mode ---
             from .slurm_runner import is_slurm_enabled
+            from .tinker_runner import is_tinker_enabled
 
-            if is_slurm_enabled():
+            experiment_mode = os.environ.get("CONSORTIUM_MODE", "local")
+
+            if is_tinker_enabled() or experiment_mode == "tinker":
+                # Tinker API mode: submit training to Tinker
+                from .tinker_runner import submit_tinker_job
+
+                print(f"\nTinker API mode — submitting experiment to Tinker...")
+                try:
+                    import yaml as _yaml
+                    with open(os.path.join(run_dir, "bfts_config.yaml")) as _cf:
+                        exp_config = _yaml.safe_load(_cf)
+
+                    result = submit_tinker_job(
+                        idea_data=idea_data,
+                        run_dir=run_dir,
+                        config=exp_config,
+                        job_name=f"exp_{idea_name[:20]}",
+                    )
+
+                    if log_dir:
+                        with open(os.path.join(log_dir, "tinker_result.json"), "w") as f:
+                            json.dump(result, f, indent=2)
+
+                    if result.get("status") != "success":
+                        return json.dumps({
+                            "status": "failure",
+                            "summary": f"Tinker experiment failed: {result.get('summary', 'unknown error')}",
+                            "results_directory": run_dir,
+                            "log_directory": log_dir,
+                            "tinker_result": result,
+                        })
+
+                    print(f"Tinker experiment completed successfully")
+
+                except NotImplementedError as e:
+                    return json.dumps({
+                        "status": "failure",
+                        "summary": str(e),
+                        "results_directory": run_dir,
+                        "log_directory": log_dir,
+                        "error_type": "tinker_not_implemented",
+                        "note": "Tinker integration is a stub. Use --mode local or --mode hpc instead.",
+                    })
+                except Exception as e:
+                    return json.dumps({
+                        "status": "failure",
+                        "summary": f"Tinker submission failed: {str(e)}",
+                        "results_directory": run_dir,
+                        "log_directory": log_dir,
+                        "error_type": "tinker_error",
+                    })
+
+            elif is_slurm_enabled() or experiment_mode == "slurm":
                 # SLURM mode: submit as a batch job to GPU partition and poll
                 from .slurm_runner import submit_experiment_job, poll_job_completion
 
@@ -369,8 +422,13 @@ class RunExperimentTool(BaseTool):
                         "error_type": "slurm_error",
                     })
             else:
-                # Local subprocess mode (original behavior)
-                print(f"\nStarting AI-Scientist-v2 experiment (local subprocess)...")
+                # Local subprocess mode — CPU-only when in local mode
+                if experiment_mode == "local":
+                    env["CUDA_VISIBLE_DEVICES"] = ""
+                    print(f"\nStarting AI-Scientist-v2 experiment (local/CPU mode)...")
+                    print(f"  CUDA_VISIBLE_DEVICES=\"\" (forced CPU)")
+                else:
+                    print(f"\nStarting AI-Scientist-v2 experiment (local subprocess)...")
                 print(f"   You will see real-time progress below:\n")
 
                 timeout = int(os.environ.get("CONSORTIUM_EXPERIMENT_TIMEOUT", "3600"))

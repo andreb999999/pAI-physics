@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Incremental lemma-library helper (standalone, no runtime deps on smolagents).
+Incremental lemma-library helper (standalone, no external runtime deps).
 
 Maintains:
 - <workspace>/lemma_library_index.json (authoritative incremental store)

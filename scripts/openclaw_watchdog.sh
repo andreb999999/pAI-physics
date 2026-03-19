@@ -7,12 +7,12 @@
 
 set -uo pipefail
 
-REPO_ROOT="/orcd/scratch/orcd/012/mabdel03/AI_Researcher/OpenPI"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GATEWAY_SCRIPT="$REPO_ROOT/scripts/launch_openclaw_gateway.sh"
-NTFY_TOPIC="OpenClaw-Engaging"
+NTFY_TOPIC="${NTFY_TOPIC:-OpenClaw}"
 
 # Check if openclaw_gw job is running
-GW_RUNNING=$(squeue -u mabdel03 --name=openclaw_gw --noheader 2>/dev/null | wc -l)
+GW_RUNNING=$(squeue -u "$USER" --name=openclaw_gw --noheader 2>/dev/null | wc -l)
 
 if [ "$GW_RUNNING" -gt 0 ]; then
     echo "[$(date)] OpenClaw Gateway is running."

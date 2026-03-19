@@ -1,5 +1,5 @@
 """
-AI research toolkits using smolagents framework.
+AI research toolkits for the consortium pipeline.
 
 Toolkit groups:
   ideation/       - Idea generation, refinement, novelty checking, paper search

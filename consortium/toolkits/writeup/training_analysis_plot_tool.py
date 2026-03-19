@@ -10,8 +10,9 @@ import json
 import os
 import numpy as np
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Union
-from smolagents import Tool
+from typing import List, Dict, Any, Optional, Union, Type
+from langchain_core.tools import BaseTool
+from pydantic import BaseModel, Field, ConfigDict
 
 # Handle matplotlib import with fallback
 try:
@@ -41,11 +42,18 @@ except ImportError:
     sns = None
 
 
-class TrainingAnalysisPlotTool(Tool):
-    name = "training_analysis_plot_tool"
-    description = """
+class TrainingAnalysisPlotToolInput(BaseModel):
+    data_specification: str = Field(description="Specification of training data to plot. Can be: file paths (comma-separated), JSON field paths (e.g., 'results.json:train_loss,val_loss'), or data description for auto-discovery")
+    plot_type: Optional[str] = Field(default="comprehensive", description="Type of training analysis: 'comprehensive' (default), 'loss_curves', 'accuracy_curves', 'convergence_analysis', 'optimizer_comparison', 'learning_rate_schedule'")
+    statistical_analysis: Optional[bool] = Field(default=True, description="Include statistical analysis (error bars, confidence intervals) if multiple runs available (default: true)")
+    output_filename: Optional[str] = Field(default=None, description="Output filename for the generated plot (default: auto-generated based on plot type)")
+
+
+class TrainingAnalysisPlotTool(BaseTool):
+    name: str = "training_analysis_plot_tool"
+    description: str = """
     Generate publication-quality training analysis plots for machine learning research.
-    
+
     This tool specializes in creating comprehensive training visualizations including:
     - Training/validation loss curves with proper scaling and error bars
     - Accuracy progression analysis with confidence intervals
@@ -53,70 +61,45 @@ class TrainingAnalysisPlotTool(Tool):
     - Convergence analysis and overfitting detection
     - Multi-run statistical analysis with significance testing
     - Optimizer comparison plots
-    
+
     Key features:
     - Automatically detects training metrics from various data formats
     - Generates professional multi-panel layouts for papers
     - Includes statistical rigor (error bars, confidence intervals)
     - Handles multiple experimental runs and statistical analysis
     - Creates publication-ready figures with proper formatting
-    
+
     Input data sources:
     - JSON files with training logs (loss, accuracy, metrics over epochs)
     - CSV files with training history
     - NumPy arrays with training sequences
     - NPZ archives with multiple training runs
-    
+
     Use this tool when you need to visualize training dynamics, convergence behavior,
     or compare training performance across different experimental conditions.
     """
-    
-    inputs = {
-        "data_specification": {
-            "type": "string",
-            "description": "Specification of training data to plot. Can be: file paths (comma-separated), JSON field paths (e.g., 'results.json:train_loss,val_loss'), or data description for auto-discovery"
-        },
-        "plot_type": {
-            "type": "string", 
-            "description": "Type of training analysis: 'comprehensive' (default), 'loss_curves', 'accuracy_curves', 'convergence_analysis', 'optimizer_comparison', 'learning_rate_schedule'",
-            "nullable": True
-        },
-        "statistical_analysis": {
-            "type": "boolean",
-            "description": "Include statistical analysis (error bars, confidence intervals) if multiple runs available (default: true)",
-            "nullable": True
-        },
-        "output_filename": {
-            "type": "string",
-            "description": "Output filename for the generated plot (default: auto-generated based on plot type)",
-            "nullable": True
-        }
-    }
-    
-    outputs = {
-        "plot_results": {
-            "type": "string",
-            "description": "JSON containing plot generation results and file paths"
-        }
-    }
-    
-    output_type = "string"
-    
-    def __init__(self, model=None, working_dir: Optional[str] = None):
+    args_schema: Type[BaseModel] = TrainingAnalysisPlotToolInput
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    model: Any = None
+    working_dir: Optional[str] = None
+
+    def __init__(self, model=None, working_dir: Optional[str] = None, **kwargs):
         """Initialize TrainingAnalysisPlotTool.
-        
+
         Args:
             model: LLM model for intelligent analysis (optional)
             working_dir: Working directory for workspace-aware file access
         """
-        super().__init__()
         from ..model_utils import get_raw_model
-        self.model = get_raw_model(model)
+        resolved_model = get_raw_model(model)
         # Convert to absolute path to prevent nested directory issues
-        self.working_dir = os.path.abspath(working_dir) if working_dir else None
-        
-    def forward(self, data_specification: str, plot_type: str = "comprehensive",
-                statistical_analysis: bool = True, output_filename: str = None) -> str:
+        resolved_working_dir = os.path.abspath(working_dir) if working_dir else None
+        super().__init__(model=resolved_model, working_dir=resolved_working_dir, **kwargs)
+
+    def _run(self, data_specification: str, plot_type: Optional[str] = "comprehensive",
+             statistical_analysis: Optional[bool] = True, output_filename: Optional[str] = None) -> str:
         """
         Generate training analysis plots from experimental data.
         

@@ -10,8 +10,8 @@ cluster:
   # ---------------------------------------------------------------------------
   # Conda environment
   # ---------------------------------------------------------------------------
-  conda_init_script: ${CONDA_INIT_SCRIPT:-/orcd/data/lhtsai/001/om2/mabdel03/miniforge3/etc/profile.d/conda.sh}
-  conda_env_prefix: ${CONDA_ENV_PREFIX:-/home/mabdel03/conda_envs/consortium}
+  conda_init_script: ${CONDA_INIT_SCRIPT:-}   # e.g. /path/to/miniforge3/etc/profile.d/conda.sh
+  conda_env_prefix: ${CONDA_ENV_PREFIX:-}     # e.g. /path/to/conda_envs/consortium
 
   # ---------------------------------------------------------------------------
   # Modules to load
@@ -71,6 +71,6 @@ cluster:
   # ---------------------------------------------------------------------------
   # Paths
   # ---------------------------------------------------------------------------
-  repo_root: ${REPO_ROOT:-/orcd/scratch/orcd/012/mabdel03/AI_Researcher/OpenPI}
-  scratch_root: ${SCRATCH_ROOT:-/orcd/scratch/orcd/012/mabdel03/AI_Researcher}
-  slurm_output_dir: ${SLURM_OUTPUT_DIR:-/orcd/scratch/orcd/012/mabdel03/AI_Researcher/OpenPI/slurm_outputs}
+  repo_root: ${REPO_ROOT:-}                   # e.g. /path/to/OpenPI
+  scratch_root: ${SCRATCH_ROOT:-}             # e.g. /path/to/scratch
+  slurm_output_dir: ${SLURM_OUTPUT_DIR:-}     # e.g. /path/to/OpenPI/slurm_outputs

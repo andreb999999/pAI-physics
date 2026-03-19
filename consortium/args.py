@@ -7,18 +7,28 @@ from .utils import AVAILABLE_MODELS
 def parse_arguments():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description="Smolagents Research System - Multi-Agent AI Research Automation",
+        description="OpenPI — Multi-Agent Research Pipeline",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Create new workspace (uses default: gpt-5 with high reasoning effort)
+  # Create new workspace (model from .llm_config.yaml)
   python launch_multiagent.py --task "Research transformer attention mechanisms"
 
-
   # Resume from existing workspace
-  python launch_multiagent.py --resume results/consortium_20250929_143022/ --model claude-sonnet-4-5
+  python launch_multiagent.py --resume results/consortium_20250929_143022/ --model claude-sonnet-4-6
   python launch_multiagent.py --resume results/consortium_20250929_143022/ --task "Continue writing the conclusion section"
         """
+    )
+
+    parser.add_argument(
+        "--mode",
+        type=str,
+        choices=["local", "tinker", "hpc"],
+        default=None,
+        help="Deployment mode: 'local' (laptop-only, CPU experiments), "
+             "'tinker' (local orchestrator + Tinker API for GPU training), "
+             "'hpc' (SLURM-based HPC cluster). "
+             "Default: auto-detect from environment.",
     )
 
     parser.add_argument(
@@ -26,7 +36,7 @@ Examples:
         type=str,
         choices=AVAILABLE_MODELS,
         default=None,
-        help="LLM model to use for all agents (default: gpt-5, overrides .llm_config.yaml)"
+        help="LLM model to use for all agents (default: from .llm_config.yaml)"
     )
 
     parser.add_argument(
@@ -320,17 +330,8 @@ Examples:
     )
 
     # -----------------------------------------------------------------
-    # V2 pipeline — persona council
+    # Persona council
     # -----------------------------------------------------------------
-    parser.add_argument(
-        "--pipeline-version",
-        type=str,
-        choices=["v1", "v2"],
-        default="v2",
-        help="Pipeline version: 'v2' (default, persona-council-driven flow with "
-             "feedback loops and duality check) or 'v1' (deprecated, linear flow).",
-    )
-
     parser.add_argument(
         "--persona-debate-rounds",
         type=int,
@@ -343,7 +344,7 @@ Examples:
         "--no-duality-check",
         action="store_true",
         default=False,
-        help="Disable duality check gate even when using --pipeline-version v2.",
+        help="Disable duality check gate (formalize results goes directly to paper production).",
     )
 
     # -----------------------------------------------------------------

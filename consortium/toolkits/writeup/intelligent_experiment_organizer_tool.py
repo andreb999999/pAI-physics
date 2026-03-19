@@ -18,59 +18,53 @@ import os
 import shutil
 import glob
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Type
 from datetime import datetime
-from smolagents import Tool
+from langchain_core.tools import BaseTool
+from pydantic import BaseModel, Field, ConfigDict
 
 
-class IntelligentExperimentOrganizerTool(Tool):
-    name = "intelligent_experiment_organizer_tool"
-    description = """
+class IntelligentExperimentOrganizerToolInput(BaseModel):
+    investigation_mode: Optional[str] = Field(default="full", description="Mode: 'full' (complete analysis), 'quick' (essential only), 'structure_only' (investigation only)")
+
+
+class IntelligentExperimentOrganizerTool(BaseTool):
+    name: str = "intelligent_experiment_organizer_tool"
+    description: str = """
     Structure-first intelligent experiment organization tool.
-    
+
     This tool revolutionizes experiment data organization by first investigating
     the experiment structure, then using that understanding to efficiently extract
     and organize the most important resources for paper writing.
-    
+
     Two-Phase Workflow:
     1. **Structure Investigation**: Maps directory hierarchy, identifies patterns,
        classifies experiment type, and generates a detailed structure summary
     2. **Structure-Aware Extraction**: Uses the structure summary as a "map" to
        efficiently navigate and extract key resources while preserving context
-    
+
     Supports Multiple Experiment Types:
     - AI-Scientist-v2: Leverages stage summaries and best implementations
     - Generic: Discovers and organizes arbitrary experimental data
     - Custom: Adapts to domain-specific structures
-    
+
     Output: Comprehensive resource package with preserved scientific context.
     """
-    
-    inputs = {
-        "investigation_mode": {
-            "type": "string",
-            "description": "Mode: 'full' (complete analysis), 'quick' (essential only), 'structure_only' (investigation only)",
-            "nullable": True
-        }
-    }
-    
-    outputs = {
-        "organization_report": {
-            "type": "string",
-            "description": "JSON report with structure analysis and organized resources"
-        }
-    }
-    
-    output_type = "string"
-    
-    def __init__(self, model=None, working_dir: Optional[str] = None):
+    args_schema: Type[BaseModel] = IntelligentExperimentOrganizerToolInput
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    model: Any = None
+    working_dir: Optional[str] = None
+
+    def __init__(self, model=None, working_dir: Optional[str] = None, **kwargs):
         """Initialize IntelligentExperimentOrganizerTool."""
-        super().__init__()
         from ..model_utils import get_raw_model
-        self.model = get_raw_model(model)
-        self.working_dir = os.path.abspath(working_dir) if working_dir else None
-        
-    def forward(self, investigation_mode: str = "full") -> str:
+        resolved_model = get_raw_model(model)
+        resolved_working_dir = os.path.abspath(working_dir) if working_dir else None
+        super().__init__(model=resolved_model, working_dir=resolved_working_dir, **kwargs)
+
+    def _run(self, investigation_mode: Optional[str] = "full") -> str:
         """Execute structure-first intelligent organization."""
         try:
             print("🔍 Phase 1: Investigating experiment structure...")

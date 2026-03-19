@@ -1,8 +1,10 @@
 # =============================================================================
-# OpenPI LLM Configuration
+# OpenPI LLM Configuration — Example / Safe Defaults
 # =============================================================================
-# Customize this file for your runs. See .llm_config.yaml.example for docs.
-# This file is gitignored after the initial clone — your changes stay local.
+# Copy this file to .llm_config.yaml and customize:
+#   cp .llm_config.yaml.example .llm_config.yaml
+#
+# .llm_config.yaml is gitignored — your local copy won't be committed.
 
 # --- Main model for all agents ---
 main_agents:
@@ -10,7 +12,7 @@ main_agents:
   reasoning_effort: high
   budget_tokens: 128000
 
-# --- Experiment tool models ---
+# --- Experiment tool models (AI-Scientist-v2 integration) ---
 run_experiment_tool:
   code_model: claude-sonnet-4-6
   feedback_model: claude-sonnet-4-6
@@ -20,8 +22,8 @@ run_experiment_tool:
 # --- Budget enforcement ---
 budget:
   usd_limit: 25                      # safe exploration budget; increase for production
-  hard_stop: true
-  fail_closed: true
+  hard_stop: true                    # halt pipeline when limit reached
+  fail_closed: true                  # treat corrupted state as over-budget (safe default)
   pricing:
     claude-opus-4-6:
       input_per_1k: 0.005
@@ -35,15 +37,9 @@ budget:
     gpt-5:
       input_per_1k: 0.002
       output_per_1k: 0.012
-    gpt-5.2:
-      input_per_1k: 0.00175
-      output_per_1k: 0.014
     gpt-5.4:
       input_per_1k: 0.0025
       output_per_1k: 0.015
-    gpt-5.3-codex:
-      input_per_1k: 0.002
-      output_per_1k: 0.01
     gemini-3-pro-preview:
       input_per_1k: 0.00125
       output_per_1k: 0.01
@@ -74,6 +70,7 @@ duality_check:
 
 # --- Per-agent model tiers (optional optimization) ---
 # When enabled, assigns cheaper models to simpler agents.
+# Disabled by default — all agents use the main model.
 per_agent_models:
   enabled: false
   tiers:

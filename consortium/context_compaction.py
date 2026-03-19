@@ -1,7 +1,7 @@
 """
 Context compaction middleware for LangGraph agent nodes (Phase 6a).
 
-Replaces ContextMonitoringCallback (smolagents step callback) with a
+Replaces the legacy ContextMonitoringCallback with a
 trim_messages-based approach that operates on LangGraph state messages.
 
 Usage — wrap any specialist node with compact_context_middleware():

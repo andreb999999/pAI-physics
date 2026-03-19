@@ -1,0 +1,56 @@
+# =============================================================================
+# OpenPI Deployment Mode Profiles
+# =============================================================================
+# Each mode defines defaults for experiment execution, budget, and features.
+# CLI flags and .llm_config.yaml always take precedence over these defaults.
+#
+# Usage:
+#   ./openpi run --mode local --task "..."
+#   ./openpi run --mode tinker --task "..."
+#   ./openpi run --mode hpc --task "..."
+
+local:
+  description: "Laptop-only mode — no external compute, CPU-only experiments"
+  experiment_backend: local        # run experiments as local subprocess
+  experiment_device: cpu           # force CPU (CUDA_VISIBLE_DEVICES="")
+  experiment_timeout: 1800         # 30 min cap for CPU experiments
+  default_budget_usd: 25           # conservative default
+  default_output_format: markdown  # no LaTeX dependency needed
+  features:
+    slurm: false
+    tinker: false
+    latex: false
+  env:
+    CONSORTIUM_SLURM_ENABLED: "0"
+    CONSORTIUM_EXPERIMENT_TIMEOUT: "1800"
+    CUDA_VISIBLE_DEVICES: ""
+
+tinker:
+  description: "Local orchestrator + Tinker API for GPU training"
+  experiment_backend: tinker       # submit training to Tinker API
+  experiment_device: gpu           # Tinker provides GPU clusters
+  experiment_timeout: 7200         # 2 hours (Tinker handles its own timeouts)
+  default_budget_usd: 100
+  default_output_format: latex
+  features:
+    slurm: false
+    tinker: true
+    latex: true
+  env:
+    CONSORTIUM_SLURM_ENABLED: "0"
+  required_env:
+    - TINKER_API_KEY
+
+hpc:
+  description: "HPC cluster with SLURM job scheduler"
+  experiment_backend: slurm        # submit experiments via sbatch
+  experiment_device: gpu           # GPU via SLURM GRES
+  experiment_timeout: 25200        # 7 hours (matches SLURM poll max)
+  default_budget_usd: 200
+  default_output_format: latex
+  features:
+    slurm: true
+    tinker: false
+    latex: true
+  env:
+    CONSORTIUM_SLURM_ENABLED: "1"

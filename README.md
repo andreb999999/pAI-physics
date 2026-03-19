@@ -2,7 +2,7 @@
 
 Goal: Bring down the steer rate by 2-3 orders of magnitude. Don't know exactly what research will be automated, but we estimate that to go from idea/hypothesis to final paper of low to average quality, one needs on order of magnitude of 10^2 GPT Pro Calls, and we want to bring this down to 0-10 user prompts (steers). 
 
-`consortium` is a local agentic research platform that turns a research prompt into literature-grounded, experiment-backed, and optionally theorem-verified paper artifacts.
+`consortium` is a local agentic research platform that turns a research prompt into literature-grounded, experiment-backed, and optionally theorem-verified paper artifacts. (The core Python package is named `consortium`; **OpenPI** is the project name.)
 
 - License: MIT (`LICENSE`)
 - Runtime: Python 3.11 (recommended via conda)
@@ -136,19 +136,14 @@ Runs are resumable through LangGraph checkpoints (`checkpoints.db`) and can be s
 
 ### Phase-Based Execution Graph
 
-The single-run pipeline is a direct-wired LangGraph workflow, not a manager hub and not a purely linear stage list. It executes in five phases:
+The pipeline is a persona-council-driven LangGraph workflow with feedback loops at multiple stages for self-correction. It executes in six phases:
 
-**1. Discovery**
-- `ideation_agent`
-- `novelty_gate` (loops back to ideation if the idea is not novel, up to 3 attempts)
+**1. Discovery (Persona Council)**
+- `persona_council` — evaluates the research direction from three critical lenses (practical compass, rigor/novelty, narrative architect) via multi-round debate
 - `literature_review_agent`
-- `research_planner_agent`
-
-The planner produces `paper_workspace/track_decomposition.json`, which contains:
-- `theory_questions`
-- `empirical_questions`
-- `recommended_track`
-- `rationale`
+- `lit_review_gate` — feasibility check; loops back to `persona_council` if infeasible
+- `brainstorm_agent`
+- `formalize_goals_agent`
 
 **2. Parallel Track Execution**
 - **Theory track** (when `--enable-math-agents` is enabled and the planner selects theory work):
@@ -165,83 +160,21 @@ The planner produces `paper_workspace/track_decomposition.json`, which contains:
   - `experiment_verification_agent`
   - `experiment_transcription_agent`
 
-**3. Merge And Interpretation**
+**3. Completion Verification**
 - `track_merge`
-- `synthesis_literature_review_agent`
-- `results_analysis_agent`
+- `verify_completion` — three-way routing: complete (proceed), incomplete (loop to `formalize_goals_agent`), rethink (loop to `brainstorm_agent`)
 
-**4. Follow-Up Loop**
-- `followup_gate` sends control back to `research_planner_agent` when more theory or experiments are needed
-- otherwise the run proceeds to paper production
+**4. Results Formalization and Quality Check**
+- `formalize_results_agent`
+- `duality_check` — internal consistency check (`--no-duality-check` to skip)
+- `duality_gate` — pass proceeds to paper production; fail loops to `brainstorm_agent` via follow-up literature review
 
-**5. Paper Production And Final QA**
+**5. Paper Production and Final QA**
 - `resource_preparation_agent`
 - `writeup_agent`
 - `proofreading_agent`
 - `reviewer_agent`
 - `validation_gate`
-
-```mermaid
-flowchart TD
-    taskPrompt[TaskPrompt] --> ideation[IdeationAgent]
-    ideation --> noveltyGate{NoveltyGate}
-    noveltyGate -->|"novel"| litReview[LiteratureReviewAgent]
-    noveltyGate -->|"retry ≤3"| ideation
-    litReview --> planner[ResearchPlannerAgent]
-    planner --> trackRouter{TrackRouter}
-
-    subgraph theoryTrack ["TheoryTrack (--enable-math-agents)"]
-        mathLit[MathLiterature]
-        mathProp[MathProposer]
-        mathProver["MathProver\n(or TreeSearch controller)"]
-        mathRigorous[MathRigorousVerifier]
-        mathEmpirical[MathEmpiricalVerifier]
-        proofTrans[ProofTranscription]
-        mathLit --> mathProp --> mathProver --> mathRigorous --> mathEmpirical --> proofTrans
-    end
-
-    subgraph experimentTrack [ExperimentTrack]
-        expLit[ExperimentLiterature]
-        expDesign[ExperimentDesign]
-        expExec[Experimentation]
-        expVerify[ExperimentVerification]
-        expTrans[ExperimentTranscription]
-        expLit --> expDesign --> expExec --> expVerify --> expTrans
-    end
-
-    trackRouter -->|"theory questions"| mathLit
-    trackRouter -->|"empirical questions"| expLit
-    proofTrans --> trackMerge[TrackMerge]
-    expTrans --> trackMerge
-    trackMerge --> synthLit[SynthesisLiteratureReview]
-    synthLit --> resultsAnalysis[ResultsAnalysis]
-    resultsAnalysis --> followupGate{FollowupGate}
-    followupGate -->|"followup required"| planner
-    followupGate -->|"proceed"| resourcePrep[ResourcePreparation]
-    resourcePrep --> writeup[Writeup]
-    writeup --> proofread[Proofreading]
-    proofread --> reviewer[Reviewer]
-    reviewer --> validationGate{ValidationGate}
-    validationGate -->|pass| endNode((END))
-    validationGate -->|fail| writeup
-
-    classDef counselNode stroke:#6366f1,stroke-width:2px,stroke-dasharray:5
-    class ideation,litReview,planner,mathLit,mathProp,mathProver,mathRigorous,mathEmpirical,proofTrans,expLit,expDesign,expExec,expVerify,expTrans,synthLit,resultsAnalysis,resourcePrep,writeup,proofread,reviewer counselNode
-```
-
-If the planner selects no execution tracks, the graph falls through directly to `track_merge`, then continues through synthesis and results analysis.
-
-**Counsel mode** (`--enable-counsel`): Nodes with dashed purple borders run multi-model debate when counsel is enabled. Each specialist node runs four independent model executions (Opus, Sonnet, GPT-5.4, Gemini 3.0 Pro), then a debate + synthesis round before promoting consensus artifacts. See [Counsel Mode](#counsel-mode-multi-model-debate).
-
-**Tree search** (`--enable-tree-search`): In the theory track, the linear `MathProver` stage is replaced by a tree search controller that explores multiple proof strategies in parallel via DAG-layered best-first search. See [Agentic Tree Search](#agentic-tree-search).
-
-### V2 Pipeline (Persona-Council-Driven)
-
-Enable with `--pipeline-version v2`. V2 replaces the linear discovery phase with a persona council that evaluates the research direction from three critical lenses (practical compass, rigor/novelty, narrative architect) before committing resources. It adds feedback loops at multiple stages for self-correction.
-
-**V2-only agents**: `brainstorm_agent`, `formalize_goals_agent`, `formalize_results_agent`
-
-**V2-only gates**: `lit_review_gate` (feasibility check), `verify_completion` (three-way: complete/incomplete/rethink), `duality_gate` (internal consistency check)
 
 ```mermaid
 flowchart TD
@@ -255,39 +188,44 @@ flowchart TD
     milestoneGoals --> trackRouter{TrackRouter}
 
     subgraph theoryTrack ["TheoryTrack (--enable-math-agents)"]
-        mathLit2[MathLiterature] --> mathProp2[MathProposer] --> mathProver2["MathProver\n(or TreeSearch)"] --> mathRigorous2[MathRigorousVerifier] --> mathEmpirical2[MathEmpiricalVerifier] --> proofTrans2[ProofTranscription]
+        mathLit[MathLiterature] --> mathProp[MathProposer] --> mathProver["MathProver\n(or TreeSearch)"] --> mathRigorous[MathRigorousVerifier] --> mathEmpirical[MathEmpiricalVerifier] --> proofTrans[ProofTranscription]
     end
 
     subgraph experimentTrack [ExperimentTrack]
-        expLit2[ExperimentLiterature] --> expDesign2[ExperimentDesign] --> expExec2[Experimentation] --> expVerify2[ExperimentVerification] --> expTrans2[ExperimentTranscription]
+        expLit[ExperimentLiterature] --> expDesign[ExperimentDesign] --> expExec[Experimentation] --> expVerify[ExperimentVerification] --> expTrans[ExperimentTranscription]
     end
 
-    trackRouter -->|"theory"| mathLit2
-    trackRouter -->|"empirical"| expLit2
-    proofTrans2 --> trackMerge2[TrackMerge]
-    expTrans2 --> trackMerge2
+    trackRouter -->|"theory"| mathLit
+    trackRouter -->|"empirical"| expLit
+    proofTrans --> trackMerge[TrackMerge]
+    expTrans --> trackMerge
 
-    trackMerge2 --> verifyCompletion{VerifyCompletion}
+    trackMerge --> verifyCompletion{VerifyCompletion}
     verifyCompletion -->|"complete"| formalResults[FormalizeResultsAgent]
     verifyCompletion -->|"incomplete"| formalGoals
     verifyCompletion -->|"rethink"| brainstorm
 
     formalResults --> dualityCheck["DualityCheck\n(--no-duality-check to skip)"]
     dualityCheck --> dualityGate{DualityGate}
-    dualityGate -->|"pass"| resourcePrep2[ResourcePreparation]
+    dualityGate -->|"pass"| resourcePrep[ResourcePreparation]
     dualityGate -->|"fail"| followupLit[FollowupLitReview] --> brainstorm
 
-    resourcePrep2 --> writeup2[Writeup] --> proofread2[Proofreading] --> reviewer2[Reviewer]
-    reviewer2 --> validationGate2{ValidationGate}
-    validationGate2 -->|"pass"| endNode2((END))
-    validationGate2 -->|"fail"| writeup2
+    resourcePrep --> writeup[Writeup] --> proofread[Proofreading] --> reviewer[Reviewer]
+    reviewer --> validationGate{ValidationGate}
+    validationGate -->|"pass"| endNode((END))
+    validationGate -->|"fail"| writeup
 
     classDef counselNode stroke:#6366f1,stroke-width:2px,stroke-dasharray:5
-    class litReview,brainstorm,formalGoals,formalResults,mathLit2,mathProp2,mathProver2,mathRigorous2,mathEmpirical2,proofTrans2,expLit2,expDesign2,expExec2,expVerify2,expTrans2,resourcePrep2,writeup2,proofread2,reviewer2 counselNode
+    class litReview,brainstorm,formalGoals,formalResults,mathLit,mathProp,mathProver,mathRigorous,mathEmpirical,proofTrans,expLit,expDesign,expExec,expVerify,expTrans,resourcePrep,writeup,proofread,reviewer counselNode
 ```
 
-**V2-specific CLI flags**:
-- `--pipeline-version v2` — select the persona-council-driven pipeline
+If no execution tracks are selected, the graph falls through directly to `track_merge`, then continues through verify-completion.
+
+**Counsel mode** (`--enable-counsel`): Nodes with dashed purple borders run multi-model debate when counsel is enabled. Each specialist node runs four independent model executions (Opus, Sonnet, GPT-5.4, Gemini 3.0 Pro), then a debate + synthesis round before promoting consensus artifacts. See [Counsel Mode](#counsel-mode-multi-model-debate).
+
+**Tree search** (`--enable-tree-search`): In the theory track, the linear `MathProver` stage is replaced by a tree search controller that explores multiple proof strategies in parallel via DAG-layered best-first search. See [Agentic Tree Search](#agentic-tree-search).
+
+**Pipeline-specific CLI flags**:
 - `--persona-debate-rounds N` — number of debate rounds in persona council (default: 3)
 - `--no-duality-check` — skip the duality check gate (formalize results goes directly to paper production)
 - `--adversarial-verification` — run a hostile red-team verifier after cooperative verifiers pass
@@ -385,24 +323,20 @@ Remove flags for capabilities you did not install.
 
 Model settings are resolved in this order:
 
-1. Built-in defaults in `consortium/runner.py` (`gpt-5`, `reasoning_effort=high`, `verbosity=medium`)
+1. Built-in defaults in `consortium/runner.py` (fallback if no config found)
 2. `.llm_config.yaml`
 3. CLI overrides (`--model`, `--reasoning-effort`, `--verbosity`)
 
 ### `.llm_config.yaml` (Current Repository Defaults)
 
-Current values in this repo:
+Default values shipped in `.llm_config.yaml`:
 
-- `main_agents.model`: `claude-opus-4-6`
-- `main_agents.effort`: `max`
+- `main_agents.model`: `claude-sonnet-4-6`
+- `main_agents.reasoning_effort`: `high`
 - `main_agents.budget_tokens`: `128000` (extended thinking)
-- `run_experiment_tool.code_model`: `claude-opus-4-6`
-- `run_experiment_tool.feedback_model`: `claude-opus-4-6`
-- `run_experiment_tool.vlm_model`: `claude-opus-4-6`
-- `run_experiment_tool.report_model`: `claude-opus-4-6`
-- `budget.usd_limit`: `2000`
-- `counsel.enabled`: `true`
-- `counsel.max_debate_rounds`: `3`
+- `budget.usd_limit`: `25` (safe default; increase for production runs)
+- `counsel.enabled`: `false` (requires 3 API providers; enable after setup)
+- `per_agent_models.enabled`: `false` (all agents use the main model)
 
 Counsel precedence:
 
@@ -416,7 +350,7 @@ From `consortium/utils.py`:
 
 - OpenAI: `gpt-5`, `gpt-5-mini`, `gpt-5-nano`, `gpt-5.2`, `gpt-5.4`, `gpt-5.3-codex`, `gpt-4o`, `gpt-4.1-mini-2025-04-14`, `o4-mini-2025-04-16`, `o3-2025-04-16`, `o3-pro-2025-06-10`
 - Anthropic: `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-opus-4-20250514`, `claude-sonnet-4-20250514`, `claude-sonnet-4-5`, `claude-sonnet-4-5-20250929`
-- Google: `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-3.0-pro`
+- Google: `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-3-pro-preview`
 - DeepSeek: `deepseek-chat`, `deepseek-coder`
 - xAI: `grok-4-0709`
 
@@ -522,12 +456,11 @@ python launch_multiagent.py \
 
 Tree search with counsel at every node is the most expensive configuration (~15-20x per-claim cost vs. baseline).
 
-### V2 Pipeline (Persona-Council-Driven, Maximum Quality)
+### Maximum Quality (All Features)
 
 ```bash
 python launch_multiagent.py \
-  --task "Full persona-council-driven run with tree search, counsel, and adversarial verification." \
-  --pipeline-version v2 \
+  --task "Full run with tree search, counsel, and adversarial verification." \
   --enable-math-agents \
   --enable-counsel \
   --enable-tree-search \
@@ -538,7 +471,7 @@ python launch_multiagent.py \
   --require-pdf
 ```
 
-V2 adds persona council evaluation, feasibility gating, verify-completion feedback loops, and duality checking. Use `--no-duality-check` to skip the duality gate.
+This enables persona council evaluation, feasibility gating, verify-completion feedback loops, duality checking, tree search, and multi-model counsel. Use `--no-duality-check` to skip the duality gate.
 
 ## Resume and Stage-Based Resume
 
@@ -564,8 +497,8 @@ python launch_multiagent.py \
 
 Accepted names include canonical IDs and common aliases, for example:
 
-- `ideation`, `literature_review`, `planning`, `experimentation`, `results_analysis`
-- `resource_preparation`, `writeup`, `proofreading`, `reviewer`
+- `persona_council`, `literature_review`, `brainstorm`, `formalize_goals`, `experimentation`
+- `formalize_results`, `resource_preparation`, `writeup`, `proofreading`, `reviewer`
 - math aliases like `math_prover`, `math_rigorous_verifier`, `proof_transcription` (when math agents are enabled)
 
 ### Provide Context Files (`.pdf`, `.md`, `.txt`)
@@ -646,7 +579,30 @@ curl -s http://127.0.0.1:5002/status
 
 ## OpenClaw Campaign Orchestration
 
-OpenClaw is the campaign orchestrator for running `consortium` as a multi-stage research pipeline. It (or cron, or a SLURM heartbeat loop) repeatedly calls `scripts/campaign_heartbeat.py`, which manages stage launches, artifact validation, cross-stage memory distillation, autonomous failure repair, budget tracking, and push notifications. For the full guide on campaign configuration, task file authoring, and failure recovery, see [`OpenClaw_Use_Guide.md`](OpenClaw_Use_Guide.md).
+The campaign system repeatedly calls `scripts/campaign_heartbeat.py`, which manages stage launches, artifact validation, cross-stage memory distillation, autonomous failure repair, budget tracking, and push notifications. For the full guide on campaign configuration, task file authoring, and failure recovery, see [`OpenClaw_Use_Guide.md`](OpenClaw_Use_Guide.md).
+
+> **OpenClaw is optional.** You can run campaigns without OpenClaw by calling the heartbeat script manually or via system cron. OpenClaw adds Telegram-based monitoring and a convenient scheduling layer, but the core campaign logic lives entirely in `scripts/campaign_heartbeat.py` and `scripts/campaign_cli.py`.
+
+### Running Without OpenClaw
+
+```bash
+# 1. Initialize the campaign
+python scripts/campaign_heartbeat.py --campaign my_campaign.yaml --init
+
+# 2. Launch the first stage
+python scripts/campaign_cli.py --campaign my_campaign.yaml launch discovery_plan
+
+# 3. Run heartbeat ticks manually (or add to crontab)
+python scripts/campaign_heartbeat.py --campaign my_campaign.yaml
+
+# 4. Check status
+python scripts/campaign_cli.py --campaign my_campaign.yaml status
+```
+
+To automate without OpenClaw, add a crontab entry:
+```bash
+*/15 * * * * cd /path/to/OpenPI && python scripts/campaign_heartbeat.py --campaign my_campaign.yaml >> logs/heartbeat.log 2>&1
+```
 
 ### Campaign Lifecycle
 
@@ -941,9 +897,8 @@ Use `python launch_multiagent.py --help` for full output.
 | `--no-counsel` | `false` | Force-disable counsel |
 | `--counsel-max-debate-rounds` | `None` (effective `3`) | Override counsel debate rounds |
 | `--max-rebuttal-iterations` | `2` | Max reviewer → writeup rebuttal loops |
-| `--pipeline-version` | `v1` | Select pipeline version (`v1` or `v2`) |
-| `--persona-debate-rounds` | `None` (effective `3`) | Number of debate rounds in persona council (V2 only) |
-| `--no-duality-check` | `false` | Disable duality check gate in V2 pipeline |
+| `--persona-debate-rounds` | `None` (effective `3`) | Number of debate rounds in persona council |
+| `--no-duality-check` | `false` | Disable duality check gate |
 | `--adversarial-verification` | `false` | Enable hostile red-team verifier for claims |
 | `--enable-tree-search` | `false` | Enable agentic tree search (parallel proof strategies in theory track) |
 | `--tree-max-breadth` | `3` | Max parallel branches per decision point |
@@ -961,8 +916,8 @@ Use `python launch_multiagent.py --help` for full output.
 | Flag | Default | Note |
 |---|---|---|
 | `--interpreter` | `python` | No-op; experiment tool auto-detects Python |
-| `--enable-planning` | `false` | No-op; planning is handled by `research_planner_agent` |
-| `--planning-interval` | `3` | No-op; planning always runs at the designated stage |
+| `--enable-planning` | `false` | No-op |
+| `--planning-interval` | `3` | No-op |
 | `--manager-max-steps` | `None` (effective `50`) | Retained in run state for compatibility; not the routing control in the fixed workflow graph |
 | `--pipeline-mode` | `None` | Ignored; the fixed workflow graph always runs |
 
@@ -1112,8 +1067,8 @@ Core orchestration:
 
 - `launch_multiagent.py`: thin entry point
 - `consortium/runner.py`: run lifecycle, config loading, model/counsel/tree-search setup, workspace/checkpoint initialization, execution
-- `consortium/utils.py`: model factory and `build_research_graph()` wrapper that returns the compiled graph plus checkpointer
-- `consortium/graph.py`: direct-wired LangGraph definitions for both V1 and V2 pipelines, track router, gates (novelty, follow-up, validation, lit-review, verify-completion, duality), and theory/experiment subgraph builders
+- `consortium/utils.py`: model factory and model registry helpers
+- `consortium/graph.py`: direct-wired LangGraph pipeline definition, track router, gates (lit-review, verify-completion, duality, follow-up, validation), and theory/experiment subgraph builders
 - `consortium/state.py`: `ResearchState` schema, including `track_decomposition`, track status fields, tree search state, and cycle counters
 - `consortium/models.py`: canonical model registry with context limits and provider mappings
 - `consortium/workflow_utils.py`: shared follow-up parsing, required-artifact construction, and validation helpers
@@ -1122,7 +1077,7 @@ Core orchestration:
 
 Major package areas:
 
-- `consortium/agents/`: 22+ specialist agent implementations (V1 core + V2 additions), base agent factory, and track merge node
+- `consortium/agents/`: 22+ specialist agent implementations, base agent factory, and track merge node
 - `consortium/toolkits/search/`: arXiv/web/search/document inspection tools (including Open Deep Search with web scraping, reranking, and SERP integration)
 - `consortium/toolkits/experimentation/`: experiment execution helpers (including SLURM job submission)
 - `consortium/toolkits/writeup/`: LaTeX generation/compilation/reflection, citation search, data visualization (comparison plots, training analysis, statistical analysis, multi-panel composition), and VLM document analysis
@@ -1137,12 +1092,10 @@ Major package areas:
 
 Notable agent groups:
 
-- **Discovery (V1)**: `ideation_agent`, `literature_review_agent`, `research_planner_agent`
-- **Discovery (V2)**: `persona_council`, `literature_review_agent`, `brainstorm_agent`, `formalize_goals_agent`
+- **Discovery**: `persona_council`, `literature_review_agent`, `brainstorm_agent`, `formalize_goals_agent`
 - **Theory track**: `math_literature_agent`, `math_proposer_agent`, `math_prover_agent`, `math_rigorous_verifier_agent`, `math_empirical_verifier_agent`, `proof_transcription_agent`
 - **Experiment track**: `experiment_literature_agent`, `experiment_design_agent`, `experimentation_agent`, `experiment_verification_agent`, `experiment_transcription_agent`
-- **Post-track (V1)**: `track_merge`, `synthesis_literature_review_agent`, `results_analysis_agent`, `resource_preparation_agent`, `writeup_agent`, `proofreading_agent`, `reviewer_agent`
-- **Post-track (V2)**: `track_merge`, `verify_completion`, `formalize_results_agent`, `duality_check`, `resource_preparation_agent`, `writeup_agent`, `proofreading_agent`, `reviewer_agent`
+- **Post-track**: `track_merge`, `verify_completion`, `formalize_results_agent`, `duality_check`, `resource_preparation_agent`, `writeup_agent`, `proofreading_agent`, `reviewer_agent`
 
 ## Math Workflow
 
@@ -1178,7 +1131,7 @@ Runtime and spend depend on task scope, enabled gates, model choice, and revisio
 | Tree search + counsel (all nodes) | $200–600 | 4–10 hrs | ~15-20x per claim; maximum quality |
 | Full paper campaign (3 stages) | $100–400 | 6–12 hrs | Via OpenClaw orchestration |
 
-> **Budget cap**: The default `.llm_config.yaml` cap is $2000. Reduce `budget.usd_limit` for experiments.
+> **Budget cap**: The default `.llm_config.yaml` cap is $25. Increase `budget.usd_limit` for production campaigns.
 
 For counsel-heavy runs, monitor:
 
@@ -1344,7 +1297,7 @@ Tree search is off by default. Enable via CLI flags:
 
 ## Troubleshooting
 
-### `ModuleNotFoundError` (`yaml`, `smolagents`, `litellm`, etc.)
+### `ModuleNotFoundError` (`yaml`, `litellm`, etc.)
 
 ```bash
 ./scripts/bootstrap.sh researchlab minimal

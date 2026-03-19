@@ -42,10 +42,27 @@ echo "Repo:      $REPO_DIR"
 echo "========================================"
 
 # --- Environment ---
-module load miniforge/25.11.0-0
-source /orcd/data/lhtsai/001/om2/mabdel03/miniforge3/etc/profile.d/conda.sh
+module load miniforge/25.11.0-0 2>/dev/null || true
+_ENGAGING_CFG="$REPO_DIR/engaging_config.yaml"
+_CONDA_INIT="${CONDA_INIT_SCRIPT:-}"
+_CONDA_PREFIX="${CONDA_ENV_PREFIX:-}"
+if [ -z "$_CONDA_INIT" ] && [ -f "$_ENGAGING_CFG" ]; then
+    _CONDA_INIT=$(grep 'conda_init_script:' "$_ENGAGING_CFG" 2>/dev/null | head -1 | sed 's/.*conda_init_script:\s*//' | sed 's/\s*#.*//' | tr -d '[:space:]' | sed 's/\${[^}]*:-\(.*\)}/\1/')
+fi
+if [ -z "$_CONDA_PREFIX" ] && [ -f "$_ENGAGING_CFG" ]; then
+    _CONDA_PREFIX=$(grep 'conda_env_prefix:' "$_ENGAGING_CFG" 2>/dev/null | head -1 | sed 's/.*conda_env_prefix:\s*//' | sed 's/\s*#.*//' | tr -d '[:space:]' | sed 's/\${[^}]*:-\(.*\)}/\1/')
+fi
+if [ -n "$_CONDA_INIT" ] && [ -f "$_CONDA_INIT" ]; then
+    source "$_CONDA_INIT"
+elif command -v conda >/dev/null 2>&1; then
+    eval "$(conda shell.bash hook)"
+fi
 conda deactivate 2>/dev/null || true
-conda activate /home/mabdel03/conda_envs/consortium
+if [ -n "$_CONDA_PREFIX" ]; then
+    conda activate "$_CONDA_PREFIX"
+else
+    conda activate consortium 2>/dev/null || conda activate base
+fi
 
 echo "Python:    $(which python) ($(python --version 2>&1))"
 

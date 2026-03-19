@@ -1,8 +1,8 @@
 """
-Validation Strategies for the Smolagents Research System.
+Validation Strategies for the OpenPI Research System.
 
 This module implements validation strategies to prevent hallucination and
-ensure research quality as specified in the Full Smolagents Agentization Plan.
+ensure research quality as specified in the Full OpenPI Agentization Plan.
 """
 
 import json

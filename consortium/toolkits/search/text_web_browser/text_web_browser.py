@@ -13,7 +13,9 @@ import pathvalidate
 import requests
 from serpapi import GoogleSearch
 
-from smolagents import Tool
+from langchain_core.tools import BaseTool
+from pydantic import BaseModel, Field, ConfigDict
+from typing import Optional, Type
 
 from .cookies import COOKIES
 from .mdconvert import FileConversionException, MarkdownConverter, UnsupportedFormatException
@@ -37,7 +39,7 @@ class SimpleTextBrowser:
         self.page_title: str | None = None
         self.viewport_current_page = 0
         self.viewport_pages: list[tuple[int, int]] = list()
-        
+
         self.request_kwargs = request_kwargs or {}
         self.request_kwargs["cookies"] = COOKIES  # assign cookies early
 
@@ -49,7 +51,7 @@ class SimpleTextBrowser:
         self._find_on_page_last_result: int | None = None
 
         self.set_address(self.start_page)  # <-- Move this after all setup
-        
+
     @property
     def address(self) -> str:
         """Return the address of the current page."""
@@ -373,57 +375,68 @@ class SimpleTextBrowser:
         return (header, self.viewport)
 
 
-class SearchInformationTool(Tool):
-    name = "web_search"
-    description = "Perform a web search query (think a google search) and returns the search results."
-    inputs = {"query": {"type": "string", "description": "The web search query to perform."}}
-    inputs["filter_year"] = {
-        "type": "string",
-        "description": "[Optional parameter]: filter the search results to only include pages from a specific year. For example, '2020' will only include pages from 2020. Make sure to use this parameter if you're trying to search for articles from a specific date!",
-        "nullable": True,
-    }
-    output_type = "string"
+class SearchInformationToolInput(BaseModel):
+    query: str = Field(description="The web search query to perform.")
+    filter_year: Optional[str] = Field(default=None, description="[Optional parameter]: filter the search results to only include pages from a specific year. For example, '2020' will only include pages from 2020. Make sure to use this parameter if you're trying to search for articles from a specific date!")
 
-    def __init__(self, browser):
-        super().__init__()
-        self.browser = browser
 
-    def forward(self, query: str, filter_year: int | None = None) -> str:
+class SearchInformationTool(BaseTool):
+    name: str = "web_search"
+    description: str = "Perform a web search query (think a google search) and returns the search results."
+    args_schema: Type[BaseModel] = SearchInformationToolInput
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    browser: Any = None
+
+    def __init__(self, browser, **kwargs):
+        super().__init__(browser=browser, **kwargs)
+
+    def _run(self, query: str, filter_year: int | None = None) -> str:
         self.browser.visit_page(f"google: {query}", filter_year=filter_year)
         header, content = self.browser._state()
         return header.strip() + "\n=======================\n" + content
 
 
-class VisitTool(Tool):
-    name = "visit_page"
-    description = "Visit a webpage at a given URL and return its text. Given a url to a YouTube video, this returns the transcript."
-    inputs = {"url": {"type": "string", "description": "The relative or absolute url of the webpage to visit."}}
-    output_type = "string"
+class VisitToolInput(BaseModel):
+    url: str = Field(description="The relative or absolute url of the webpage to visit.")
 
-    def __init__(self, browser=None):
-        super().__init__()
-        self.browser = browser
 
-    def forward(self, url: str) -> str:
+class VisitTool(BaseTool):
+    name: str = "visit_page"
+    description: str = "Visit a webpage at a given URL and return its text. Given a url to a YouTube video, this returns the transcript."
+    args_schema: Type[BaseModel] = VisitToolInput
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    browser: Any = None
+
+    def __init__(self, browser=None, **kwargs):
+        super().__init__(browser=browser, **kwargs)
+
+    def _run(self, url: str) -> str:
         self.browser.visit_page(url)
         header, content = self.browser._state()
         return header.strip() + "\n=======================\n" + content
 
 
-class DownloadTool(Tool):
-    name = "download_file"
-    description = """
+class DownloadToolInput(BaseModel):
+    url: str = Field(description="The relative or absolute url of the file to be downloaded.")
+
+
+class DownloadTool(BaseTool):
+    name: str = "download_file"
+    description: str = """
 Download a file at a given URL. The file should be of this format: [".xlsx", ".pptx", ".wav", ".mp3", ".m4a", ".png", ".docx"]
 After using this tool, for further inspection of this page you should return the download path to your manager via final_answer, and they will be able to inspect it.
 DO NOT use this tool for .pdf or .txt or .htm files: for these types of files use visit_page with the file url instead."""
-    inputs = {"url": {"type": "string", "description": "The relative or absolute url of the file to be downloaded."}}
-    output_type = "string"
+    args_schema: Type[BaseModel] = DownloadToolInput
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    def __init__(self, browser):
-        super().__init__()
-        self.browser = browser
+    browser: Any = None
 
-    def forward(self, url: str) -> str:
+    def __init__(self, browser, **kwargs):
+        super().__init__(browser=browser, **kwargs)
+
+    def _run(self, url: str) -> str:
         import requests
 
         if "arxiv" in url:
@@ -445,23 +458,23 @@ DO NOT use this tool for .pdf or .txt or .htm files: for these types of files us
         return f"File was downloaded and saved under path {new_path}."
 
 
-class ArchiveSearchTool(Tool):
-    name = "find_archived_url"
-    description = "Given a url, searches the Wayback Machine and returns the archived version of the url that's closest in time to the desired date."
-    inputs = {
-        "url": {"type": "string", "description": "The url you need the archive for."},
-        "date": {
-            "type": "string",
-            "description": "The date that you want to find the archive for. Give this date in the format 'YYYYMMDD', for instance '27 June 2008' is written as '20080627'.",
-        },
-    }
-    output_type = "string"
+class ArchiveSearchToolInput(BaseModel):
+    url: str = Field(description="The url you need the archive for.")
+    date: str = Field(description="The date that you want to find the archive for. Give this date in the format 'YYYYMMDD', for instance '27 June 2008' is written as '20080627'.")
 
-    def __init__(self, browser=None):
-        super().__init__()
-        self.browser = browser
 
-    def forward(self, url, date) -> str:
+class ArchiveSearchTool(BaseTool):
+    name: str = "find_archived_url"
+    description: str = "Given a url, searches the Wayback Machine and returns the archived version of the url that's closest in time to the desired date."
+    args_schema: Type[BaseModel] = ArchiveSearchToolInput
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    browser: Any = None
+
+    def __init__(self, browser=None, **kwargs):
+        super().__init__(browser=browser, **kwargs)
+
+    def _run(self, url, date) -> str:
         import requests
 
         no_timestamp_url = f"https://archive.org/wayback/available?url={url}"
@@ -488,56 +501,56 @@ class ArchiveSearchTool(Tool):
         )
 
 
-class PageUpTool(Tool):
-    name = "page_up"
-    description = "Scroll the viewport UP one page-length in the current webpage and return the new viewport content."
-    inputs = {}
-    output_type = "string"
+class PageUpTool(BaseTool):
+    name: str = "page_up"
+    description: str = "Scroll the viewport UP one page-length in the current webpage and return the new viewport content."
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    def __init__(self, browser=None):
-        super().__init__()
-        self.browser = browser
+    browser: Any = None
 
-    def forward(self) -> str:
+    def __init__(self, browser=None, **kwargs):
+        super().__init__(browser=browser, **kwargs)
+
+    def _run(self) -> str:
         self.browser.page_up()
         header, content = self.browser._state()
         return header.strip() + "\n=======================\n" + content
 
 
-class PageDownTool(Tool):
-    name = "page_down"
-    description = (
+class PageDownTool(BaseTool):
+    name: str = "page_down"
+    description: str = (
         "Scroll the viewport DOWN one page-length in the current webpage and return the new viewport content."
     )
-    inputs = {}
-    output_type = "string"
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    def __init__(self, browser=None):
-        super().__init__()
-        self.browser = browser
+    browser: Any = None
 
-    def forward(self) -> str:
+    def __init__(self, browser=None, **kwargs):
+        super().__init__(browser=browser, **kwargs)
+
+    def _run(self) -> str:
         self.browser.page_down()
         header, content = self.browser._state()
         return header.strip() + "\n=======================\n" + content
 
 
-class FinderTool(Tool):
-    name = "find_on_page_ctrl_f"
-    description = "Scroll the viewport to the first occurrence of the search string. This is equivalent to Ctrl+F."
-    inputs = {
-        "search_string": {
-            "type": "string",
-            "description": "The string to search for on the page. This search string supports wildcards like '*'",
-        }
-    }
-    output_type = "string"
+class FinderToolInput(BaseModel):
+    search_string: str = Field(description="The string to search for on the page. This search string supports wildcards like '*'")
 
-    def __init__(self, browser=None):
-        super().__init__()
-        self.browser = browser
 
-    def forward(self, search_string: str) -> str:
+class FinderTool(BaseTool):
+    name: str = "find_on_page_ctrl_f"
+    description: str = "Scroll the viewport to the first occurrence of the search string. This is equivalent to Ctrl+F."
+    args_schema: Type[BaseModel] = FinderToolInput
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    browser: Any = None
+
+    def __init__(self, browser=None, **kwargs):
+        super().__init__(browser=browser, **kwargs)
+
+    def _run(self, search_string: str) -> str:
         find_result = self.browser.find_on_page(search_string)
         header, content = self.browser._state()
 
@@ -550,17 +563,17 @@ class FinderTool(Tool):
             return header.strip() + "\n=======================\n" + content
 
 
-class FindNextTool(Tool):
-    name = "find_next"
-    description = "Scroll the viewport to next occurrence of the search string. This is equivalent to finding the next match in a Ctrl+F search."
-    inputs = {}
-    output_type = "string"
+class FindNextTool(BaseTool):
+    name: str = "find_next"
+    description: str = "Scroll the viewport to next occurrence of the search string. This is equivalent to finding the next match in a Ctrl+F search."
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    def __init__(self, browser=None):
-        super().__init__()
-        self.browser = browser
+    browser: Any = None
 
-    def forward(self) -> str:
+    def __init__(self, browser=None, **kwargs):
+        super().__init__(browser=browser, **kwargs)
+
+    def _run(self) -> str:
         find_result = self.browser.find_next()
         header, content = self.browser._state()
 

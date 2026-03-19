@@ -10,8 +10,9 @@ import json
 import os
 import numpy as np
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Union, Tuple
-from smolagents import Tool
+from typing import List, Dict, Any, Optional, Union, Tuple, Type
+from langchain_core.tools import BaseTool
+from pydantic import BaseModel, Field, ConfigDict
 
 # Handle matplotlib import with fallback
 try:
@@ -43,11 +44,20 @@ except ImportError:
     sns = None
 
 
-class StatisticalAnalysisPlotTool(Tool):
-    name = "statistical_analysis_plot_tool"
-    description = """
+class StatisticalAnalysisPlotToolInput(BaseModel):
+    data_specification: str = Field(description="Specification of data for statistical analysis. Can be: file paths, JSON field paths, or description for auto-discovery")
+    analysis_type: Optional[str] = Field(default="significance_testing", description="Type of statistical analysis: 'significance_testing' (default), 'confidence_intervals', 'distribution_analysis', 'correlation_analysis', 'regression_analysis', 'bootstrap_analysis'")
+    alpha_level: Optional[float] = Field(default=0.05, description="Significance level for statistical tests (default: 0.05)")
+    multiple_comparisons: Optional[str] = Field(default="none", description="Multiple comparison correction: 'none' (default), 'bonferroni', 'holm', 'fdr_bh'")
+    bootstrap_samples: Optional[int] = Field(default=1000, description="Number of bootstrap samples for bootstrap analysis (default: 1000)")
+    output_filename: Optional[str] = Field(default=None, description="Output filename for the generated plot (default: auto-generated based on analysis type)")
+
+
+class StatisticalAnalysisPlotTool(BaseTool):
+    name: str = "statistical_analysis_plot_tool"
+    description: str = """
     Add statistical rigor and analysis to experimental data visualizations.
-    
+
     This tool specializes in creating statistically sound visualizations including:
     - Confidence intervals and error bars with proper statistical foundations
     - Significance testing visualization (p-values, effect sizes, Cohen's d)
@@ -56,7 +66,7 @@ class StatisticalAnalysisPlotTool(Tool):
     - Regression analysis with confidence bands
     - Bootstrap analysis for robust statistical inference
     - Multiple comparison corrections (Bonferroni, FDR)
-    
+
     Key features:
     - Automatically detects appropriate statistical tests based on data
     - Handles different data types (continuous, categorical, paired, unpaired)
@@ -64,7 +74,7 @@ class StatisticalAnalysisPlotTool(Tool):
     - Includes effect size calculations for practical significance
     - Generates comprehensive statistical reports
     - Creates publication-ready figures with proper statistical notation
-    
+
     Statistical methods supported:
     - T-tests (one-sample, two-sample, paired)
     - ANOVA and post-hoc tests
@@ -72,68 +82,33 @@ class StatisticalAnalysisPlotTool(Tool):
     - Correlation analysis (Pearson, Spearman)
     - Non-parametric tests (Mann-Whitney, Wilcoxon)
     - Bootstrap confidence intervals
-    
+
     Use this tool when you need to add statistical validity to your experimental
     results or when reviewers request statistical significance testing.
     """
-    
-    inputs = {
-        "data_specification": {
-            "type": "string",
-            "description": "Specification of data for statistical analysis. Can be: file paths, JSON field paths, or description for auto-discovery"
-        },
-        "analysis_type": {
-            "type": "string",
-            "description": "Type of statistical analysis: 'significance_testing' (default), 'confidence_intervals', 'distribution_analysis', 'correlation_analysis', 'regression_analysis', 'bootstrap_analysis'",
-            "nullable": True
-        },
-        "alpha_level": {
-            "type": "number",
-            "description": "Significance level for statistical tests (default: 0.05)",
-            "nullable": True
-        },
-        "multiple_comparisons": {
-            "type": "string", 
-            "description": "Multiple comparison correction: 'none' (default), 'bonferroni', 'holm', 'fdr_bh'",
-            "nullable": True
-        },
-        "bootstrap_samples": {
-            "type": "integer",
-            "description": "Number of bootstrap samples for bootstrap analysis (default: 1000)",
-            "nullable": True
-        },
-        "output_filename": {
-            "type": "string",
-            "description": "Output filename for the generated plot (default: auto-generated based on analysis type)",
-            "nullable": True
-        }
-    }
-    
-    outputs = {
-        "statistical_results": {
-            "type": "string",
-            "description": "JSON containing statistical analysis results and generated plot paths"
-        }
-    }
-    
-    output_type = "string"
-    
-    def __init__(self, model=None, working_dir: Optional[str] = None):
+    args_schema: Type[BaseModel] = StatisticalAnalysisPlotToolInput
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    model: Any = None
+    working_dir: Optional[str] = None
+
+    def __init__(self, model=None, working_dir: Optional[str] = None, **kwargs):
         """Initialize StatisticalAnalysisPlotTool.
-        
+
         Args:
             model: LLM model for intelligent analysis (optional)
             working_dir: Working directory for workspace-aware file access
         """
-        super().__init__()
         from ..model_utils import get_raw_model
-        self.model = get_raw_model(model)
+        resolved_model = get_raw_model(model)
         # Convert to absolute path to prevent nested directory issues
-        self.working_dir = os.path.abspath(working_dir) if working_dir else None
-        
-    def forward(self, data_specification: str, analysis_type: str = "significance_testing",
-                alpha_level: float = 0.05, multiple_comparisons: str = "none",
-                bootstrap_samples: int = 1000, output_filename: str = None) -> str:
+        resolved_working_dir = os.path.abspath(working_dir) if working_dir else None
+        super().__init__(model=resolved_model, working_dir=resolved_working_dir, **kwargs)
+
+    def _run(self, data_specification: str, analysis_type: Optional[str] = "significance_testing",
+             alpha_level: Optional[float] = 0.05, multiple_comparisons: Optional[str] = "none",
+             bootstrap_samples: Optional[int] = 1000, output_filename: Optional[str] = None) -> str:
         """
         Perform statistical analysis and generate enhanced plots.
         

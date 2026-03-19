@@ -23,7 +23,6 @@ from .agents import (
     build_experiment_transcription_node,
     build_experiment_verification_node,
     build_experimentation_node,
-    build_ideation_node,
     build_literature_review_node,
     build_math_empirical_verifier_node,
     build_math_literature_node,
@@ -32,7 +31,6 @@ from .agents import (
     build_math_rigorous_verifier_node,
     build_proof_transcription_node,
     build_proofreading_node,
-    build_research_planner_node,
     build_resource_preparation_node,
     build_results_analysis_node,
     build_reviewer_node,
@@ -55,16 +53,6 @@ from .workflow_utils import (
     safe_int,
 )
 
-# ---------------------------------------------------------------------------
-# Deterministic stage roster — V1 (DEPRECATED: use V2 stages below)
-# ---------------------------------------------------------------------------
-
-DISCOVERY_STAGES = [
-    "ideation_agent",
-    "literature_review_agent",
-    "research_planner_agent",
-]
-
 MATH_PIPELINE_STAGES = [
     "math_literature_agent",
     "math_proposer_agent",
@@ -81,25 +69,6 @@ EXPERIMENT_PIPELINE_STAGES = [
     "experiment_verification_agent",
     "experiment_transcription_agent",
 ]
-
-POST_TRACK_STAGES = [
-    "synthesis_literature_review_agent",
-    "results_analysis_agent",
-    "resource_preparation_agent",
-    "writeup_agent",
-    "proofreading_agent",
-    "reviewer_agent",
-]
-
-
-def build_pipeline_stages(enable_math_agents: bool) -> list[str]:
-    stages = list(DISCOVERY_STAGES)
-    if enable_math_agents:
-        stages.extend(MATH_PIPELINE_STAGES)
-    stages.extend(EXPERIMENT_PIPELINE_STAGES)
-    stages.extend(POST_TRACK_STAGES)
-    return stages
-
 
 # ---------------------------------------------------------------------------
 # V2 pipeline stage rosters
@@ -559,204 +528,7 @@ def build_synthesis_literature_node(
 
 
 # ---------------------------------------------------------------------------
-# Graph builder
-# ---------------------------------------------------------------------------
-
-def build_research_graph(  # DEPRECATED: V1 pipeline — use build_research_graph_v2
-    model: Any,
-    workspace_dir: str,
-    pipeline_mode: str = "default",
-    enable_math_agents: bool = False,
-    enforce_paper_artifacts: bool = False,
-    enforce_editorial_artifacts: bool = False,
-    require_pdf: bool = False,
-    require_experiment_plan: bool = False,
-    min_review_score: int = 8,
-    followup_max_iterations: int = 3,
-    manager_max_steps: int = 50,
-    authorized_imports: Optional[List[str]] = None,
-    checkpointer=None,
-    counsel_models: Optional[List[Any]] = None,
-    summary_model_id: Optional[str] = "claude-sonnet-4-6",
-    tree_search_config: Optional[Any] = None,
-    enable_milestone_gates: bool = False,
-    adversarial_verification: bool = False,
-):
-    """
-    Build and compile the full LangGraph research pipeline.
-
-    Args:
-        model:                    ChatLiteLLM instance (or any LangChain chat model)
-        workspace_dir:            Absolute path to the run workspace
-        pipeline_mode:            "default" | "full_research" | "quick"
-        enable_math_agents:       Include theorem-oriented math agents
-        enforce_paper_artifacts:  Run artifact gate before FINISH
-        enforce_editorial_artifacts: Run full editorial gates
-        require_pdf:              Require final_paper.pdf at finish
-        require_experiment_plan:  Require experiments_to_run_later.md at finish
-        min_review_score:         Reviewer score threshold
-        followup_max_iterations:  Max follow-up loops in full_research mode
-        manager_max_steps:        Max total manager iterations
-        authorized_imports:       Authorized Python import list for code tools
-        checkpointer:             LangGraph checkpointer (SqliteSaver etc.)
-        counsel_models:           List of ChatLiteLLM instances for counsel mode.
-                                  When provided, specialist nodes run multi-model debate
-                                  instead of a single-model ReAct agent.
-        summary_model_id:         Model used to format stage summary PDFs.
-                                  Set to None to disable automatic PDF summaries.
-        tree_search_config:       TreeSearchConfig instance (or None).
-                                  When provided and enabled, the theory track uses
-                                  DAG-layered best-first search to explore multiple
-                                  proof strategies in parallel.
-
-    Returns:
-        Compiled LangGraph CompiledGraph.
-    """
-    counsel_kwargs = {"counsel_models": counsel_models} if counsel_models else {}
-
-    def _wrap(node, name):
-        """Wrap an agent node with automatic PDF summary generation."""
-        return with_pdf_summary(node, name, workspace_dir, summary_model_id)
-
-    theory_track_node = build_noop_track_node("theory_track_status")
-    if enable_math_agents:
-        # Use tree-search-enabled theory track when configured
-        if tree_search_config and getattr(tree_search_config, "enabled", False):
-            from consortium.tree_search.graph_integration import (
-                build_tree_search_theory_track,
-            )
-            theory_subgraph = build_tree_search_theory_track(
-                model=model,
-                workspace_dir=workspace_dir,
-                authorized_imports=authorized_imports,
-                counsel_models=counsel_models,
-                summary_model_id=summary_model_id,
-                tree_config=tree_search_config,
-                adversarial_verification=adversarial_verification,
-            )
-        else:
-            theory_subgraph = build_theory_track_subgraph(
-                model=model,
-                workspace_dir=workspace_dir,
-                authorized_imports=authorized_imports,
-                counsel_models=counsel_models,
-                summary_model_id=summary_model_id,
-            )
-        theory_track_node = build_track_subgraph_node(theory_subgraph, "theory_track_status")
-    if tree_search_config and getattr(tree_search_config, "enabled", False):
-        from consortium.tree_search.experiment_tree_integration import (
-            build_tree_search_experiment_track,
-        )
-        experiment_subgraph = build_tree_search_experiment_track(
-            model=model,
-            workspace_dir=workspace_dir,
-            authorized_imports=authorized_imports,
-            counsel_models=counsel_models,
-            summary_model_id=summary_model_id,
-            tree_config=tree_search_config,
-            adversarial_verification=adversarial_verification,
-        )
-    else:
-        experiment_subgraph = build_experiment_track_subgraph(
-            model=model,
-            workspace_dir=workspace_dir,
-            authorized_imports=authorized_imports,
-            counsel_models=counsel_models,
-            summary_model_id=summary_model_id,
-        )
-
-    nodes: dict[str, Any] = {
-        "ideation_agent": _wrap(build_ideation_node(model, workspace_dir, authorized_imports, **counsel_kwargs), "ideation_agent"),
-        "literature_review_agent": _wrap(build_literature_review_node(model, workspace_dir, authorized_imports, **counsel_kwargs), "literature_review_agent"),
-        "research_planner_agent": _wrap(build_research_planner_node(model, workspace_dir, authorized_imports, **counsel_kwargs), "research_planner_agent"),
-        "theory_track": theory_track_node,
-        "experiment_track": build_track_subgraph_node(experiment_subgraph, "experiment_track_status"),
-        "track_merge": build_track_merge_node(workspace_dir=workspace_dir),
-        "synthesis_literature_review_agent": _wrap(build_synthesis_literature_node(
-            model, workspace_dir, authorized_imports, counsel_models
-        ), "synthesis_literature_review_agent"),
-        "results_analysis_agent": _wrap(build_results_analysis_node(model, workspace_dir, authorized_imports, **counsel_kwargs), "results_analysis_agent"),
-        "followup_gate": build_followup_gate_node(workspace_dir),
-        "resource_preparation_agent": _wrap(build_resource_preparation_node(model, workspace_dir, authorized_imports, **counsel_kwargs), "resource_preparation_agent"),
-        "writeup_agent": _wrap(build_writeup_node(model, workspace_dir, authorized_imports, **counsel_kwargs), "writeup_agent"),
-        "proofreading_agent": _wrap(build_proofreading_node(model, workspace_dir, authorized_imports, **counsel_kwargs), "proofreading_agent"),
-        "reviewer_agent": _wrap(build_reviewer_node(model, workspace_dir, authorized_imports, **counsel_kwargs), "reviewer_agent"),
-        "validation_gate": build_validation_gate_node(),
-        "novelty_gate": build_novelty_gate_node(workspace_dir),
-        # Milestone gates — generate structured reports; optionally pause for human input
-        "milestone_research_plan": build_milestone_gate_node("research_plan", workspace_dir),
-        "milestone_track_results": build_milestone_gate_node("track_results", workspace_dir),
-        "milestone_analysis": build_milestone_gate_node("analysis", workspace_dir),
-        "milestone_review": build_milestone_gate_node("review", workspace_dir),
-    }
-
-    graph = StateGraph(ResearchState)
-    for name, node in nodes.items():
-        graph.add_node(name, node)
-
-    graph.set_entry_point("ideation_agent")
-    graph.add_edge("ideation_agent", "novelty_gate")
-    graph.add_conditional_edges(
-        "novelty_gate",
-        novelty_router,
-        {
-            "ideation_agent": "ideation_agent",
-            "literature_review_agent": "literature_review_agent",
-        },
-    )
-    graph.add_edge("literature_review_agent", "research_planner_agent")
-
-    # Milestone 1: after research_planner, before track execution
-    graph.add_edge("research_planner_agent", "milestone_research_plan")
-    graph.add_conditional_edges("milestone_research_plan", track_router)
-
-    graph.add_edge("theory_track", "track_merge")
-    graph.add_edge("experiment_track", "track_merge")
-
-    # Milestone 2: after track_merge, before synthesis
-    graph.add_edge("track_merge", "milestone_track_results")
-    graph.add_edge("milestone_track_results", "synthesis_literature_review_agent")
-
-    graph.add_edge("synthesis_literature_review_agent", "results_analysis_agent")
-
-    # Milestone 3: after results_analysis, before followup decision
-    graph.add_edge("results_analysis_agent", "milestone_analysis")
-    graph.add_edge("milestone_analysis", "followup_gate")
-
-    graph.add_conditional_edges(
-        "followup_gate",
-        followup_router,
-        {
-            "research_planner_agent": "research_planner_agent",
-            "resource_preparation_agent": "resource_preparation_agent",
-        },
-    )
-    graph.add_edge("resource_preparation_agent", "writeup_agent")
-    graph.add_edge("writeup_agent", "proofreading_agent")
-    graph.add_edge("proofreading_agent", "reviewer_agent")
-
-    # Milestone 4: after reviewer, before validation gate
-    graph.add_edge("reviewer_agent", "milestone_review")
-    graph.add_edge("milestone_review", "validation_gate")
-
-    graph.add_conditional_edges(
-        "validation_gate",
-        validation_router,
-        {
-            END: END,
-            "writeup_agent": "writeup_agent",
-        },
-    )
-
-    compile_kwargs: dict = {}
-    if checkpointer is not None:
-        compile_kwargs["checkpointer"] = checkpointer
-
-    return graph.compile(**compile_kwargs)
-
-
-# ---------------------------------------------------------------------------
-# V2 pipeline — gate nodes and routers
+# Pipeline — gate nodes and routers
 # ---------------------------------------------------------------------------
 
 

@@ -110,7 +110,6 @@ class ResearchState(TypedDict):
     # V2 pipeline — persona council output
     # -----------------------------------------------------------------
     research_proposal: Optional[str]           # 1-2 page synthesized proposal from persona council
-    pipeline_version: str                      # "v1" or "v2"
     autonomous_mode: bool                      # True = no human-in-the-loop gates
 
     # -----------------------------------------------------------------

@@ -45,6 +45,13 @@ docs = [
     "pypandoc",
     "python-docx",
     "pillow",
+    "mammoth",
+    "markdownify",
+    "python-pptx",
+    "puremagic",
+    "pydub",
+    "SpeechRecognition",
+    "youtube-transcript-api",
 ]
 
 # pip install consortium[web]
@@ -52,6 +59,8 @@ web = [
     "playwright",
     "crawl4ai",
     "jina",
+    "serpapi",
+    "pathvalidate",
 ]
 
 # pip install consortium[experiment]

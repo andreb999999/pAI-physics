@@ -33,8 +33,8 @@ import time as _time
 from datetime import datetime, timezone
 
 # Ensure tex-live is available for paper/editorial stages
-_TEX_LIVE_BIN = "/orcd/software/community/001/pkg/tex-live/20251104/bin/x86_64-linux"
-if _TEX_LIVE_BIN not in os.environ.get("PATH", ""):
+_TEX_LIVE_BIN = os.environ.get("CONSORTIUM_TEXLIVE_BIN", "")
+if _TEX_LIVE_BIN and _TEX_LIVE_BIN not in os.environ.get("PATH", ""):
     os.environ["PATH"] = _TEX_LIVE_BIN + ":" + os.environ.get("PATH", "")
 
 # Ensure consortium is importable from repo root
@@ -89,6 +89,11 @@ def parse_args() -> argparse.Namespace:
         "--init",
         action="store_true",
         help="Initialise campaign status file and exit (safe to re-run).",
+    )
+    p.add_argument(
+        "--validate",
+        action="store_true",
+        help="Validate campaign YAML (schema, task files, workspace) and exit without launching.",
     )
     return p.parse_args()
 
@@ -1093,6 +1098,32 @@ def main() -> int:
                 )
         except (json.JSONDecodeError, KeyError) as exc:
             print(f"[heartbeat] Warning: could not reload resolved spec: {exc}")
+
+    if args.validate:
+        errors = []
+        print(f"[validate] Campaign: {spec.name}")
+        print(f"[validate] Workspace: {campaign_dir}")
+        print(f"[validate] Stages: {len(spec.stages)}")
+        if spec.planning and getattr(spec.planning, "enabled", False):
+            task_file = getattr(spec.planning, "base_task_file", "")
+            if task_file and not os.path.isfile(task_file):
+                errors.append(f"Task file not found: {task_file}")
+            else:
+                print(f"[validate] Task file: {task_file} (OK)")
+            max_s = getattr(spec.planning, "max_stages", "?")
+            print(f"[validate] Dynamic planning: enabled (max_stages={max_s})")
+        for stage in spec.stages:
+            if stage.task_file and not os.path.isfile(stage.task_file):
+                errors.append(f"Stage '{stage.id}' task file not found: {stage.task_file}")
+            else:
+                print(f"[validate] Stage '{stage.id}': OK")
+        if errors:
+            print(f"\n[validate] ERRORS:")
+            for e in errors:
+                print(f"  - {e}")
+            return 1
+        print(f"\n[validate] Campaign config is valid.")
+        return 0
 
     if args.init:
         init_status(campaign_dir, spec, args.campaign)

@@ -32,10 +32,16 @@ fi
 
 # --- Engaging cluster: auto-source conda if not on PATH ---
 if ! command -v conda >/dev/null 2>&1; then
-  # Try Engaging-specific conda init locations
-  ENGAGING_CONDA_INIT="/orcd/data/lhtsai/001/om2/mabdel03/miniforge3/etc/profile.d/conda.sh"
-  if [[ -f "$ENGAGING_CONDA_INIT" ]]; then
-    echo "Sourcing Engaging conda init: $ENGAGING_CONDA_INIT"
+  # Try to read conda init path from engaging_config.yaml if present
+  ENGAGING_CONDA_INIT=""
+  _ENGAGING_CFG="$REPO_ROOT/engaging_config.yaml"
+  if [[ -f "$_ENGAGING_CFG" ]]; then
+    ENGAGING_CONDA_INIT=$(grep 'conda_init_script:' "$_ENGAGING_CFG" 2>/dev/null | head -1 | sed 's/.*conda_init_script:\s*//' | sed 's/\s*#.*//' | tr -d '[:space:]' | sed 's/\${[^}]*:-\(.*\)}/\1/')
+  fi
+  # Override with env var if set
+  ENGAGING_CONDA_INIT="${CONDA_INIT_SCRIPT:-$ENGAGING_CONDA_INIT}"
+  if [[ -n "$ENGAGING_CONDA_INIT" && -f "$ENGAGING_CONDA_INIT" ]]; then
+    echo "Sourcing conda init: $ENGAGING_CONDA_INIT"
     # shellcheck disable=SC1090
     source "$ENGAGING_CONDA_INIT"
   fi
@@ -143,6 +149,15 @@ if has_capability latex; then
 fi
 python "$REPO_ROOT/scripts/preflight_check.py" "${PREFLIGHT_ARGS[@]}"
 
+# Copy config templates if they don't exist yet
+if [[ ! -f "$REPO_ROOT/.llm_config.yaml" && -f "$REPO_ROOT/.llm_config.yaml.example" ]]; then
+  cp "$REPO_ROOT/.llm_config.yaml.example" "$REPO_ROOT/.llm_config.yaml"
+  echo "Created .llm_config.yaml from .llm_config.yaml.example"
+fi
+
 echo "Setup complete."
 echo "Installed profile: $PROFILE_RAW"
-echo "Next: add API key(s) in $REPO_ROOT/.env and run launch_multiagent.py"
+echo "Next steps:"
+echo "  1. Copy and edit .env:  cp .env.example .env"
+echo "  2. Add your API key(s) in .env"
+echo "  3. Validate:  python launch_multiagent.py --task 'test' --dry-run"

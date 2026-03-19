@@ -1,11 +1,9 @@
 """
 PythonCodeExecutionTool — LangChain BaseTool wrapping workspace-scoped
-Python execution (Phase 6b).
+Python execution.
 
-This replaces WorkspacePythonExecutor as a tool available to any specialist
-agent that needs to run arbitrary Python code in the workspace directory.
-The inner execution logic (chdir / execute / restore) is preserved from
-WorkspacePythonExecutor.__call__().
+Provides a sandboxed Python executor available to any specialist agent
+that needs to run arbitrary Python code in the workspace directory.
 """
 
 from __future__ import annotations
@@ -42,7 +40,7 @@ def _timeout_handler(signum, frame):
 
 
 # ---------------------------------------------------------------------------
-# Standalone execution function (same logic as WorkspacePythonExecutor)
+# Standalone execution function
 # ---------------------------------------------------------------------------
 
 def _execute_in_workspace(

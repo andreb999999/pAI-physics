@@ -88,8 +88,8 @@ Respond in JSON format with EXACT specifications extracted:
     
     try:
         # Use proper ChatMessage format for model calls
-        from smolagents.types import ChatMessage
-        messages = [ChatMessage(role="user", content=interpretation_prompt)]
+        from langchain_core.messages import HumanMessage
+        messages = [HumanMessage(content=interpretation_prompt)]
         response = model.generate(messages).content
         plan = json.loads(response)
         return plan

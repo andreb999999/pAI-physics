@@ -1,47 +1,50 @@
-# Consortium on MIT Engaging — Setup Guide
+# Consortium on SLURM/HPC Clusters — Setup Guide
 
 ## Prerequisites
 
-- Access to MIT Engaging cluster
-- Conda installed at `/orcd/data/lhtsai/001/om2/mabdel03/miniforge3/`
-- API keys for at least one LLM provider (OpenAI, Anthropic, Google, etc.)
+- Access to a SLURM cluster
+- Conda installed (Miniconda or Miniforge)
+- API keys for at least one LLM provider (Anthropic, OpenAI, Google, etc.)
 
 ## Quick Start
 
 ```bash
-# 1. Source conda
-source /orcd/data/lhtsai/001/om2/mabdel03/miniforge3/etc/profile.d/conda.sh
+# 1. Clone the repo and enter it
+git clone <repo-url> OpenPI && cd OpenPI
 
 # 2. Bootstrap the environment (creates conda env + installs deps)
-cd /orcd/scratch/orcd/012/mabdel03/AI_Researcher/OpenPI
 ./scripts/bootstrap.sh consortium full
 
 # 3. Set up API keys
 cp .env.example .env
 # Edit .env with your API keys
 
-# 4. Test configuration
-conda activate /home/mabdel03/conda_envs/consortium
-python launch_multiagent.py --dry-run --model claude-opus-4-6
+# 4. Configure cluster paths (if using SLURM)
+# Edit engaging_config.yaml with your cluster-specific paths:
+#   - conda_init_script, conda_env_prefix, repo_root, slurm_output_dir
+# Or set env vars: CONDA_INIT_SCRIPT, CONDA_ENV_PREFIX, REPO_ROOT, SLURM_OUTPUT_DIR
 
-# 5. Submit the orchestrator to SLURM
+# 5. Test configuration
+conda activate consortium
+python launch_multiagent.py --dry-run
+
+# 6. Submit the orchestrator to SLURM
 RESEARCH_TASK="Your research prompt here..." ./scripts/submit_orchestrator.sh --no-counsel
 ```
 
 ## Architecture: Two-Tier SLURM Model
 
-Consortium uses a **two-tier execution model** on Engaging:
+Consortium uses a **two-tier execution model** on HPC clusters:
 
 ### Tier 1: Orchestrator (CPU)
-- Runs on `sched_mit_hill` (CPU partition, 12hr limit)
+- Runs on a CPU partition (e.g., 12hr limit)
 - Makes outbound HTTPS calls to LLM APIs (Claude, GPT, Gemini)
 - Coordinates 23+ specialist agents via LangGraph
 - Does NOT need GPU
 
 ### Tier 2: Experiment Jobs (GPU)
 - Submitted by the orchestrator via `sbatch` when experiments need GPU
-- Default partition: `pi_tpoggio` (A100x8, 7-day limit)
-- Fallback: `mit_normal_gpu` (6hr) or `mit_preemptable` (2-day)
+- Partition configured in `engaging_config.yaml`
 - Runs AI-Scientist-v2 experiment execution
 
 Set `CONSORTIUM_SLURM_ENABLED=1` to enable automatic GPU job submission.
@@ -49,26 +52,22 @@ Set `CONSORTIUM_SLURM_ENABLED=1` to enable automatic GPU job submission.
 ## Configuration
 
 ### engaging_config.yaml
-All Engaging-specific settings are centralized here:
+All cluster-specific settings are centralized here:
 - Partition names (GPU and CPU)
 - Conda paths and module names
 - Resource limits (CPUs, memory, time)
+
+**Important**: Set these paths for your cluster either via env vars or by editing the file directly:
+- `CONDA_INIT_SCRIPT` — path to your conda `conda.sh` init script
+- `CONDA_ENV_PREFIX` — path to your conda environment
+- `REPO_ROOT` — path to the OpenPI clone
+- `SLURM_OUTPUT_DIR` — where to write SLURM logs
 
 ### .llm_config.yaml
 LLM model selection, budget limits, counsel mode settings.
 
 ### .env
-API keys (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)
-
-## Available Partitions
-
-| Partition | GPUs | Time Limit | Use Case |
-|-----------|------|------------|----------|
-| `sched_mit_hill` | None | 12hr | Orchestrator (Tier 1) |
-| `pi_tpoggio` | A100x8 | 7 days | Default experiment GPU |
-| `mit_normal_gpu` | H100/H200/L40S | 6hr | Short experiments |
-| `mit_preemptable` | A100/H100/H200/L40S | 2 days | Long experiments (preemptible) |
-| `pi_lhtsai` | RTX Pro 6000x2 | 2 days | PI-dedicated GPU |
+API keys (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.)
 
 ## Running a Campaign (Multi-Stage)
 
@@ -103,15 +102,17 @@ cat results/consortium_*/experiment_runs/*/slurm_logs/exp_*.out
 ## Troubleshooting
 
 ### "conda not found"
+Set the `CONDA_INIT_SCRIPT` env var or edit `engaging_config.yaml`:
 ```bash
-source /orcd/data/lhtsai/001/om2/mabdel03/miniforge3/etc/profile.d/conda.sh
+export CONDA_INIT_SCRIPT=/path/to/miniforge3/etc/profile.d/conda.sh
+source "$CONDA_INIT_SCRIPT"
 ```
 
 ### "module not found"
+Load the appropriate modules for your cluster:
 ```bash
-module load miniforge/25.11.0-0
-module load cuda/12.4.0
-module load cudnn/9.8.0.87-cuda12
+module load miniforge    # or your cluster's conda module
+module load cuda         # for GPU experiments
 ```
 
 ### GPU experiment job fails
@@ -124,14 +125,14 @@ cat results/consortium_*/experiment_runs/*/slurm_logs/exp_*.err
 ### API calls fail from compute node
 The orchestrator needs outbound internet access. If compute nodes don't have it, run the orchestrator on a login node instead:
 ```bash
-conda activate /home/mabdel03/conda_envs/consortium
+conda activate <your-env>
 nohup python launch_multiagent.py --task "..." --no-counsel &
 ```
 
 ### LaTeX/PDF compilation fails
 ```bash
 # Install TeX toolchain in conda env
-./scripts/fix_pdflatex_conda.sh consortium
-# Or load system module
-module load tex-live/20251104
+./scripts/bootstrap.sh <your-env> latex
+# Or set the path to your system TeX installation
+export CONSORTIUM_PDFLATEX_PATH=/path/to/pdflatex
 ```

@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+# =============================================================================
+# OpenPI CLI Wrapper
+# =============================================================================
+# Convenience interface for common OpenPI operations.
+#
+# Usage:
+#   ./openpi run --task "..."              Run a single research pipeline
+#   ./openpi run --dry-run --task "test"   Validate setup without spending tokens
+#   ./openpi campaign init <yaml>          Initialize a campaign
+#   ./openpi campaign status <yaml>        Check campaign status
+#   ./openpi campaign launch <yaml> <id>   Launch a specific stage
+#   ./openpi campaign budget <yaml>        Check budget usage
+#   ./openpi campaign approve-plan <yaml>  Approve the dynamic plan
+#   ./openpi campaign validate <yaml>      Validate campaign config (dry-run)
+#   ./openpi preflight                     Check dependencies and API keys
+#   ./openpi list-runs                     List past runs with cost/status
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$REPO_ROOT"
+
+# Detect the right Python — prefer conda env, fall back to system
+if [ -n "${CONDA_PREFIX:-}" ] && [ -x "$CONDA_PREFIX/bin/python" ]; then
+    PYTHON="$CONDA_PREFIX/bin/python"
+elif command -v python3 >/dev/null 2>&1; then
+    PYTHON="python3"
+elif command -v python >/dev/null 2>&1; then
+    PYTHON="python"
+else
+    echo "ERROR: Python not found. Activate your conda environment first:"
+    echo "  conda activate <your-env>"
+    exit 1
+fi
+
+usage() {
+    cat << 'EOF'
+Usage: ./openpi <command> [options]
+
+Commands:
+  run             Run a single research pipeline
+  setup           Quick setup — detect environment and configure mode
+  campaign        Manage multi-stage campaigns
+  preflight       Check dependencies and API keys
+  list-runs       List past runs with cost and status
+  help            Show this help message
+
+Run:
+  ./openpi run --task "Research question here"
+  ./openpi run --task "$(cat examples/quickstart/task.txt)" --output-format markdown --no-counsel
+  ./openpi run --dry-run --task "test"
+
+Campaign:
+  ./openpi campaign init <campaign.yaml>
+  ./openpi campaign status <campaign.yaml>
+  ./openpi campaign launch <campaign.yaml> <stage_id>
+  ./openpi campaign budget <campaign.yaml>
+  ./openpi campaign approve-plan <campaign.yaml>
+  ./openpi campaign validate <campaign.yaml>
+  ./openpi campaign heartbeat <campaign.yaml>
+
+Preflight:
+  ./openpi preflight
+  ./openpi preflight --with-latex --with-web
+EOF
+}
+
+cmd="${1:-help}"
+shift || true
+
+case "$cmd" in
+    run)
+        exec "$PYTHON" launch_multiagent.py "$@"
+        ;;
+    campaign)
+        subcmd="${1:-}"
+        shift || true
+        case "$subcmd" in
+            init)
+                yaml="${1:?Usage: ./openpi campaign init <campaign.yaml>}"
+                shift
+                exec "$PYTHON" scripts/campaign_heartbeat.py --campaign "$yaml" --init "$@"
+                ;;
+            status|budget|approve-plan|launchable|check-credits|repair-status)
+                yaml="${1:?Usage: ./openpi campaign $subcmd <campaign.yaml>}"
+                shift
+                exec "$PYTHON" scripts/campaign_cli.py --campaign "$yaml" "$subcmd" "$@"
+                ;;
+            launch)
+                yaml="${1:?Usage: ./openpi campaign launch <campaign.yaml> <stage_id>}"
+                shift
+                stage="${1:?Usage: ./openpi campaign launch <campaign.yaml> <stage_id>}"
+                shift
+                exec "$PYTHON" scripts/campaign_cli.py --campaign "$yaml" launch "$stage" "$@"
+                ;;
+            stage-logs)
+                yaml="${1:?Usage: ./openpi campaign stage-logs <campaign.yaml> <stage_id>}"
+                shift
+                exec "$PYTHON" scripts/campaign_cli.py --campaign "$yaml" stage-logs "$@"
+                ;;
+            heartbeat)
+                yaml="${1:?Usage: ./openpi campaign heartbeat <campaign.yaml>}"
+                shift
+                exec "$PYTHON" scripts/campaign_heartbeat.py --campaign "$yaml" "$@"
+                ;;
+            validate)
+                yaml="${1:?Usage: ./openpi campaign validate <campaign.yaml>}"
+                shift
+                exec "$PYTHON" scripts/campaign_heartbeat.py --campaign "$yaml" --validate "$@"
+                ;;
+            ""|help)
+                echo "Usage: ./openpi campaign <init|status|launch|budget|heartbeat|validate|approve-plan|stage-logs> <campaign.yaml> [options]"
+                exit 0
+                ;;
+            *)
+                # Pass through to campaign_cli.py
+                yaml="${1:-}"
+                if [ -n "$yaml" ]; then
+                    shift
+                    exec "$PYTHON" scripts/campaign_cli.py --campaign "$yaml" "$subcmd" "$@"
+                else
+                    echo "Usage: ./openpi campaign $subcmd <campaign.yaml> [options]"
+                    exit 1
+                fi
+                ;;
+        esac
+        ;;
+    setup)
+        exec "$PYTHON" scripts/setup_mode.py "$@"
+        ;;
+    preflight)
+        exec "$PYTHON" scripts/preflight_check.py "$@"
+        ;;
+    list-runs)
+        exec "$PYTHON" launch_multiagent.py --list-runs
+        ;;
+    help|--help|-h)
+        usage
+        exit 0
+        ;;
+    *)
+        echo "Unknown command: $cmd"
+        usage
+        exit 1
+        ;;
+esac

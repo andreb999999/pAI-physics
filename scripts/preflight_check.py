@@ -66,6 +66,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Treat LaTeX toolchain (pdflatex/bibtex) as required.",
     )
+    parser.add_argument(
+        "--mode",
+        choices=["local", "tinker", "hpc"],
+        default=None,
+        help="Deployment mode — adjusts which checks are required vs optional.",
+    )
     return parser.parse_args()
 
 
@@ -193,8 +199,9 @@ def main() -> int:
         except Exception as exc:
             warnings.append(f"Could not load .env: {exc}")
 
+    mode = args.mode  # None if not specified
+
     required_modules = [
-        "smolagents",
         "litellm",
         "yaml",
         "dotenv",
@@ -227,12 +234,18 @@ def main() -> int:
     _check_modules(web_modules, errors, warnings, required=args.with_web)
     _check_modules(experiment_modules, errors, warnings, required=args.with_experiment)
 
+    # In local mode, LaTeX is optional by default (output defaults to markdown)
+    require_latex = args.with_latex
+    if mode == "local" and not args.with_latex:
+        require_latex = False
+
     latex_err = check_latex_toolchain()
     if latex_err:
-        if args.with_latex:
+        if require_latex:
             errors.append(latex_err)
-        else:
+        elif mode != "local":
             warnings.append(latex_err)
+        # In local mode, silently skip LaTeX check (markdown is default)
 
     # Validate chromium only if web capability is requested/installed.
     if args.with_web or check_import("playwright") is None:
@@ -249,6 +262,33 @@ def main() -> int:
             "pydub is installed but ffmpeg is not on PATH. "
             "Install ffmpeg for audio transcription features."
         )
+
+    # --- Mode-aware checks ---
+    mode = args.mode
+
+    # SLURM availability (HPC mode)
+    if mode == "hpc":
+        if not shutil.which("sbatch"):
+            errors.append(
+                "sbatch not found on PATH. HPC mode requires a SLURM installation. "
+                "Are you on a login/compute node?"
+            )
+        if not shutil.which("sacct"):
+            warnings.append("sacct not found — SLURM job status polling may not work.")
+        engaging_cfg = REPO_ROOT / "engaging_config.yaml"
+        if not engaging_cfg.exists():
+            warnings.append(
+                "engaging_config.yaml not found. Copy and edit it for your cluster's "
+                "partitions, modules, and conda paths."
+            )
+
+    # Tinker API key (tinker mode)
+    if mode == "tinker":
+        if not os.getenv("TINKER_API_KEY"):
+            errors.append(
+                "TINKER_API_KEY not set. Sign up at https://auth.thinkingmachines.ai/sign-up "
+                "and add TINKER_API_KEY to your .env file."
+            )
 
     api_key_names = [
         "OPENAI_API_KEY",

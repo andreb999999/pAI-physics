@@ -4,28 +4,33 @@ This module contains tools for managing files and folders in a knowledge base st
 Supports listing, viewing, moving, renaming, and deleting files within the knowledge base.
 """
 
-from smolagents.tools import Tool
+from langchain_core.tools import BaseTool
+from pydantic import BaseModel, Field, ConfigDict
+from typing import Any, Type
 import os
 import shutil
 from pathlib import Path
 
 
-class ListKnowledgeBaseDirectory(Tool):
-    name = "list_knowledge_base_directory"
-    description = (
+class ListKnowledgeBaseDirectoryInput(BaseModel):
+    directory: str = Field(description="Relative path of the directory in the knowledge base.")
+
+
+class ListKnowledgeBaseDirectory(BaseTool):
+    name: str = "list_knowledge_base_directory"
+    description: str = (
         "List all files and folders inside a directory in the knowledge base. "
         "Use this to explore the structure of the knowledge base."
     )
-    inputs = {
-        "directory": {"type": "string", "description": "Relative path of the directory in the knowledge base."}
-    }
-    output_type = "string"
+    args_schema: Type[BaseModel] = ListKnowledgeBaseDirectoryInput
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    def __init__(self, repo_indexer):
-        super().__init__()
-        self.root = Path(repo_indexer.root)
+    root: Any = None
 
-    def forward(self, directory: str) -> str:
+    def __init__(self, repo_indexer, **kwargs):
+        super().__init__(root=Path(repo_indexer.root), **kwargs)
+
+    def _run(self, directory: str) -> str:
         try:
             chosen_dir = self._safe_kb_path(directory)
         except PermissionError as e:
@@ -38,7 +43,7 @@ class ListKnowledgeBaseDirectory(Tool):
         if not files:
             return f"The directory '{directory}' is empty."
         return "\n".join(files)
-    
+
     def _safe_kb_path(self, path: str) -> Path:
         abs_root = self.root.resolve()
         abs_path = (self.root / path).resolve()
@@ -46,22 +51,26 @@ class ListKnowledgeBaseDirectory(Tool):
             raise PermissionError("Access outside the knowledge base root is not allowed.")
         return abs_path
 
-class SeeKnowledgeBaseFile(Tool):
-    name = "see_knowledge_base_file"
-    description = (
+
+class SeeKnowledgeBaseFileInput(BaseModel):
+    file_path: str = Field(description="Relative path of the file in the knowledge base.")
+
+
+class SeeKnowledgeBaseFile(BaseTool):
+    name: str = "see_knowledge_base_file"
+    description: str = (
         "View the content of a plain text file in the knowledge base (e.g., .txt, .md, .py). "
         "Avoid using this tool on binary files like .pdf, .docx, or images."
     )
-    inputs = {
-        "file_path": {"type": "string", "description": "Relative path of the file in the knowledge base."}
-    }
-    output_type = "string"
+    args_schema: Type[BaseModel] = SeeKnowledgeBaseFileInput
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    def __init__(self, repo_indexer):
-        super().__init__()
-        self.root = Path(repo_indexer.root)
+    root: Any = None
 
-    def forward(self, file_path: str) -> str:
+    def __init__(self, repo_indexer, **kwargs):
+        super().__init__(root=Path(repo_indexer.root), **kwargs)
+
+    def _run(self, file_path: str) -> str:
         try:
             filepath = self._safe_kb_path(file_path)
         except PermissionError as e:
@@ -85,23 +94,27 @@ class SeeKnowledgeBaseFile(Tool):
             raise PermissionError("Access outside the knowledge base root is not allowed.")
         return abs_path
 
-class MoveOrRenameInKnowledgeBase(Tool):
-    name = "move_or_rename_in_knowledge_base"
-    description = (
+
+class MoveOrRenameInKnowledgeBaseInput(BaseModel):
+    source_path: str = Field(description="Current path of the file or folder in the knowledge base.")
+    destination_path: str = Field(description="New desired path or name in the knowledge base.")
+    overwrite: bool = Field(description="Whether to overwrite the destination if it exists.")
+
+
+class MoveOrRenameInKnowledgeBase(BaseTool):
+    name: str = "move_or_rename_in_knowledge_base"
+    description: str = (
         "Move or rename a file or folder within the knowledge base. "
         "Use this to reorganize files or to change file/folder names. "
         "If overwrite=True, replaces the destination. If overwrite=False, adds a numeric suffix to avoid conflict."
     )
-    inputs = {
-        "source_path": {"type": "string", "description": "Current path of the file or folder in the knowledge base."},
-        "destination_path": {"type": "string", "description": "New desired path or name in the knowledge base."},
-        "overwrite": {"type": "boolean", "description": "Whether to overwrite the destination if it exists."}
-    }
-    output_type = "string"
+    args_schema: Type[BaseModel] = MoveOrRenameInKnowledgeBaseInput
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    def __init__(self, repo_indexer):
-        super().__init__()
-        self.root = Path(repo_indexer.root)
+    root: Any = None
+
+    def __init__(self, repo_indexer, **kwargs):
+        super().__init__(root=Path(repo_indexer.root), **kwargs)
 
     def _get_unique_path(self, base_path: Path) -> Path:
         counter = 1
@@ -111,7 +124,7 @@ class MoveOrRenameInKnowledgeBase(Tool):
             counter += 1
         return new_path
 
-    def forward(self, source_path: str, destination_path: str, overwrite: bool) -> str:
+    def _run(self, source_path: str, destination_path: str, overwrite: bool) -> str:
         try:
             src = self._safe_kb_path(source_path)
             dst = self._safe_kb_path(destination_path)
@@ -135,22 +148,26 @@ class MoveOrRenameInKnowledgeBase(Tool):
             raise PermissionError("Access outside the knowledge base root is not allowed.")
         return abs_path
 
-class DeleteFromKnowledgeBase(Tool):
-    name = "delete_from_knowledge_base"
-    description = (
+
+class DeleteFromKnowledgeBaseInput(BaseModel):
+    target_path: str = Field(description="Path to the file or folder to delete.")
+
+
+class DeleteFromKnowledgeBase(BaseTool):
+    name: str = "delete_from_knowledge_base"
+    description: str = (
         "Delete a file or folder from the knowledge base. "
         "Use this to remove outdated or invalid content."
     )
-    inputs = {
-        "target_path": {"type": "string", "description": "Path to the file or folder to delete."}
-    }
-    output_type = "string"
+    args_schema: Type[BaseModel] = DeleteFromKnowledgeBaseInput
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    def __init__(self, repo_indexer):
-        super().__init__()
-        self.root = Path(repo_indexer.root)
+    root: Any = None
 
-    def forward(self, target_path: str) -> str:
+    def __init__(self, repo_indexer, **kwargs):
+        super().__init__(root=Path(repo_indexer.root), **kwargs)
+
+    def _run(self, target_path: str) -> str:
         try:
             target = self._safe_kb_path(target_path)
         except PermissionError as e:

@@ -6,7 +6,9 @@ and appending content to existing files. All updates are automatically indexed
 for semantic search.
 """
 
-from smolagents.tools import Tool
+from langchain_core.tools import BaseTool
+from pydantic import BaseModel, Field, ConfigDict
+from typing import Optional, Any, Type
 import shutil
 from pathlib import Path
 from consortium.toolkits.filesystem.kb_repo_management.repo_indexer import (
@@ -14,33 +16,31 @@ from consortium.toolkits.filesystem.kb_repo_management.repo_indexer import (
 )
 
 
-class WriteToKnowledgeBase(Tool):
-    name = "write_to_knowledge_base"
-    description = (
+class WriteToKnowledgeBaseInput(BaseModel):
+    content: str = Field(description="Text or code to write into the file.")
+    destination_path: str = Field(description="Relative path of the new file in the knowledge base.")
+    overwrite: bool = Field(description="Whether to overwrite if the file already exists.")
+
+
+class WriteToKnowledgeBase(BaseTool):
+    name: str = "write_to_knowledge_base"
+    description: str = (
         "Create a new file in the knowledge base and write the given content into it. "
         "If overwrite=True, replaces any existing file. If overwrite=False, adds a numeric suffix to avoid conflict. "
         "Updates the semantic index automatically."
     )
-    inputs = {
-        "content": {
-            "type": "string",
-            "description": "Text or code to write into the file.",
-        },
-        "destination_path": {
-            "type": "string",
-            "description": "Relative path of the new file in the knowledge base.",
-        },
-        "overwrite": {
-            "type": "boolean",
-            "description": "Whether to overwrite if the file already exists.",
-        },
-    }
-    output_type = "string"
+    args_schema: Type[BaseModel] = WriteToKnowledgeBaseInput
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    def __init__(self, repo_indexer: RepoIndexer):
-        super().__init__()
-        self.repo_indexer = repo_indexer
-        self.root = Path(repo_indexer.root)
+    repo_indexer: Any = None
+    root: Any = None
+
+    def __init__(self, repo_indexer: RepoIndexer, **kwargs):
+        super().__init__(
+            repo_indexer=repo_indexer,
+            root=Path(repo_indexer.root),
+            **kwargs,
+        )
 
     def _get_unique_path(self, base_path: Path) -> Path:
         counter = 1
@@ -61,7 +61,7 @@ class WriteToKnowledgeBase(Tool):
             )
         return abs_path
 
-    def forward(self, content: str, destination_path: str, overwrite: bool) -> str:
+    def _run(self, content: str, destination_path: str, overwrite: bool) -> str:
         try:
             dst = self._safe_kb_path(destination_path)
         except PermissionError as e:
@@ -80,34 +80,33 @@ class WriteToKnowledgeBase(Tool):
         return f"Wrote content to '{dst.relative_to(self.root)}'. File has been indexed for semantic search."
 
 
-class CopyToKnowledgeBase(Tool):
-    name = "copy_to_knowledge_base"
-    description = (
+class CopyToKnowledgeBaseInput(BaseModel):
+    source_path: str = Field(description="Path in the working directory.")
+    destination_path: str = Field(description="Target path in the knowledge base.")
+    overwrite: bool = Field(description="Whether to overwrite existing files or folders.")
+
+
+class CopyToKnowledgeBase(BaseTool):
+    name: str = "copy_to_knowledge_base"
+    description: str = (
         "Copy a file or folder from the working directory to the knowledge base. "
         "If overwrite=True, merges folders or replaces files. If overwrite=False, adds suffix to avoid conflict. "
         "All new or updated files are indexed for semantic search."
     )
-    inputs = {
-        "source_path": {
-            "type": "string",
-            "description": "Path in the working directory.",
-        },
-        "destination_path": {
-            "type": "string",
-            "description": "Target path in the knowledge base.",
-        },
-        "overwrite": {
-            "type": "boolean",
-            "description": "Whether to overwrite existing files or folders.",
-        },
-    }
-    output_type = "string"
+    args_schema: Type[BaseModel] = CopyToKnowledgeBaseInput
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    def __init__(self, repo_indexer: RepoIndexer, working_dir: str):
-        super().__init__()
-        self.repo_indexer = repo_indexer
-        self.working_dir = Path(working_dir)
-        self.root = Path(repo_indexer.root)
+    repo_indexer: Any = None
+    working_dir: Any = None
+    root: Any = None
+
+    def __init__(self, repo_indexer: RepoIndexer, working_dir: str, **kwargs):
+        super().__init__(
+            repo_indexer=repo_indexer,
+            working_dir=Path(working_dir),
+            root=Path(repo_indexer.root),
+            **kwargs,
+        )
 
     def _get_unique_path(self, base_path: Path) -> Path:
         counter = 1
@@ -137,7 +136,7 @@ class CopyToKnowledgeBase(Tool):
             )
         return abs_path
 
-    def forward(self, source_path: str, destination_path: str, overwrite: bool) -> str:
+    def _run(self, source_path: str, destination_path: str, overwrite: bool) -> str:
         try:
             src = self._safe_working_path(source_path)
             dst = self._safe_kb_path(destination_path)
@@ -182,44 +181,45 @@ class CopyToKnowledgeBase(Tool):
         )
 
 
-class AppendToKnowledgeBaseFile(Tool):
-    name = "append_to_knowledge_base_file"
-    description = (
+class AppendToKnowledgeBaseFileInput(BaseModel):
+    target_file: str = Field(description="Relative path of the file in the knowledge base.")
+    new_content: str = Field(description="Content to insert into the file.")
+    insert_mode: Optional[str] = Field(
+        default=None,
+        description=(
+            "Content insertion position (default: 'end'):\n"
+            "* 'end': Append content to the end of the file\n"
+            "* 'before': Insert content before the line containing match_string\n"
+            "* 'after': Insert content after the line containing match_string\n"
+            "Note: 'before' and 'after' modes require match_string parameter"
+        ),
+    )
+    match_string: Optional[str] = Field(
+        default=None,
+        description="String to locate insertion point for 'before' or 'after' modes.",
+    )
+
+
+class AppendToKnowledgeBaseFile(BaseTool):
+    name: str = "append_to_knowledge_base_file"
+    description: str = (
         "Append new content to a plain text file in the knowledge base. "
         "You can insert at the end, or before/after a specific line using match_string. "
         "If match_string is not found, the content is added to the end. "
         "Automatically reindexes the file for semantic search."
     )
-    inputs = {
-        "target_file": {
-            "type": "string",
-            "description": "Relative path of the file in the knowledge base.",
-        },
-        "new_content": {
-            "type": "string",
-            "description": "Content to insert into the file.",
-        },
-        "insert_mode": {
-            "type": "string",
-            "description": "Content insertion position (default: 'end'):\n" +
-                          "• 'end': Append content to the end of the file\n" +
-                          "• 'before': Insert content before the line containing match_string\n" +
-                          "• 'after': Insert content after the line containing match_string\n" +
-                          "Note: 'before' and 'after' modes require match_string parameter",
-            "nullable": True,  # Required since it has a default in function signature
-        },
-        "match_string": {
-            "type": "string",
-            "description": "String to locate insertion point for 'before' or 'after' modes.",
-            "nullable": True,  # Required since it's optional (default=None)
-        },
-    }
-    output_type = "string"
+    args_schema: Type[BaseModel] = AppendToKnowledgeBaseFileInput
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    def __init__(self, repo_indexer: RepoIndexer):
-        super().__init__()
-        self.root = Path(repo_indexer.root)
-        self.repo_indexer = repo_indexer
+    root: Any = None
+    repo_indexer: Any = None
+
+    def __init__(self, repo_indexer: RepoIndexer, **kwargs):
+        super().__init__(
+            root=Path(repo_indexer.root),
+            repo_indexer=repo_indexer,
+            **kwargs,
+        )
 
     def _safe_kb_path(self, path: str) -> Path:
         abs_root = self.root.resolve()
@@ -230,7 +230,7 @@ class AppendToKnowledgeBaseFile(Tool):
             )
         return abs_path
 
-    def forward(
+    def _run(
         self,
         target_file: str,
         new_content: str,

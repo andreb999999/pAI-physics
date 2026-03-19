@@ -10,8 +10,9 @@ import json
 import os
 import numpy as np
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Union, Tuple
-from smolagents import Tool
+from typing import List, Dict, Any, Optional, Union, Tuple, Type
+from langchain_core.tools import BaseTool
+from pydantic import BaseModel, Field, ConfigDict
 
 # Handle matplotlib import with fallback
 try:
@@ -34,11 +35,20 @@ except ImportError:
     PIL_AVAILABLE = False
 
 
-class MultiPanelCompositionTool(Tool):
-    name = "multi_panel_composition_tool"
-    description = """
+class MultiPanelCompositionToolInput(BaseModel):
+    composition_specification: str = Field(description="Specification for the multi-panel composition. Can be: plot file paths (comma-separated), layout description, or mixed specification with both existing plots and data for new plots")
+    layout_type: Optional[str] = Field(default="2x2", description="Panel layout arrangement (default: '2x2'): '2x2', '3x2', '2x3', '3x3', '1x4', '4x1', 'custom', 'asymmetric'")
+    panel_labels: Optional[str] = Field(default="letters", description="Panel labeling scheme (default: 'letters'): 'letters', 'numbers', 'roman', 'none'")
+    figure_title: Optional[str] = Field(default=None, description="Overall figure title (optional)")
+    panel_titles: Optional[str] = Field(default=None, description="Comma-separated list of individual panel titles (optional)")
+    output_filename: Optional[str] = Field(default=None, description="Output filename for the composed figure (default: auto-generated)")
+
+
+class MultiPanelCompositionTool(BaseTool):
+    name: str = "multi_panel_composition_tool"
+    description: str = """
     Create publication-quality multi-panel figure compositions from existing plots and data.
-    
+
     This tool specializes in combining multiple visualizations into unified layouts including:
     - Multi-panel grid layouts (2x2, 3x2, custom arrangements)
     - Figure composition with consistent styling and labeling
@@ -46,7 +56,7 @@ class MultiPanelCompositionTool(Tool):
     - Panel labeling (A, B, C, etc.) for academic publications
     - Unified legends and color schemes across panels
     - Professional typography and formatting
-    
+
     Key capabilities:
     - Combine existing plot images into multi-panel layouts
     - Generate new plots and arrange them systematically
@@ -54,91 +64,44 @@ class MultiPanelCompositionTool(Tool):
     - Handle different plot types and scales uniformly
     - Support custom layouts and aspect ratios
     - Generate comprehensive figure captions
-    
+
     Layout options:
     - Grid layouts: 2x2, 3x2, 2x3, 3x3, custom grid dimensions
     - Asymmetric layouts: combined panels, different sizes
     - Comparison layouts: side-by-side, stacked arrangements
     - Timeline layouts: sequential panel arrangements
-    
+
     Input sources:
     - Existing plot image files (PNG, JPG, PDF)
     - Data specifications for generating new plots within panels
     - Mixed approach: some existing plots, some generated on-demand
-    
+
     Use this tool when you need to create comprehensive figures that combine
     multiple related analyses or when journals require multi-panel layouts.
     """
-    
-    inputs = {
-        "composition_specification": {
-            "type": "string",
-            "description": "Specification for the multi-panel composition. Can be: plot file paths (comma-separated), layout description, or mixed specification with both existing plots and data for new plots"
-        },
-        "layout_type": {
-            "type": "string",
-            "description": "Panel layout arrangement (default: '2x2'):\n" +
-                          "• '2x2': 4 panels in 2 rows, 2 columns\n" +
-                          "• '3x2': 6 panels in 3 rows, 2 columns\n" +
-                          "• '2x3': 6 panels in 2 rows, 3 columns\n" +
-                          "• '3x3': 9 panels in 3 rows, 3 columns\n" +
-                          "• '1x4': 4 panels in single row\n" +
-                          "• '4x1': 4 panels in single column\n" +
-                          "• 'custom': Auto-determine optimal layout based on panel count\n" +
-                          "• 'asymmetric': Flexible layout with varying panel sizes",
-            "nullable": True
-        },
-        "panel_labels": {
-            "type": "string",
-            "description": "Panel labeling scheme (default: 'letters'):\n" +
-                          "• 'letters': Uppercase letters (A, B, C, D...) - standard for academic papers\n" +
-                          "• 'numbers': Sequential numbers (1, 2, 3, 4...)\n" +
-                          "• 'roman': Lowercase Roman numerals (i, ii, iii, iv...)\n" +
-                          "• 'none': No panel labels",
-            "nullable": True
-        },
-        "figure_title": {
-            "type": "string",
-            "description": "Overall figure title (optional)",
-            "nullable": True
-        },
-        "panel_titles": {
-            "type": "string",
-            "description": "Comma-separated list of individual panel titles (optional)",
-            "nullable": True
-        },
-        "output_filename": {
-            "type": "string",
-            "description": "Output filename for the composed figure (default: auto-generated)",
-            "nullable": True
-        }
-    }
-    
-    outputs = {
-        "composition_results": {
-            "type": "string",
-            "description": "JSON containing composition results and generated figure path"
-        }
-    }
-    
-    output_type = "string"
-    
-    def __init__(self, model=None, working_dir: Optional[str] = None):
+    args_schema: Type[BaseModel] = MultiPanelCompositionToolInput
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    model: Any = None
+    working_dir: Optional[str] = None
+
+    def __init__(self, model=None, working_dir: Optional[str] = None, **kwargs):
         """Initialize MultiPanelCompositionTool.
-        
+
         Args:
             model: LLM model for intelligent layout decisions (optional)
             working_dir: Working directory for workspace-aware file access
         """
-        super().__init__()
         from ..model_utils import get_raw_model
-        self.model = get_raw_model(model)
+        resolved_model = get_raw_model(model)
         # Convert to absolute path to prevent nested directory issues
-        self.working_dir = os.path.abspath(working_dir) if working_dir else None
-        
-    def forward(self, composition_specification: str, layout_type: str = "2x2",
-                panel_labels: str = "letters", figure_title: str = None,
-                panel_titles: str = None, output_filename: str = None) -> str:
+        resolved_working_dir = os.path.abspath(working_dir) if working_dir else None
+        super().__init__(model=resolved_model, working_dir=resolved_working_dir, **kwargs)
+
+    def _run(self, composition_specification: str, layout_type: Optional[str] = "2x2",
+             panel_labels: Optional[str] = "letters", figure_title: Optional[str] = None,
+             panel_titles: Optional[str] = None, output_filename: Optional[str] = None) -> str:
         """
         Create multi-panel figure composition from plots and data.
         

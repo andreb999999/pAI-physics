@@ -1,3 +1,6 @@
+# Minimal cross-platform environment (core runtime only).
+# For full capabilities (docs, web, experiment, latex), use:
+#   ./scripts/bootstrap.sh <env_name> full
 name: consortium
 channels:
   - conda-forge

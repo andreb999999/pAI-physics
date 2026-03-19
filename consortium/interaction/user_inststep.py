@@ -1,5 +1,5 @@
 """
-UserInstructionStep — LangGraph equivalent of the old smolagents TaskStep subclass.
+UserInstructionStep — packages live-steering instructions for graph state injection.
 
 Used by callback_tools.py to package a live-steering instruction from the user
 socket into a form that can be injected into ResearchState.messages.

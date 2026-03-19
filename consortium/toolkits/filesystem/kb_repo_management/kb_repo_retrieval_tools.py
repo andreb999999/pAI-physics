@@ -3,56 +3,69 @@ This module contains tools for semantic and keyword search in a knowledge base s
 The knowledge base is organized into folders and files, allowing for efficient retrieval of information.
 """
 
-from smolagents.tools import Tool
+from langchain_core.tools import BaseTool
+from pydantic import BaseModel, Field, ConfigDict
+from typing import Any, Type
 from consortium.toolkits.filesystem.kb_repo_management.repo_indexer import RepoIndexer
 import os
 import shutil
 from pathlib import Path
 import time
 
-class SemanticSearchKnowledgeBase(Tool):
-    name = "semantic_search_knowledge_base"
-    description = (
+
+class SemanticSearchKnowledgeBaseInput(BaseModel):
+    query: str = Field(description="The search query.")
+
+
+class SemanticSearchKnowledgeBase(BaseTool):
+    name: str = "semantic_search_knowledge_base"
+    description: str = (
         "Perform a semantic search in the knowledge base. "
         "Returns the path and content of most relevant files or code snippets for a given query."
     )
-    inputs = {"query": {"type": "string", "description": "The search query."}}
-    output_type = "string"
+    args_schema: Type[BaseModel] = SemanticSearchKnowledgeBaseInput
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    def __init__(self, repo_indexer: RepoIndexer):
-        super().__init__()
-        self.repo_indexer = repo_indexer
+    repo_indexer: Any = None
 
-    def forward(self, query: str) -> str:
+    def __init__(self, repo_indexer: RepoIndexer, **kwargs):
+        super().__init__(repo_indexer=repo_indexer, **kwargs)
+
+    def _run(self, query: str) -> str:
         # return self.repo_indexer.get_query_results(query, k=3)
         return self.repo_indexer.get_unique_query_results(query, k=3)
 
-class KeywordSearchKnowledgeBase(Tool):
-    name = "keyword_search_knowledge_base"
-    description = (
+
+class KeywordSearchKnowledgeBaseInput(BaseModel):
+    path: str = Field(description="Path to the file or folder to search in.")
+    keyword: str = Field(description="Keyword to search for.")
+    context_lines: int = Field(description="Number of lines to include before and after each match.")
+
+
+class KeywordSearchKnowledgeBase(BaseTool):
+    name: str = "keyword_search_knowledge_base"
+    description: str = (
         "Search for a keyword in a plain text file or recursively in all plain text files within a folder. "
         "Returns matching lines with file names, line numbers and context lines before and after each match. "
         "Only supports plain text files (e.g., .txt, .py, .md). Not suitable for binary formats like .pdf, .docx, .xlsx."
     )
-    inputs = {
-        "path": {"type": "string", "description": "Path to the file or folder to search in."},
-        "keyword": {"type": "string", "description": "Keyword to search for."},
-        "context_lines": {
-            "type": "integer",
-            "description": "Number of lines to include before and after each match."
-        }
-    }
-    output_type = "string"
+    args_schema: Type[BaseModel] = KeywordSearchKnowledgeBaseInput
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    ALLOWED_EXTENSIONS = {".py", ".md", ".txt"}
-    MAX_SIZE = 2 * 1024 * 1024  # 2 MB
+    ALLOWED_EXTENSIONS: Any = {".py", ".md", ".txt"}
+    MAX_SIZE: int = 2 * 1024 * 1024  # 2 MB
 
-    def __init__(self, repo_indexer: RepoIndexer, max_search_time: int = 10):
-        super().__init__()
-        self.knowledge_base_dir = Path(repo_indexer.root)
-        self.max_search_time = max_search_time  # seconds
+    knowledge_base_dir: Any = None
+    max_search_time: int = 10
 
-    def forward(self, path: str, keyword: str, context_lines: int) -> str:
+    def __init__(self, repo_indexer: RepoIndexer, max_search_time: int = 10, **kwargs):
+        super().__init__(
+            knowledge_base_dir=Path(repo_indexer.root),
+            max_search_time=max_search_time,
+            **kwargs,
+        )
+
+    def _run(self, path: str, keyword: str, context_lines: int) -> str:
         # Disallow absolute paths
         if os.path.isabs(path):
             return "Error: Absolute paths are not allowed. Please specify a relative path within the knowledge base. For example use '.' to search in the root of knowledge base."
@@ -125,25 +138,34 @@ class KeywordSearchKnowledgeBase(Tool):
 
         return f"--- Matches in [{display_path}] ---\n" + "\n".join(formatted_output)
 
-class CopyFromKnowledgeBase(Tool): 
-    name = "copy_from_knowledge_base"
-    description = (
+
+class CopyFromKnowledgeBaseInput(BaseModel):
+    source_path: str = Field(description="Relative path in the knowledge base.")
+    destination_path: str = Field(description="Relative path in the working directory.")
+    overwrite: bool = Field(description="Whether to overwrite existing files or merge folders.")
+
+
+class CopyFromKnowledgeBase(BaseTool):
+    name: str = "copy_from_knowledge_base"
+    description: str = (
         "Copy a file or folder from the knowledge base to the working directory. "
         "If `overwrite=True`, it will replace existing files or merge directories, overwriting same-name files. "
         "If `overwrite=False`, it will avoid conflicts by adding a numeric suffix to the destination name."
     )
-    inputs = {
-        "source_path": {"type": "string", "description": "Relative path in the knowledge base."},
-        "destination_path": {"type": "string", "description": "Relative path in the working directory."},
-        "overwrite": {"type": "boolean", "description": "Whether to overwrite existing files or merge folders."}
-    }
-    output_type = "string"
+    args_schema: Type[BaseModel] = CopyFromKnowledgeBaseInput
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    def __init__(self, repo_indexer: RepoIndexer, working_dir: str):
-        super().__init__()
-        self.repo_indexer = repo_indexer
-        self.working_dir = Path(working_dir)
-        self.root = Path(repo_indexer.root)
+    repo_indexer: Any = None
+    working_dir: Any = None
+    root: Any = None
+
+    def __init__(self, repo_indexer: RepoIndexer, working_dir: str, **kwargs):
+        super().__init__(
+            repo_indexer=repo_indexer,
+            working_dir=Path(working_dir),
+            root=Path(repo_indexer.root),
+            **kwargs,
+        )
 
     def _get_unique_path(self, base_path: Path) -> Path:
         """Returns a path with a numeric suffix that avoids conflict."""
@@ -168,13 +190,13 @@ class CopyFromKnowledgeBase(Tool):
             raise PermissionError("Access outside the working directory is not allowed.")
         return abs_path
 
-    def forward(self, source_path: str, destination_path: str, overwrite: bool) -> str:
+    def _run(self, source_path: str, destination_path: str, overwrite: bool) -> str:
         try:
             src = self._safe_kb_path(source_path)
             dst = self._safe_working_path(destination_path)
         except PermissionError as e:
             return str(e)
-        
+
         if not src.exists():
             return f"Error: source path '{source_path}' does not exist in the knowledge base."
 

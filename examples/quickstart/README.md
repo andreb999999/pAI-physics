@@ -20,7 +20,7 @@ It is designed to be **cheap, fast, and self-contained** — no LaTeX installati
 
 ## Running It
 
-From the repo root (`consortium/`):
+From the repo root:
 
 ```bash
 # Validate your setup first (free)

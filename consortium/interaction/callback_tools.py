@@ -22,7 +22,7 @@ from .user_inststep import UserInstructionStep
 
 
 # ---------------------------------------------------------------------------
-# TCP socket listener (unchanged from smolagents version)
+# TCP socket listener
 # ---------------------------------------------------------------------------
 
 def setup_user_input_socket(host: str = "127.0.0.1", port: int = 5001) -> Queue:

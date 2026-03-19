@@ -1,0 +1,61 @@
+# =============================================================================
+# OpenPI Campaign Template
+# =============================================================================
+# Copy this file and customize for your research:
+#   cp campaign_template.yaml my_campaign.yaml
+#
+# Then initialize:
+#   python scripts/campaign_heartbeat.py --campaign my_campaign.yaml --init
+
+name: "My Research Campaign"
+workspace_root: "results/my_campaign_v1"        # MUST be unique per campaign
+
+heartbeat_interval_minutes: 15
+
+# --- Circuit Breakers ---
+max_idle_ticks: 6                               # auto-exit after 6 no-op heartbeat ticks
+max_campaign_hours: 96                          # 4-day hard limit
+counsel_model_timeout_seconds: 3600
+
+# --- Dynamic Planning ---
+# The planner generates a stage DAG from your task file using multi-model counsel.
+planning:
+  enabled: true
+  base_task_file: automation_tasks/my_discovery_task.txt   # <-- CHANGE THIS to your task file
+  max_stages: 6                                 # maximum non-paper stages
+  max_parallel: 2                               # maximum concurrent stages
+  human_review: true                            # pause for plan approval before execution
+  planning_budget_usd: 5.0
+  planning_timeout_seconds: 600
+
+# Leave empty for dynamic planning (recommended):
+stages: []
+
+# --- Autonomous Repair ---
+# If a stage fails, the repair agent attempts to fix it automatically.
+repair:
+  enabled: true
+  max_attempts: 2
+  launcher: local                               # "local" (default) or "slurm" for HPC
+  claude_binary: auto                           # auto-detect Claude CLI
+  model: claude-sonnet-4-6
+  effort: max
+  budget_usd: 10.0
+  timeout_seconds: 600
+  allowed_actions:
+    - edit_code
+    - fix_config
+    - generate_missing_artifacts
+    - install_dependencies
+  two_phase: true                               # plan first, then execute
+  plan_model: claude-sonnet-4-6
+  min_review_score: 7
+
+# --- Notifications (optional) ---
+# Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env to enable.
+notification:
+  telegram_bot_token: "${TELEGRAM_BOT_TOKEN}"
+  telegram_chat_id: "${TELEGRAM_CHAT_ID}"
+  on_stage_complete: true
+  on_failure: true
+  on_heartbeat: false                           # set true for progress pings every 15 min
