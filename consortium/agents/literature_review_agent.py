@@ -26,6 +26,11 @@ try:
 except (ImportError, ModuleNotFoundError):
     OpenDeepSearchTool = None
 
+try:
+    from ..toolkits.search.deep_research.deep_research_tool import DeepResearchNoveltyScanTool
+except (ImportError, ModuleNotFoundError):
+    DeepResearchNoveltyScanTool = None
+
 
 def get_tools(workspace_dir: Optional[str], model_id: str) -> list:
     tools = [
@@ -41,6 +46,10 @@ def get_tools(workspace_dir: Optional[str], model_id: str) -> list:
         tools.insert(2, OpenDeepSearchTool(model_name=model_id))
     else:
         print("⚠️ OpenDeepSearchTool disabled for LiteratureReviewAgent.")
+    if DeepResearchNoveltyScanTool is not None:
+        tools.insert(3, DeepResearchNoveltyScanTool(model_name=model_id))
+    else:
+        print("⚠️ DeepResearchNoveltyScanTool disabled for LiteratureReviewAgent.")
     if workspace_dir:
         tools += [
             SeeFile(working_dir=workspace_dir),

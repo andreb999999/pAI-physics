@@ -63,15 +63,39 @@ _DUALITY_FILE_TRUNCATE = 8000
 # ---------------------------------------------------------------------------
 
 def _extract_verdict(text: str) -> str:
-    """Scan persona output for ACCEPT or REJECT verdict.
+    """Extract ACCEPT/REJECT verdict from persona output.
 
-    Returns "ACCEPT", "REJECT", or "UNKNOWN" if neither is found.
+    Uses a two-pass approach:
+    1. Look for a structured ``VERDICT: ACCEPT/REJECT`` marker near the end
+       of the text (preferred — reliable and unambiguous).
+    2. Fall back to a full-text scan with false-positive filtering.
+
+    Returns ``"ACCEPT"``, ``"REJECT"``, or ``"UNKNOWN"`` if neither is found.
     """
-    upper = text.upper()
-    # Look for explicit verdict markers first
-    if re.search(r"\bACCEPT\b", upper):
+    if not text:
+        return "UNKNOWN"
+
+    # Pass 1: structured marker in the last 500 chars
+    tail = text[-500:].upper()
+    structured = re.search(r"(?:FINAL\s+)?VERDICT\s*:\s*(ACCEPT|REJECT)", tail)
+    if structured:
+        return structured.group(1)
+
+    # Pass 2: full-text scan with false-positive pattern removal
+    scan_text = text.upper()
+    _FALSE_POSITIVE_PATTERNS = [
+        r"REJECT THE (?:PREMISE|CLAIM|ASSUMPTION|FRAMING)",
+        r"WOULD REJECT THE",
+        r"CANNOT ACCEPT",
+        r"NOT ACCEPT",
+        r"REFUSE TO ACCEPT",
+    ]
+    for pattern in _FALSE_POSITIVE_PATTERNS:
+        scan_text = re.sub(pattern, "", scan_text)
+
+    if re.search(r"\bACCEPT\b", scan_text):
         return "ACCEPT"
-    if re.search(r"\bREJECT\b", upper):
+    if re.search(r"\bREJECT\b", scan_text):
         return "REJECT"
     return "UNKNOWN"
 
@@ -122,6 +146,7 @@ def run_persona_council(
     synthesis_model: str = DEFAULT_SYNTHESIS_MODEL,
     budget_manager: Optional[Any] = None,
     timeout_seconds: int = 600,
+    max_post_vote_retries: int = 1,
 ) -> Tuple[str, Dict[str, str]]:
     """
     Run a 3-persona debate to synthesize a research proposal.
@@ -142,6 +167,8 @@ def run_persona_council(
         If provided, token usage is recorded for every LLM call.
     timeout_seconds : int
         Per-call timeout for ThreadPoolExecutor futures (default 600).
+    max_post_vote_retries : int
+        Max re-synthesis attempts if post-synthesis vote rejects (default 1).
 
     Returns
     -------
@@ -360,7 +387,6 @@ def run_persona_council(
         vote_verdict = _extract_verdict(vote_text)
         return idx, vote_verdict, vote_text
 
-    max_post_vote_retries = 1
     for post_vote_attempt in range(max_post_vote_retries + 1):
         post_verdicts: Dict[str, str] = {}
         post_vote_texts: Dict[str, str] = {}
@@ -427,6 +453,15 @@ def run_persona_council(
             print(f"[persona_council] Re-synthesis failed ({e}), keeping original proposal.")
             verdicts = post_verdicts
             break
+
+    # Warn about UNKNOWN verdicts (parse failures or errors)
+    unknown_personas = [name for name, v in verdicts.items() if v == "UNKNOWN"]
+    if unknown_personas:
+        print(
+            f"[persona_council] WARNING: Phase 4 — {len(unknown_personas)} persona(s) "
+            f"returned UNKNOWN verdict (parse failure or error): {unknown_personas}. "
+            f"These were not counted toward re-synthesis threshold."
+        )
 
     print(f"[persona_council] Complete. Final verdicts: {verdicts}")
     return proposal_text, verdicts
@@ -589,6 +624,7 @@ def create_persona_council_node(
     synthesis_model: str = DEFAULT_SYNTHESIS_MODEL,
     budget_manager: Optional[Any] = None,
     timeout_seconds: int = 600,
+    max_post_vote_retries: int = 1,
 ) -> Callable:
     """
     Return a LangGraph node callable that runs the persona council.
@@ -608,6 +644,7 @@ def create_persona_council_node(
             synthesis_model=synthesis_model,
             budget_manager=budget_manager,
             timeout_seconds=timeout_seconds,
+            max_post_vote_retries=max_post_vote_retries,
         )
 
         # Write artifacts to paper_workspace

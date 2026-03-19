@@ -544,10 +544,10 @@ def _read_file_safe(path: str, max_chars: int = 20000) -> str:
 
 
 def build_lit_review_gate_node(workspace_dir: str) -> Any:
-    """Gate after lit review: checks if research direction is feasible.
+    """Gate after lit review: checks novelty flags then feasibility.
 
     Routes to:
-      - ``persona_council`` if infeasible and retries remain
+      - ``persona_council`` if novelty-blocked or infeasible (retries remain)
       - ``brainstorm_agent`` if feasible or retries exhausted
     """
 
@@ -571,8 +571,100 @@ def build_lit_review_gate_node(workspace_dir: str) -> Any:
                 "agent_task": None,
             }
 
+        # ------------------------------------------------------------------
+        # Novelty check — read novelty_flags.json (produced by Step 3b)
+        # ------------------------------------------------------------------
+        novelty_path = os.path.join(paper_ws, "novelty_flags.json")
+        novelty_text = _read_file_safe(novelty_path, 10000)
+        novelty_data = None
+        blocking_claims = []
+
+        if novelty_text:
+            try:
+                novelty_data = json.loads(novelty_text)
+                blocking_claims = [
+                    c for c in novelty_data.get("claims", [])
+                    if c.get("blocking", False)
+                ]
+            except (json.JSONDecodeError, TypeError) as e:
+                print(f"[lit_review_gate] Failed to parse novelty_flags.json: {e}")
+
+        # Gate on blocking novelty claims BEFORE the LLM feasibility call
+        if blocking_claims:
+            blocking_summary = "; ".join(
+                f"[{c.get('claim_id', '?')}] "
+                f"{c.get('claim_text', '')[:150]}... "
+                f"(status: {c.get('status', '?')}, "
+                f"evidence: {len(c.get('evidence', []))} sources)"
+                for c in blocking_claims
+            )
+
+            if attempts >= max_attempts:
+                print(
+                    f"Warning: lit_review_gate — blocking novelty claims after "
+                    f"{max_attempts} attempts, proceeding to brainstorm_agent."
+                )
+                return {
+                    "current_agent": "brainstorm_agent",
+                    "lit_review_feasibility": {
+                        "feasible": False,
+                        "reason": f"NOVELTY BLOCKED: {blocking_summary}",
+                    },
+                    "agent_task": (
+                        f"NOVELTY WARNING (max retries reached): Some proposed claims "
+                        f"may not be novel. Proceed but explicitly acknowledge and "
+                        f"work around: {blocking_summary}"
+                    ),
+                }
+
+            return {
+                "current_agent": "persona_council",
+                "lit_review_attempts": attempts + 1,
+                "lit_review_feasibility": {
+                    "feasible": False,
+                    "reason": f"NOVELTY BLOCKED: {blocking_summary}",
+                },
+                "agent_task": (
+                    f"NOVELTY GATE REJECTION (attempt {attempts + 1}/{max_attempts}):\n"
+                    f"The literature review found that one or more core claims in your "
+                    f"research proposal are NOT novel — they have already been proven or "
+                    f"established in the existing literature.\n\n"
+                    f"Blocking claims:\n{blocking_summary}\n\n"
+                    f"You MUST substantially reformulate or replace the blocking claims. "
+                    f"Options:\n"
+                    f"1. Strengthen the claim (generalize, relax assumptions, extend to "
+                    f"new settings)\n"
+                    f"2. Replace the claim with a genuinely open related problem\n"
+                    f"3. Reframe the contribution as a new proof technique for a known "
+                    f"result (only if the technique itself is novel)\n"
+                    f"4. Pivot the research direction entirely\n\n"
+                    f"Read `paper_workspace/novelty_flags.json` for full evidence."
+                ),
+            }
+
+        # ------------------------------------------------------------------
         # LLM feasibility assessment
+        # ------------------------------------------------------------------
         import litellm as _litellm
+
+        # Build novelty context for the feasibility prompt
+        novelty_context = ""
+        if novelty_data:
+            open_count = sum(
+                1 for c in novelty_data.get("claims", [])
+                if c.get("status") == "OPEN"
+            )
+            partial_count = sum(
+                1 for c in novelty_data.get("claims", [])
+                if c.get("status") == "PARTIAL"
+            )
+            novelty_context = (
+                f"\n\nNOVELTY ASSESSMENT SUMMARY:\n"
+                f"- Fully open claims: {open_count}\n"
+                f"- Partially resolved claims: {partial_count}\n"
+                f"- Blocking (known/equivalent) claims: {len(blocking_claims)}\n"
+                f"Overall: {novelty_data.get('overall_novelty_assessment', 'N/A')}"
+            )
 
         prompt = (
             "You are a research feasibility assessor. Given the literature review below, "
@@ -581,9 +673,12 @@ def build_lit_review_gate_node(workspace_dir: str) -> Any:
             "1. The core idea has already been thoroughly explored (no room for contribution)\n"
             "2. The required methods/data are fundamentally unavailable\n"
             "3. The theoretical foundations have known fatal flaws\n"
-            "4. The scope is impossibly broad for a single research effort\n\n"
+            "4. The scope is impossibly broad for a single research effort\n"
+            "5. The core proposed claims are already proven results with no novel angle "
+            "(check the NOVELTY ASSESSMENT SUMMARY below if available)\n\n"
             f"LITERATURE REVIEW:\n{lit_text[:15000]}\n\n"
-            f"SOURCES:\n{sources_text[:5000]}\n\n"
+            f"SOURCES:\n{sources_text[:5000]}"
+            f"{novelty_context}\n\n"
             'Respond in JSON (no markdown fences): {"feasible": true/false, "reason": "one paragraph explanation"}'
         )
         try:
@@ -984,6 +1079,7 @@ def build_research_graph_v2(
     persona_council_specs: Optional[List[dict]] = None,
     persona_debate_rounds: int = 3,
     persona_synthesis_model: str = "claude-opus-4-6",
+    persona_max_post_vote_retries: int = 1,
     duality_check_model: str = "claude-opus-4-6",
     enable_duality_check: bool = True,
     budget_manager: Optional[Any] = None,
@@ -1075,6 +1171,7 @@ def build_research_graph_v2(
             persona_specs=persona_council_specs,
             max_debate_rounds=persona_debate_rounds,
             synthesis_model=persona_synthesis_model,
+            max_post_vote_retries=persona_max_post_vote_retries,
             budget_manager=budget_manager,
         ),
         "literature_review_agent": _wrap(

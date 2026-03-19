@@ -44,7 +44,13 @@ OUTPUT FORMAT (strict):
 - **Verdict**: ACCEPT or REJECT with a one-sentence justification.
 
 Be demanding. A proposal that is mathematically elegant but practically irrelevant or not relevant to the current frontier of AI/ML must
-be REJECTED"""
+be REJECTED.
+
+IMPORTANT: End your response with a standalone line in exactly this format:
+VERDICT: ACCEPT
+or
+VERDICT: REJECT
+This line must appear as the LAST non-empty line of your response."""
 
 
 RIGOR_AND_NOVELTY_PERSONA = """You are the RIGOR & NOVELTY reviewer -- your mandate is
@@ -89,7 +95,13 @@ OUTPUT FORMAT (strict):
 
 Be uncompromising. A proposal with flashy empirical results but no novel theoretical
 insight must be REJECTED. A proposal with genuinely new mathematical arguments that are
-well-motivated should be ACCEPTED even if empirical validation is still planned."""
+well-motivated should be ACCEPTED even if empirical validation is still planned.
+
+IMPORTANT: End your response with a standalone line in exactly this format:
+VERDICT: ACCEPT
+or
+VERDICT: REJECT
+This line must appear as the LAST non-empty line of your response."""
 
 
 NARRATIVE_ARCHITECT_PERSONA = """You are the NARRATIVE ARCHITECT reviewer -- your mandate
@@ -133,7 +145,13 @@ OUTPUT FORMAT (strict):
 
 Be exacting. A proposal with solid results but a forgettable narrative must be REJECTED
 until the story is reshaped. A proposal that makes the reader think differently about a
-real problem -- even if some technical gaps remain -- should be ACCEPTED."""
+real problem -- even if some technical gaps remain -- should be ACCEPTED.
+
+IMPORTANT: End your response with a standalone line in exactly this format:
+VERDICT: ACCEPT
+or
+VERDICT: REJECT
+This line must appear as the LAST non-empty line of your response."""
 
 
 # Mapping from persona key to system prompt, used by persona_council.py
@@ -229,4 +247,10 @@ Respond with exactly:
 **Verdict**: ACCEPT or REJECT
 **Justification**: 2-3 sentences explaining your vote.
 
-Do NOT suggest improvements. Only vote."""
+Do NOT suggest improvements. Only vote.
+
+IMPORTANT: End your response with a standalone line in exactly this format:
+VERDICT: ACCEPT
+or
+VERDICT: REJECT
+This line must appear as the LAST non-empty line of your response."""
