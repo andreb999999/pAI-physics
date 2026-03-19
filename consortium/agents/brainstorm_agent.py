@@ -20,11 +20,20 @@ from ..toolkits.writeup.latex_syntax_checker_tool import LaTeXSyntaxCheckerTool
 from ..toolkits.writeup.vlm_document_analysis_tool import VLMDocumentAnalysisTool
 from ..toolkits.code_execution_tool import PythonCodeExecutionTool
 
+try:
+    from ..toolkits.search.deep_research.deep_research_tool import DeepResearchNoveltyScanTool
+except (ImportError, ModuleNotFoundError):
+    DeepResearchNoveltyScanTool = None
+
 
 def get_tools(workspace_dir: Optional[str], model_id: str) -> list:
     tools = [
         PaperSearchTool(),
         FetchArxivPapersTool(working_dir=workspace_dir),
+    ]
+    if DeepResearchNoveltyScanTool is not None:
+        tools.append(DeepResearchNoveltyScanTool(model_name=model_id))
+    tools += [
         VLMDocumentAnalysisTool(model=model_id, working_dir=workspace_dir),
         LaTeXGeneratorTool(model=model_id, working_dir=workspace_dir),
         LaTeXCompilerTool(model=model_id, working_dir=workspace_dir),

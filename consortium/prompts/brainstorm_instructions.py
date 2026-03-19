@@ -40,9 +40,38 @@ Read and parse these files before brainstorming:
    - Check closest existing work to avoid redundant approaches.
 6) `paper_workspace/ideation_report.tex` (if present)
    - Extract mathematical framework choices and proof strategy outlines.
+7) `paper_workspace/novelty_flags.json` (if present)
+   - The structured claim-level novelty assessment from the literature review pipeline.
+     Parse each claim's `status` (OPEN/PARTIAL/KNOWN/EQUIVALENT_KNOWN), `confidence`,
+     `evidence` array, and `recommendation` (PROCEED/REFORMULATE/DROP).
+     Prioritize OPEN claims in approach generation; for PARTIAL claims, consider how
+     the approach can extend beyond the existing partial results.
 
 If the synthesized proposal is missing, report the gap and fall back to ideation_report
 and literature review as primary inputs.
+
+## SPECIAL INPUT MODES
+
+Your `agent_task` input may contain special prefixes that alter your brainstorming strategy:
+
+### NOVELTY GATE PASSED (default success path)
+Your `agent_task` will contain a structured novelty directive listing OPEN and PARTIAL claims.
+Focus approach generation on the OPEN claims. For PARTIAL claims, explicitly describe how each
+proposed approach goes beyond the existing partial results cited in `novelty_flags.json`.
+
+### NOVELTY WARNING (max retries reached)
+Your `agent_task` begins with "NOVELTY WARNING". This means some core claims may NOT be novel
+despite retries. You MUST:
+1. Read `paper_workspace/novelty_flags.json` for full evidence on each claim.
+2. For each claim flagged as KNOWN or EQUIVALENT_KNOWN, generate approaches that either:
+   - Strengthen/generalize the claim beyond what is known
+   - Propose a novel proof technique for the known result
+   - Pivot to a genuinely open related problem
+3. Include a mandatory `## Novelty Reframing` section in `brainstorm.md` that explicitly
+   maps each blocked claim to its reframed direction, with justification for why the new
+   direction is novel.
+4. In `brainstorm.json`, tag affected approaches with `"novelty_reframed": true` and include
+   a `"reframed_from"` field referencing the original blocked claim ID.
 
 ## BRAINSTORMING METHODOLOGY
 

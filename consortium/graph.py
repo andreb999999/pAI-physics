@@ -543,6 +543,52 @@ def _read_file_safe(path: str, max_chars: int = 20000) -> str:
         return ""
 
 
+def _build_brainstorm_novelty_directive(novelty_data: dict) -> str:
+    """Build a structured novelty directive for the brainstorm agent.
+
+    Extracts OPEN and PARTIAL claims from novelty_flags.json data and
+    formats them into an actionable directive so the brainstorm agent
+    starts with rich context rather than a single summary sentence.
+    """
+    lines = ["NOVELTY GATE PASSED — structured claim summary from literature review:\n"]
+
+    claims = novelty_data.get("claims", [])
+    open_claims = [c for c in claims if c.get("status") == "OPEN"]
+    partial_claims = [c for c in claims if c.get("status") == "PARTIAL"]
+
+    if open_claims:
+        lines.append("CONFIRMED OPEN CLAIMS (prioritize these):")
+        for c in open_claims:
+            cid = c.get("claim_id", "?")
+            text = c.get("claim_text", "")[:200]
+            conf = c.get("confidence", "?")
+            rec = c.get("recommendation", "?")
+            lines.append(f"  [{cid}] {text} (confidence: {conf}, recommendation: {rec})")
+        lines.append("")
+
+    if partial_claims:
+        lines.append("PARTIALLY RESOLVED CLAIMS (extend beyond existing partial results):")
+        for c in partial_claims:
+            cid = c.get("claim_id", "?")
+            text = c.get("claim_text", "")[:200]
+            conf = c.get("confidence", "?")
+            rec = c.get("recommendation", "?")
+            ev_count = len(c.get("evidence", []))
+            lines.append(
+                f"  [{cid}] {text} (confidence: {conf}, recommendation: {rec}, "
+                f"{ev_count} evidence sources)"
+            )
+        lines.append("")
+
+    overall = novelty_data.get("overall_novelty_assessment", "N/A")
+    lines.append(f"OVERALL ASSESSMENT: {overall}")
+    lines.append(
+        "\nRead `paper_workspace/novelty_flags.json` for full evidence on each claim."
+    )
+
+    return "\n".join(lines)
+
+
 def build_lit_review_gate_node(workspace_dir: str, max_attempts: int = 2) -> Any:
     """Gate after lit review: checks novelty flags then feasibility.
 
@@ -704,10 +750,8 @@ def build_lit_review_gate_node(workspace_dir: str, max_attempts: int = 2) -> Any
             return {
                 "current_agent": "brainstorm_agent",
                 "lit_review_feasibility": {"feasible": True, "reason": reason},
-                "agent_task": (
-                    f"Novelty summary from literature review: "
-                    f"{novelty_data.get('overall_novelty_assessment', 'N/A')}"
-                ) if novelty_data else None,
+                "agent_task": _build_brainstorm_novelty_directive(novelty_data)
+                if novelty_data else None,
             }
 
         # Infeasible
