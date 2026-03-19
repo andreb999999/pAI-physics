@@ -57,6 +57,15 @@ DEFAULT_DUALITY_CHECK_MODEL = "claude-opus-4-6"
 # Max chars to read from each workspace file for duality check context.
 _DUALITY_FILE_TRUNCATE = 8000
 
+# False-positive patterns stripped before scanning for ACCEPT/REJECT verdicts.
+_FALSE_POSITIVE_PATTERNS = [
+    r"REJECT THE (?:PREMISE|CLAIM|ASSUMPTION|FRAMING)",
+    r"WOULD REJECT THE",
+    r"CANNOT ACCEPT",
+    r"NOT ACCEPT",
+    r"REFUSE TO ACCEPT",
+]
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -83,13 +92,6 @@ def _extract_verdict(text: str) -> str:
 
     # Pass 2: full-text scan with false-positive pattern removal
     scan_text = text.upper()
-    _FALSE_POSITIVE_PATTERNS = [
-        r"REJECT THE (?:PREMISE|CLAIM|ASSUMPTION|FRAMING)",
-        r"WOULD REJECT THE",
-        r"CANNOT ACCEPT",
-        r"NOT ACCEPT",
-        r"REFUSE TO ACCEPT",
-    ]
     for pattern in _FALSE_POSITIVE_PATTERNS:
         scan_text = re.sub(pattern, "", scan_text)
 

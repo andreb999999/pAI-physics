@@ -90,7 +90,10 @@ class DeepResearchNoveltyScanTool(BaseTool):
         """
         backend = os.getenv("DEEP_RESEARCH_BACKEND", "perplexity").lower()
 
-        if backend == "perplexity":
+        if self.model_name:
+            # Explicit model override takes precedence over env var defaults
+            model_id = self.model_name
+        elif backend == "perplexity":
             model_id = "perplexity/sonar-deep-research"
         else:
             model_id = os.getenv("DEEP_RESEARCH_OPENAI_MODEL", "o3")

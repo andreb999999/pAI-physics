@@ -164,9 +164,13 @@ Top-level type: JSON object with keys:
 Each claim object:
 - `claim_id`: string (e.g., "C1", "C2")
 - `claim_text`: string — verbatim or close paraphrase from research_proposal.md
-- `status`: "OPEN" | "PARTIAL" | "KNOWN" | "EQUIVALENT_KNOWN"
-- `blocking`: boolean — true if status is KNOWN or EQUIVALENT_KNOWN and the claim is a
-  core contribution (not a minor auxiliary result)
+- `status`: "OPEN" | "PARTIAL" | "KNOWN" | "EQUIVALENT_KNOWN" | "UNCERTAIN"
+  (UNCERTAIN means the deep research tool could not reach a conclusion — treat as
+  OPEN for gating purposes but flag for manual review)
+- `blocking`: boolean — MUST be true if status is KNOWN or EQUIVALENT_KNOWN AND the
+  claim appears in the "Core Hypotheses" or "Expected Contributions" sections of
+  research_proposal.md. Only set to false for auxiliary lemmas or intermediate results
+  that are not listed as contributions. When in doubt, set blocking to true.
 - `search_queries_used`: list of strings — the actual queries you ran
 - `evidence`: list of objects, each with:
     - `source`: citation key or URL

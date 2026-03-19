@@ -543,7 +543,7 @@ def _read_file_safe(path: str, max_chars: int = 20000) -> str:
         return ""
 
 
-def build_lit_review_gate_node(workspace_dir: str) -> Any:
+def build_lit_review_gate_node(workspace_dir: str, max_attempts: int = 2) -> Any:
     """Gate after lit review: checks novelty flags then feasibility.
 
     Routes to:
@@ -553,8 +553,6 @@ def build_lit_review_gate_node(workspace_dir: str) -> Any:
 
     def lit_review_gate_node(state: dict) -> dict:
         import re as _re
-
-        max_attempts = 2
         attempts = safe_int(state.get("lit_review_attempts", 0), 0)
 
         paper_ws = os.path.join(workspace_dir, "paper_workspace")
@@ -706,7 +704,10 @@ def build_lit_review_gate_node(workspace_dir: str) -> Any:
             return {
                 "current_agent": "brainstorm_agent",
                 "lit_review_feasibility": {"feasible": True, "reason": reason},
-                "agent_task": None,
+                "agent_task": (
+                    f"Novelty summary from literature review: "
+                    f"{novelty_data.get('overall_novelty_assessment', 'N/A')}"
+                ) if novelty_data else None,
             }
 
         # Infeasible
@@ -1080,6 +1081,7 @@ def build_research_graph_v2(
     persona_debate_rounds: int = 3,
     persona_synthesis_model: str = "claude-opus-4-6",
     persona_max_post_vote_retries: int = 1,
+    lit_review_max_attempts: int = 2,
     duality_check_model: str = "claude-opus-4-6",
     enable_duality_check: bool = True,
     budget_manager: Optional[Any] = None,
@@ -1178,7 +1180,7 @@ def build_research_graph_v2(
             build_literature_review_node(_m("literature_review_agent"), workspace_dir, authorized_imports, **counsel_kwargs),
             "literature_review_agent",
         ),
-        "lit_review_gate": build_lit_review_gate_node(workspace_dir),
+        "lit_review_gate": build_lit_review_gate_node(workspace_dir, max_attempts=lit_review_max_attempts),
         "brainstorm_agent": _wrap(
             build_brainstorm_node(_m("brainstorm_agent"), workspace_dir, authorized_imports, **counsel_kwargs),
             "brainstorm_agent",
