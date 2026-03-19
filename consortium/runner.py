@@ -740,33 +740,46 @@ def main():
             budget_manager = model.budget_manager
 
         from .graph import build_research_graph_v2
+        from .graph_config import (
+            ResearchGraphConfig,
+            PersonaCouncilConfig,
+            DualityCheckConfig,
+            ArtifactEnforcementConfig,
+        )
         checkpointer = get_default_checkpointer(results_base_dir)
-        graph = build_research_graph_v2(
+        graph_config = ResearchGraphConfig(
             model=model,
-            model_registry=model_registry,
             workspace_dir=results_base_dir,
             pipeline_mode=effective_pipeline_mode,
             enable_math_agents=args.enable_math_agents,
-            enforce_paper_artifacts=enforce_paper_artifacts,
-            enforce_editorial_artifacts=enforce_editorial_artifacts,
-            require_pdf=args.require_pdf,
-            require_experiment_plan=require_experiment_plan,
+            artifacts=ArtifactEnforcementConfig(
+                enforce_paper_artifacts=enforce_paper_artifacts,
+                enforce_editorial_artifacts=enforce_editorial_artifacts,
+                require_pdf=args.require_pdf,
+                require_experiment_plan=require_experiment_plan,
+            ),
             min_review_score=args.min_review_score,
             followup_max_iterations=args.followup_max_iterations,
-            manager_max_steps=args.manager_max_steps if args.manager_max_steps else 50,
+            manager_max_steps=args.manager_max_steps or 50,
             authorized_imports=essential_imports,
             checkpointer=checkpointer,
             counsel_models=counsel_models_list,
-            tree_search_config=tree_search_config,
+            tree_search=tree_search_config,
             enable_milestone_gates=enable_milestone_gates,
             adversarial_verification=adversarial_verification,
-            persona_council_specs=persona_council_specs,
-            persona_debate_rounds=persona_debate_rounds,
-            persona_synthesis_model=persona_synthesis_model,
-            duality_check_model=duality_check_model,
-            enable_duality_check=enable_duality_check,
+            persona_council=PersonaCouncilConfig(
+                specs=persona_council_specs,
+                debate_rounds=persona_debate_rounds,
+                synthesis_model=persona_synthesis_model,
+            ),
+            duality_check=DualityCheckConfig(
+                enabled=enable_duality_check,
+                model=duality_check_model,
+            ),
             budget_manager=budget_manager,
+            model_registry=model_registry,
         )
+        graph = build_research_graph_v2(graph_config)
         print(f"Pipeline: {persona_debate_rounds} persona debate rounds, "
               f"duality_check={'enabled' if enable_duality_check else 'disabled'}")
 

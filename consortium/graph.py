@@ -1058,37 +1058,13 @@ def build_followup_lit_review_node(
 # V2 graph builder
 # ---------------------------------------------------------------------------
 
-def build_research_graph_v2(
-    model: Any,
-    workspace_dir: str,
-    pipeline_mode: str = "default",
-    enable_math_agents: bool = False,
-    enforce_paper_artifacts: bool = False,
-    enforce_editorial_artifacts: bool = False,
-    require_pdf: bool = False,
-    require_experiment_plan: bool = False,
-    min_review_score: int = 8,
-    followup_max_iterations: int = 3,
-    manager_max_steps: int = 50,
-    authorized_imports: Optional[List[str]] = None,
-    checkpointer=None,
-    counsel_models: Optional[List[Any]] = None,
-    summary_model_id: Optional[str] = "claude-sonnet-4-6",
-    tree_search_config: Optional[Any] = None,
-    enable_milestone_gates: bool = False,
-    adversarial_verification: bool = False,
-    persona_council_specs: Optional[List[dict]] = None,
-    persona_debate_rounds: int = 3,
-    persona_synthesis_model: str = "claude-opus-4-6",
-    persona_max_post_vote_retries: int = 1,
-    lit_review_max_attempts: int = 2,
-    duality_check_model: str = "claude-opus-4-6",
-    enable_duality_check: bool = True,
-    budget_manager: Optional[Any] = None,
-    model_registry: Optional[Any] = None,
-):
+def build_research_graph_v2(config: "ResearchGraphConfig"):
     """
     Build the V2 persona-council-driven research pipeline.
+
+    Args:
+        config: A :class:`~consortium.graph_config.ResearchGraphConfig`
+            bundling all graph-construction knobs.
 
     Flow:
       persona_council → lit_review → lit_review_gate → brainstorm → formalize_goals
@@ -1102,6 +1078,41 @@ def build_research_graph_v2(
       - verify_completion → brainstorm (fundamental rethink)
       - duality_gate → followup_lit_review → brainstorm (quality failure)
     """
+    from .graph_config import ResearchGraphConfig  # noqa: F811 (type hint above)
+
+    # Unpack config to local variables (preserves existing closures and
+    # sub-builder call sites unchanged).
+    model = config.model
+    workspace_dir = config.workspace_dir
+    pipeline_mode = config.pipeline_mode
+    enable_math_agents = config.enable_math_agents
+    enable_milestone_gates = config.enable_milestone_gates
+    adversarial_verification = config.adversarial_verification
+    min_review_score = config.min_review_score
+    followup_max_iterations = config.followup_max_iterations
+    manager_max_steps = config.manager_max_steps
+    authorized_imports = config.authorized_imports
+    summary_model_id = config.summary_model_id
+    checkpointer = config.checkpointer
+    counsel_models = config.counsel_models
+    budget_manager = config.budget_manager
+    model_registry = config.model_registry
+    tree_search_config = config.tree_search
+
+    # Sub-config unpacking
+    enforce_paper_artifacts = config.artifacts.enforce_paper_artifacts
+    enforce_editorial_artifacts = config.artifacts.enforce_editorial_artifacts
+    require_pdf = config.artifacts.require_pdf
+    require_experiment_plan = config.artifacts.require_experiment_plan
+    lit_review_max_attempts = config.artifacts.lit_review_max_attempts
+
+    persona_council_specs = config.persona_council.specs
+    persona_debate_rounds = config.persona_council.debate_rounds
+    persona_synthesis_model = config.persona_council.synthesis_model
+    persona_max_post_vote_retries = config.persona_council.max_post_vote_retries
+
+    duality_check_model = config.duality_check.model
+    enable_duality_check = config.duality_check.enabled
     from .persona_council import create_persona_council_node, create_duality_check_node
 
     counsel_kwargs = {"counsel_models": counsel_models} if counsel_models else {}
