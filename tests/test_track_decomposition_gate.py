@@ -149,6 +149,23 @@ class TestTrackDecompositionGate:
         assert td["recommended_track"] == "empirical"
         assert td["empirical_questions"] == original["empirical_questions"]
 
+    def test_recovery_when_goals_also_absent(self, tmp_path):
+        """When both theory_questions and research_goals.json are absent, should downgrade."""
+        paper_ws = tmp_path / "paper_workspace"
+        paper_ws.mkdir()
+        _write_json(str(paper_ws / "track_decomposition.json"), {
+            "theory_questions": [],
+            "empirical_questions": ["Test Y"],
+            "recommended_track": "both",
+            "rationale": "Mixed",
+        })
+        # No research_goals.json exists
+        gate = _make_gate(str(tmp_path), enable_math_agents=True)
+        result = gate({})
+        td = result["track_decomposition"]
+        # Should downgrade to empirical since theory questions can't be recovered
+        assert td["recommended_track"] == "empirical"
+
     def test_corrected_file_written_back_to_disk(self, tmp_path):
         """Corrections should be persisted back to disk."""
         paper_ws = tmp_path / "paper_workspace"

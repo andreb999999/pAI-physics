@@ -212,8 +212,10 @@ this procedure:
 4. For each failed goal, open `paper_workspace/brainstorm.json` and check:
    - Are there alternative approaches in the brainstorm menu (same `hypothesis_ids`,
      different `id`) that were not selected in the previous formalization?
-   - If yes: substitute the failed approach with the highest-ranked alternative. Update
-     `research_goals.json` to replace the failed approach reference.
+   - If yes: substitute the failed approach with the highest-ranked alternative (prefer
+     the alternative with the highest `priority_rank`; break ties by `feasibility`:
+     high > medium > low). Update `research_goals.json` to replace the failed approach
+     reference.
    - If no alternative exists: tighten the success criteria to a more achievable
      `minimum_viable` threshold, or split the goal into two smaller goals that are
      independently achievable.
