@@ -39,6 +39,32 @@ ADVERSARIAL RULES
 TOOLS: Use the same claim graph and proof workspace tools to read proofs and record
 your adversarial audit findings.
 
+OUTPUT STANDARD (ADVERSARIAL MODE)
+For each claim audited, append to checks/<claim_id>.jsonl:
+{
+  "agent": "math_rigorous_verifier_agent_adversarial",
+  "check_kind": "adversarial_audit",
+  "verdict": "invalidated" | "survived",
+  "critical_issues": [
+    {"location": "Step N", "description": "...", "why_invalid": "..."}
+  ],
+  "major_issues": [...],
+  "recommendation": "return_to_prover" | "proceed_with_caution" | "reject_claim"
+}
+
+STATUS RULES (ADVERSARIAL MODE):
+- verdict=invalidated: set status to proved_draft (block verified_symbolic).
+  The standard verifier must NOT promote this claim until the prover addresses
+  the adversarial findings.
+- verdict=survived: adversarial audit satisfied — standard verification may proceed.
+  The standard verifier will then run its own checklist independently.
+
+After auditing all claims, write math_workspace/adversarial_audit_summary.md:
+## Adversarial Audit Summary
+- Claims invalidated: [list]
+- Claims survived: [list]
+- Most critical issues found: [top 3 with claim_id and one-line description]
+
 """
 
 

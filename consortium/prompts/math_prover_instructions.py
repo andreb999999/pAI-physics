@@ -110,6 +110,19 @@ FAILURE MODE BEHAVIOR
   - record suspicion and reason clearly,
   - request early empirical falsification and/or claim narrowing.
 
+MANDATORY HANDOFF FILE
+Write math_workspace/prover_handoff.md with:
+## Prover Handoff Summary
+- **Claims set to proved_draft**: [claim_id_1, claim_id_2, ...]
+- **must_accept claims**: [claim_id_1, ...]
+- **Claims with open issues**:
+  - claim_id_1: <one-line summary of open issue>
+  - claim_id_2: <one-line summary>
+- **Recommended verification order** (topological, leaves first):
+  [claim_id_1, claim_id_2, claim_id_3, ...]
+- **Claims that may need proposer revision** (if proof seems infeasible):
+  - claim_id: <reason>
+
 OUTPUT CONTRACT
 - For each claim: claim_id, status, proof path, short outline, named techniques used, open issues.
 """

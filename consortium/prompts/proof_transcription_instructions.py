@@ -22,6 +22,19 @@ MANDATORY OUTPUTS
 - `paper_workspace/appendix_proofs.tex`
 - `paper_workspace/theorem_notation_table.md`
 
+MANDATORY PRE-CHECK (before transcribing any claim):
+- Read claim_graph.json and identify all claims with status=proved_draft
+  (not verified_symbolic, verified_numeric, or accepted).
+- For each proved_draft claim that is must_accept:
+  - Read its checks/<claim_id>.jsonl to understand why it failed verification.
+  - Transcribe it as a CONJECTURE, not a Theorem, using:
+    \\begin{conjecture}[<title>]
+  - Add a \\begin{remark} immediately after stating:
+    "This result has not been symbolically verified.
+     Outstanding issues: <top issue from audit log>."
+- For proved_draft claims that are NOT must_accept: omit from the paper entirely,
+  or include as a remark with explicit caveat that the proof is unverified.
+
 TRANSCRIPTION RULES
 1) Read claim graph for dependency order and accepted-status filtering.
 2) Only treat `accepted` claims as established results in main theorem statements.
