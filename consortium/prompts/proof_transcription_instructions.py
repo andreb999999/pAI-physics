@@ -21,6 +21,7 @@ MANDATORY OUTPUTS
 - `paper_workspace/theory_sections.tex`
 - `paper_workspace/appendix_proofs.tex`
 - `paper_workspace/theorem_notation_table.md`
+- `paper_workspace/theory_track_summary.json`
 
 MANDATORY PRE-CHECK (before transcribing any claim):
 - Read claim_graph.json and identify all claims with status=proved_draft
@@ -37,8 +38,18 @@ MANDATORY PRE-CHECK (before transcribing any claim):
 
 TRANSCRIPTION RULES
 1) Read claim graph for dependency order and accepted-status filtering.
-2) Only treat `accepted` claims as established results in main theorem statements.
-3) Non-accepted claims must be labeled as assumptions/conjectures/planned validation.
+2) Treat claims by verification tier:
+   - accepted            → \\begin{theorem} — no caveat required.
+   - verified_numeric    → \\begin{theorem} with footnote:
+                           "Numerically verified; pending final acceptance gate."
+   - verified_symbolic   → \\begin{theorem} with footnote:
+                           "Symbolically verified; numeric validation pending."
+   - proved_draft        → handled by MANDATORY PRE-CHECK above
+                           (\\begin{conjecture} for must_accept, omit otherwise).
+   - proposed / rejected → do not transcribe.
+3) Only claims at proposed or rejected status — and proved_draft non-must_accept
+   claims — are treated as non-results. verified_symbolic and verified_numeric
+   claims are full theorems with the tier footnotes above.
 4) For each theorem/lemma block:
    - add labels and cross-references,
    - include assumptions explicitly,
@@ -55,6 +66,55 @@ ANTI-HALLUCINATION
 - Do not invent steps absent from source artifacts unless clearly marked as editorial clarification.
 - Do not upgrade claim status; status authority is claim graph.
 - Preserve traceability from theorem text to claim ids.
+
+CROSS-TRACK INTEGRATION REQUIREMENTS
+These files are \\input{}-included by writeup_agent. Follow these exactly:
+
+theory_sections.tex:
+- Fragment only: no \\documentclass, \\begin{document}, \\end{document}.
+- Use \\section{} and \\subsection{} headers only.
+- Every theorem/lemma/definition environment must carry:
+  \\label{thm:<claim_id>}
+- Use \\cite{<key>} for all references; keys from paper_workspace/references.bib.
+- All notation via \\newcommand — no hardcoded symbols. Definitions go in
+  paper_workspace/math_preamble.tex (create if absent).
+
+appendix_proofs.tex:
+- Fragment only: no \\appendix command — writeup_agent controls document structure.
+- Mirror the section structure of theory_sections.tex.
+- Each proof block must open with:
+  \\begin{proof}[Proof of \\cref{thm:<claim_id>}]
+
+theorem_notation_table.md:
+- Format: | Symbol | LaTeX Command | Definition | First Used In |
+- Every symbol appearing in theory_sections.tex must have an entry here.
+- writeup_agent reads this to auto-generate the paper's notation section.
+
+MANDATORY SUMMARY OUTPUT
+Write paper_workspace/theory_track_summary.json:
+{
+  "total_claims_transcribed": <int>,
+  "verified_numeric_claims":  [<claim_id>, ...],
+  "verified_symbolic_claims": [<claim_id>, ...],
+  "conjecture_claims":        [<claim_id>, ...],
+  "omitted_claims":           [<claim_id>, ...],
+  "goal_coverage": {
+    "<goal_id>": {
+      "tagged_claims":    [<claim_id>, ...],
+      "highest_status":   "verified_numeric"|"verified_symbolic"|"proved_draft",
+      "transcribed_as":   "theorem"|"conjecture"|"omitted"
+    }
+  },
+  "output_files": {
+    "theory_sections":   "paper_workspace/theory_sections.tex",
+    "appendix_proofs":   "paper_workspace/appendix_proofs.tex",
+    "notation_table":    "paper_workspace/theorem_notation_table.md",
+    "math_preamble":     "paper_workspace/math_preamble.tex"
+  }
+}
+
+track_merge reads this file to understand theory track completion level
+and locate all output artifacts before beginning synthesis.
 """
 
 
