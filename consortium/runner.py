@@ -111,6 +111,9 @@ _STAGE_ALIASES = {
     "formalize_goals": "formalize_goals_agent",
     "formalize_goals_agent": "formalize_goals_agent",
     "goals": "formalize_goals_agent",
+    "research_plan_writeup": "research_plan_writeup_agent",
+    "research_plan_writeup_agent": "research_plan_writeup_agent",
+    "plan_writeup": "research_plan_writeup_agent",
     "formalize_results": "formalize_results_agent",
     "formalize_results_agent": "formalize_results_agent",
 }

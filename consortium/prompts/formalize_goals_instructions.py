@@ -6,7 +6,6 @@ output. Produces the track_decomposition.json that the track_router() reads.
 """
 
 from .system_prompt_template import build_system_prompt
-from .document_formatting import DOCUMENT_FORMATTING_REQUIREMENTS
 from .workspace_management import WORKSPACE_GUIDANCE
 
 
@@ -110,6 +109,7 @@ If `paper_workspace/brainstorm.json` is missing:
    Schema:
    ```json
    {
+     "brainstorm_data_quality": "full" | "degraded" | "minimal",
      "goals": [
        {
          "id": "G1",
@@ -142,6 +142,9 @@ If `paper_workspace/brainstorm.json` is missing:
      "both_goal_count": <int>
    }
    ```
+   IMPORTANT: Always write `brainstorm_data_quality` at the top level. Use `"full"` when
+   `brainstorm.json` was present and parsed successfully, `"degraded"` when only
+   `brainstorm.md` was available, and `"minimal"` when neither was present.
 
 2. **`paper_workspace/track_decomposition.json`** -- Track routing configuration.
    CRITICAL: this file must exactly match the schema that track_router() expects:
@@ -173,19 +176,9 @@ If `paper_workspace/brainstorm.json` is missing:
    - recommended_track is one of the four allowed values.
    - The questions are specific enough for downstream agents to act on without ambiguity.
 
-3. **`paper_workspace/research_plan.tex`** -- Formal research plan document.
-   Required LaTeX sections:
-   - \\section{Research Program Overview}
-   - \\section{Formal Research Goals} (one subsection per goal)
-   - \\section{Theory Track Plan}
-   - \\section{Experiment Track Plan}
-   - \\section{Dependency Structure and Sequencing}
-   - \\section{Success Criteria and Acceptance Gates}
-   - \\section{Risk Mitigation}
-   Compile to PDF after writing.
-
-4. **`paper_workspace/research_plan.pdf`** -- Compiled version of the plan.
-   Use latex_compiler_tool to compile the .tex file.
+Note: `research_plan.tex` and `research_plan.pdf` are produced by the downstream
+   `research_plan_writeup_agent`. Do not attempt LaTeX compilation here. Your mandatory
+   outputs are `research_goals.json` and `track_decomposition.json` only.
 
 ## QUALITY STANDARDS
 - Every goal must trace back to a hypothesis in the research proposal.
@@ -224,15 +217,119 @@ this procedure:
 6. Re-write `track_decomposition.json` to reflect only the questions that remain
    unanswered. Remove questions already satisfied by prior execution.
 
-For non-INCOMPLETE follow-up cycles (e.g., duality gate re-entry), produce a focused
-amendment to existing goals rather than a full restart.
+For non-INCOMPLETE follow-up cycles (e.g., duality gate re-entry or brainstorm rethink cycles):
+
+1. Read your `agent_task` carefully — it will specify which aspect of the plan needs
+   amendment (e.g., "add an experiment goal for hypothesis H3", "downgrade theory track
+   to empirical only due to proof complexity").
+2. Read `paper_workspace/research_goals.json` to understand current goal state.
+3. Read `paper_workspace/brainstorm.md` and `paper_workspace/brainstorm.json` to
+   identify any new approaches generated in the latest brainstorm cycle.
+4. Make the minimal change that satisfies the directive — do not rewrite goals that
+   are not mentioned. Add new goals for newly brainstormed approaches, revise success
+   criteria if the brainstorm suggests tighter or relaxed thresholds, but do NOT
+   discard goals that were previously met.
+5. Re-run all programmatic validations after any amendment.
+6. Re-write `track_decomposition.json` only if the track assignment changed. Update
+   it to incorporate new questions from added goals while preserving questions that
+   remain valid from the prior decomposition.
+7. Set `brainstorm_data_quality` to `"full"` unless the new brainstorm.json is missing.
 
 ## ANTI-HALLUCINATION RULES
 - Do not invent success criteria that cannot be computed from available tools.
 - Do not assign goals to tracks that lack the required agent capabilities.
 - If a goal's feasibility is uncertain, flag it explicitly and include a fallback.
 - Ground all quantitative thresholds in literature baselines or preliminary results.
-""" + "\n\n" + DOCUMENT_FORMATTING_REQUIREMENTS
+
+## PROGRAMMATIC VALIDATION (MANDATORY)
+
+After writing `research_goals.json` and `track_decomposition.json`, use
+`PythonCodeExecutionTool` to run the following validation scripts. Fix any errors
+they report before returning.
+
+### Validation 1 — Dependency DAG Check
+```python
+import json
+
+with open("paper_workspace/research_goals.json") as f:
+    data = json.load(f)
+
+goals = data["goals"]
+goal_ids = {g["id"] for g in goals}
+id_to_index = {g["id"]: i for i, g in enumerate(goals)}
+
+errors = []
+for g in goals:
+    for dep in g.get("dependencies", []):
+        if dep not in goal_ids:
+            errors.append(f"Goal {g['id']} depends on unknown goal {dep}")
+        elif id_to_index[dep] >= id_to_index[g["id"]]:
+            errors.append(
+                f"Goal {g['id']} (index {id_to_index[g['id']]}) depends on "
+                f"{dep} (index {id_to_index[dep]}) — forward reference violation"
+            )
+
+if errors:
+    for e in errors:
+        print(f"DEPENDENCY ERROR: {e}")
+else:
+    print("Dependency DAG: OK")
+```
+If any DEPENDENCY ERROR is printed, reorder or fix the goals in research_goals.json
+and re-run this validation until it passes.
+
+### Validation 2 — Approach ID Cross-Reference
+```python
+import json
+
+with open("paper_workspace/brainstorm.json") as f:
+    brainstorm = json.load(f)
+with open("paper_workspace/research_goals.json") as f:
+    goals_data = json.load(f)
+
+valid_approach_ids = {a["id"] for a in brainstorm.get("approaches", [])}
+warnings = []
+
+for g in goals_data["goals"]:
+    for aid in g.get("approach_ids", []):
+        if aid not in valid_approach_ids:
+            warnings.append(f"Goal {g['id']} references unknown approach_id '{aid}'")
+
+if warnings:
+    for w in warnings:
+        print(f"APPROACH ID WARNING: {w}")
+    with open("paper_workspace/brainstorm_missing_warning.txt", "a") as f:
+        f.write("\\n".join(warnings) + "\\n")
+else:
+    print("Approach ID cross-reference: OK")
+```
+Skip this validation if operating in degraded or minimal mode (brainstorm.json missing).
+If warnings are printed, either fix the approach_ids or document the discrepancy.
+
+### Validation 3 — Track Decomposition Self-Consistency
+```python
+import json
+
+with open("paper_workspace/track_decomposition.json") as f:
+    td = json.load(f)
+
+errors = []
+track = td.get("recommended_track", "")
+if track in ("theory", "both") and not td.get("theory_questions"):
+    errors.append("recommended_track includes theory but theory_questions is empty")
+if track in ("empirical", "both") and not td.get("empirical_questions"):
+    errors.append("recommended_track includes empirical but empirical_questions is empty")
+if track not in ("theory", "empirical", "both", "none"):
+    errors.append(f"Invalid recommended_track value: '{track}'")
+
+if errors:
+    for e in errors:
+        print(f"TRACK DECOMPOSITION ERROR: {e}")
+else:
+    print("Track decomposition: OK")
+```
+If any TRACK DECOMPOSITION ERROR is printed, fix track_decomposition.json before returning.
+"""
 
 
 def get_formalize_goals_system_prompt(tools, managed_agents=None):

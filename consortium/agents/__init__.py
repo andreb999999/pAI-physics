@@ -26,6 +26,7 @@ from .track_merge_node import build_node as build_track_merge_node
 from .brainstorm_agent import build_node as build_brainstorm_node
 from .formalize_goals_agent import build_node as build_formalize_goals_node
 from .formalize_results_agent import build_node as build_formalize_results_node
+from .research_plan_writeup_agent import build_node as build_research_plan_writeup_node
 
 __all__ = [
     "create_specialist_agent",
@@ -50,4 +51,5 @@ __all__ = [
     "build_brainstorm_node",
     "build_formalize_goals_node",
     "build_formalize_results_node",
+    "build_research_plan_writeup_node",
 ]

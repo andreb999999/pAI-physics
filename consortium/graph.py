@@ -39,6 +39,7 @@ from .agents import (
     build_brainstorm_node,
     build_formalize_goals_node,
     build_formalize_results_node,
+    build_research_plan_writeup_node,
 )
 from .milestone_report import (
     generate_milestone_report,
@@ -78,7 +79,9 @@ V2_PRE_TRACK_STAGES = [
     "persona_council",
     "literature_review_agent",
     "brainstorm_agent",
+    "formalize_goals_entry",
     "formalize_goals_agent",
+    "research_plan_writeup_agent",
 ]
 
 V2_POST_TRACK_STAGES = [
@@ -322,6 +325,57 @@ def build_track_decomposition_gate_node(
 
     track_decomposition_gate_node.__name__ = "track_decomposition_gate"
     return track_decomposition_gate_node
+
+
+def build_formalize_goals_entry_node(workspace_dir: str) -> Any:
+    """Inject a first-entry agent_task for formalize_goals_agent.
+
+    On the brainstorm → formalize_goals path, agent_task is typically None.
+    This node sets a clear task prompt with brainstorm data quality signal.
+    On verify_completion re-entry, this node is bypassed because
+    verify_completion routes directly to formalize_goals_agent.
+    """
+
+    def formalize_goals_entry_node(state: dict) -> dict:
+        paper_ws = os.path.join(workspace_dir, "paper_workspace")
+        brainstorm_json_exists = os.path.exists(
+            os.path.join(paper_ws, "brainstorm.json")
+        )
+        brainstorm_md_exists = os.path.exists(
+            os.path.join(paper_ws, "brainstorm.md")
+        )
+
+        if brainstorm_json_exists:
+            task = (
+                "BEGIN GOAL FORMALIZATION.\n\n"
+                "The brainstorm is complete. `brainstorm.json` and `brainstorm.md` "
+                "are available in `paper_workspace/`. Read them along with "
+                "`research_proposal.md` and formalize the research goals into "
+                "`research_goals.json` and `track_decomposition.json`. "
+                "Run all programmatic validations before returning."
+            )
+        elif brainstorm_md_exists:
+            task = (
+                "BEGIN GOAL FORMALIZATION (DEGRADED MODE).\n\n"
+                "`brainstorm.json` is missing — only `brainstorm.md` is available. "
+                "Proceed in degraded mode: parse approaches from the markdown, "
+                "write `brainstorm_missing_warning.txt`, set "
+                "`brainstorm_data_quality: \"degraded\"` in `research_goals.json`, "
+                "and limit to 2 goals maximum."
+            )
+        else:
+            task = (
+                "BEGIN GOAL FORMALIZATION (MINIMAL MODE).\n\n"
+                "Both `brainstorm.json` and `brainstorm.md` are missing. "
+                "Derive goals directly from `research_proposal.md` only. "
+                "Limit to 2 goals. Set `brainstorm_data_quality: \"minimal\"` "
+                "and write `brainstorm_missing_warning.txt` documenting this condition."
+            )
+
+        return {"agent_task": task}
+
+    formalize_goals_entry_node.__name__ = "formalize_goals_entry"
+    return formalize_goals_entry_node
 
 
 def followup_router(state: ResearchState) -> str:
@@ -1394,9 +1448,14 @@ def build_research_graph_v2(config: "ResearchGraphConfig"):
             build_brainstorm_node(_m("brainstorm_agent"), workspace_dir, authorized_imports, **counsel_kwargs),
             "brainstorm_agent",
         ),
+        "formalize_goals_entry": build_formalize_goals_entry_node(workspace_dir),
         "formalize_goals_agent": _wrap(
             build_formalize_goals_node(_m("formalize_goals_agent"), workspace_dir, authorized_imports, **counsel_kwargs),
             "formalize_goals_agent",
+        ),
+        "research_plan_writeup_agent": _wrap(
+            build_research_plan_writeup_node(_m("research_plan_writeup_agent"), workspace_dir, authorized_imports, **counsel_kwargs),
+            "research_plan_writeup_agent",
         ),
         "track_decomposition_gate": build_track_decomposition_gate_node(
             workspace_dir, enable_math_agents=enable_math_agents
@@ -1467,9 +1526,11 @@ def build_research_graph_v2(config: "ResearchGraphConfig"):
         },
     )
 
-    # Brainstorm → formalize goals → milestone → track execution
-    graph.add_edge("brainstorm_agent", "formalize_goals_agent")
-    graph.add_edge("formalize_goals_agent", "track_decomposition_gate")
+    # Brainstorm → entry gate → formalize goals → writeup → milestone → track execution
+    graph.add_edge("brainstorm_agent", "formalize_goals_entry")
+    graph.add_edge("formalize_goals_entry", "formalize_goals_agent")
+    graph.add_edge("formalize_goals_agent", "research_plan_writeup_agent")
+    graph.add_edge("research_plan_writeup_agent", "track_decomposition_gate")
     graph.add_edge("track_decomposition_gate", "milestone_goals")
     graph.add_conditional_edges("milestone_goals", track_router)
 

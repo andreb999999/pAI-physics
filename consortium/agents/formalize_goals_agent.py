@@ -4,7 +4,6 @@ FormalizeGoalsAgent — LangGraph node module.
 
 from __future__ import annotations
 
-import os
 from typing import Any, Callable, List, Optional
 
 from ..agents.base_agent import create_specialist_agent
@@ -15,10 +14,6 @@ from ..toolkits.filesystem.file_editing.file_editing_tools import (
 from ..toolkits.ideation.paper_search_tool import PaperSearchTool
 from ..toolkits.search.fetch_arxiv_papers.fetch_arxiv_papers_tools import FetchArxivPapersTool
 from ..toolkits.writeup.citation_search_tool import CitationSearchTool
-from ..toolkits.writeup.latex_compiler_tool import LaTeXCompilerTool
-from ..toolkits.writeup.latex_generator_tool import LaTeXGeneratorTool
-from ..toolkits.writeup.latex_syntax_checker_tool import LaTeXSyntaxCheckerTool
-from ..toolkits.writeup.vlm_document_analysis_tool import VLMDocumentAnalysisTool
 from ..toolkits.code_execution_tool import PythonCodeExecutionTool
 
 
@@ -27,10 +22,6 @@ def get_tools(workspace_dir: Optional[str], model_id: str) -> list:
         PaperSearchTool(),
         FetchArxivPapersTool(working_dir=workspace_dir),
         CitationSearchTool(),
-        VLMDocumentAnalysisTool(model=model_id, working_dir=workspace_dir),
-        LaTeXGeneratorTool(model=model_id, working_dir=workspace_dir),
-        LaTeXCompilerTool(model=model_id, working_dir=workspace_dir),
-        LaTeXSyntaxCheckerTool(working_dir=workspace_dir),
     ]
     if workspace_dir:
         tools += [
