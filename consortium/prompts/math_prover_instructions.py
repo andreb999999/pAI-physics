@@ -45,6 +45,11 @@ proof approach to use.  You MUST follow this directive precisely:
 When no strategy directive is present, fall back to the standard workflow below.
 
 MANDATORY WORKFLOW
+Step 0 (orientation):
+- Read math_workspace/claim_design_notes.md if it exists.
+- Use it as your primary guide for proof strategy, topological ordering,
+  key assumptions, and fallback approaches for each must_accept claim.
+
 Step 1 (triage):
 - Call math_claim_graph_tool(action="list_claims").
 - Prioritize:

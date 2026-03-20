@@ -121,6 +121,38 @@ def _format_track_task(state: dict, track_name: str, questions: list[str]) -> st
         "in workspace evidence and cited literature."
     )
 
+    # Inject structured goal context for the theory track
+    if track_name == "theory":
+        try:
+            research_goals = state.get("research_goals") or {}
+            theory_goals = [
+                g for g in research_goals.get("goals", [])
+                if g.get("track") in ("theory", "both")
+            ]
+            if theory_goals:
+                goal_lines = []
+                for g in theory_goals:
+                    reframed = g.get("novelty_reframed", False)
+                    reframe_note = (
+                        f" [REFRAMED from {g.get('reframed_from_claim', '?')} — "
+                        f"strategy: {g.get('reframing_strategy', 'N/A')}]"
+                        if reframed else ""
+                    )
+                    sc = g.get("success_criteria") or {}
+                    goal_lines.append(
+                        f"  Goal {g.get('id', '?')}{reframe_note}:\n"
+                        f"    Hypothesis: {g.get('hypothesis_id', 'N/A')}\n"
+                        f"    Description: {str(g.get('description', ''))[:300]}\n"
+                        f"    Strong success: {sc.get('strong', 'N/A')}\n"
+                        f"    Minimum viable: {sc.get('minimum_viable', 'N/A')}"
+                    )
+                base += (
+                    "\n\nTHEORY GOAL CONTEXT (from research_goals.json):\n"
+                    + "\n".join(goal_lines)
+                )
+        except Exception:
+            pass  # silently skip if goals unavailable
+
     # Inject cross-track dependency context for the experiment track
     if track_name == "experiment":
         td = state.get("track_decomposition") or {}
@@ -1025,10 +1057,58 @@ def build_verify_completion_node(workspace_dir: str) -> Any:
         paper_ws = os.path.join(workspace_dir, "paper_workspace")
         exp_ws = os.path.join(workspace_dir, "experiment_workspace")
 
-        for name in ["claim_graph.json"]:
-            content = _read_file_safe(os.path.join(math_ws, name), 8000)
-            if content:
-                evidence_parts.append(f"--- THEORY: {name} ---\n{content}")
+        # Parse claim graph for tag-filtered goal matching
+        all_claims = []
+        cg_content = _read_file_safe(os.path.join(math_ws, "claim_graph.json"), 8000)
+        if cg_content:
+            try:
+                cg = json.loads(cg_content)
+                all_claims = cg.get("claims", [])
+            except Exception:
+                pass
+
+        # Build per-goal claim map using "goal:<id>" tags
+        goal_claim_map = {}
+        for g in goals:
+            gid = g.get("id", "")
+            if g.get("track") in ("theory", "both") and gid:
+                relevant = [
+                    c for c in all_claims
+                    if any(f"goal:{gid}" in str(t) for t in c.get("tags", []))
+                ]
+                goal_claim_map[gid] = relevant
+
+        has_tagged_claims = any(bool(v) for v in goal_claim_map.values())
+
+        if has_tagged_claims:
+            # Use tag-filtered evidence: present each goal with only its tagged claims
+            for g in goals:
+                gid = g.get("id", "")
+                if gid in goal_claim_map and goal_claim_map[gid]:
+                    claims_summary = json.dumps(
+                        [{"id": c.get("id"), "statement": str(c.get("statement", ""))[:200],
+                          "status": c.get("status"), "must_accept": c.get("must_accept")}
+                         for c in goal_claim_map[gid]],
+                        indent=2
+                    )
+                    evidence_parts.append(
+                        f"--- THEORY CLAIMS FOR GOAL {gid} ---\n{claims_summary}"
+                    )
+            # Include untagged claims as supplementary context
+            tagged_ids = {c.get("id") for cs in goal_claim_map.values() for c in cs}
+            untagged = [c for c in all_claims if c.get("id") not in tagged_ids]
+            if untagged:
+                untagged_summary = json.dumps(
+                    [{"id": c.get("id"), "status": c.get("status")} for c in untagged],
+                    indent=2
+                )
+                evidence_parts.append(
+                    f"--- THEORY: untagged claims (supplementary) ---\n{untagged_summary}"
+                )
+        elif cg_content:
+            # Fallback: no tags found, use raw claim graph as before
+            evidence_parts.append(f"--- THEORY: claim_graph.json ---\n{cg_content}")
+
         for name in ["experiment_results.json", "experiment_design.json"]:
             content = _read_file_safe(os.path.join(paper_ws, name), 8000)
             if content:
