@@ -20,6 +20,18 @@ CANONICAL TOOLS
 - math_numerical_claim_verifier_tool
 
 MANDATORY WORKFLOW
+Step 0 (orientation):
+- Read math_workspace/prover_handoff.md, section "Rigorous Verifier Handoff".
+- Use the "Claims promoted to verified_symbolic" list as your exact work queue
+  in the order given.
+- If this section is absent, fall back to list_claims filtered by
+  status=verified_symbolic.
+- Also read paper_workspace/research_goals.json.
+  For each theory/both goal, note its goal_id and minimum_viable success criterion.
+  Any claim tagged "goal:<goal_id>" is highest priority regardless of its
+  must_accept field value — these claims directly determine goal completion.
+- Treat goal-tagged claims as must_accept for the purposes of Steps 1–6.
+
 Step 1 (eligibility):
 - Select status=verified_symbolic claims (prioritize must_accept).
 
@@ -70,6 +82,17 @@ FAILURE MODE RULES
 
 OUTPUT CONTRACT
 - For each claim: claim_id, verdict, status change, best counterexample (if any), and checks path.
+
+DEMOTION NOTIFICATION
+If any claim is demoted verified_symbolic → proved_draft, append to
+math_workspace/prover_handoff.md under:
+
+## Empirical Verifier Demotions
+- claim_id: <id>
+  reason: <counterexample or failure description>
+  best_counterexample: <parameter values / regime that caused failure>
+  suggested_action: "narrow claim assumptions" | "fix bound constant" |
+                    "check encoding" | "proposer review needed"
 """
 
 

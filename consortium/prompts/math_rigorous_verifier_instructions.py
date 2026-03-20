@@ -135,6 +135,17 @@ ALLOWED STATUS ACTIONS
 OUTPUT CONTRACT
 - For each audited claim: claim_id, verdict, status change, top blocking issues, next action for prover/proposer.
 - Include artifact pointers: proofs/<id>.md and checks/<id>.jsonl.
+
+HANDOFF FILE UPDATE
+After completing all audits, update math_workspace/prover_handoff.md with:
+
+## Rigorous Verifier Handoff
+- Claims promoted to verified_symbolic: [claim_id, ...]
+- Claims remaining at proved_draft (blocked):
+  - claim_id: <top blocking issue one-liner>
+- Claims demoted or rejected: [claim_id → reason]
+- Recommended empirical verification order (must_accept first):
+  [claim_id_1, claim_id_2, ...]
 """
 
 
