@@ -3,7 +3,7 @@
 
 [Website](https://PoggioAI.github.io) | [Discord](https://discord.gg/Pz7spPPY) | [Paper](https://PoggioAI.github.io) | [GitHub](https://github.com/PoggioAI/PoggioAI_MSc)
 
-Goal: Bring down the steer rate by 2 orders of magnitude. Don't know exactly what research will be automated, but we estimate that to go from idea/hypothesis to final paper of low to average quality, one needs on order of magnitude of 10^2-10^3 GPT Pro Calls, and we want to bring this down to 0-10 user prompts (steers).
+**Goal:** In our experience, moving from a strong human-developed idea to a solid machine-learning-theory manuscript still often takes on the order of $10^2$ to $10^3$ prompts---if possible at all---with frontier reasoning models and agentic systems as Claude Code or GPT Pro. The goal here is to bring this down to 0-10 user prompts (steers).
 
 **PoggioAI/MSc** is an open-source, customizable, modular multi-agent system for academic research workflows. Our goal is not autonomous scientific ideation, nor fully automated research. It is narrower and more practical: to reduce by orders of magnitude the human steering required to turn a specified hypothesis into a literature-grounded, mathematically established, experimentally supported, submission-oriented manuscript draft. Built with a current emphasis on machine learning theory and adjacent quantitative fields.
 
