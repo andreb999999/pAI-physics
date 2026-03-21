@@ -1411,4 +1411,4 @@ Test modules:
 
 ## License
 
-MIT. See `LICENSE`. Copyright (c) 2025 Mahmoud Abdelmoneum, Pierfrancesco Beneventano, Tomaso Poggio.
+MIT. See `LICENSE`. Copyright (c) 2026 Mahmoud Abdelmoneum, Pierfrancesco Beneventano, Tomaso Poggio.
