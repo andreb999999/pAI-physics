@@ -1,5 +1,5 @@
 # =============================================================================
-# OpenPI LLM Configuration — Example / Safe Defaults
+# PoggioAI/MSc LLM Configuration — Example / Safe Defaults
 # =============================================================================
 # Copy this file to .llm_config.yaml and customize:
 #   cp .llm_config.yaml.example .llm_config.yaml

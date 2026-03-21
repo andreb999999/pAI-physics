@@ -1,8 +1,8 @@
 """
-Validation Strategies for the OpenPI Research System.
+Validation Strategies for the PoggioAI/MSc Research System.
 
 This module implements validation strategies to prevent hallucination and
-ensure research quality as specified in the Full OpenPI Agentization Plan.
+ensure research quality as specified in the Full PoggioAI/MSc Agentization Plan.
 """
 
 import json

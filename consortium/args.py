@@ -7,7 +7,7 @@ from .utils import AVAILABLE_MODELS
 def parse_arguments():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description="OpenPI — Multi-Agent Research Pipeline",
+        description="PoggioAI/MSc — Multi-Agent Research Pipeline",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:

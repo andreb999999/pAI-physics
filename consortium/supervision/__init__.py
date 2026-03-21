@@ -1,5 +1,5 @@
 """
-Supervision module for the OpenPI Research System.
+Supervision module for the PoggioAI/MSc Research System.
 
 This module provides hierarchical supervision to prevent hallucination and
 ensure research quality through multiple validation strategies, and all

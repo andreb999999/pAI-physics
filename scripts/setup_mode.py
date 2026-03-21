@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-OpenPI quick setup — detects environment and prepares configuration.
+PoggioAI/MSc quick setup — detects environment and prepares configuration.
 
 Usage:
-    ./openpi setup              # auto-detect and configure
-    ./openpi setup --mode local # force a specific mode
+    ./poggioaimsc setup              # auto-detect and configure
+    ./poggioaimsc setup --mode local # force a specific mode
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ def setup_env_file(mode: str) -> None:
         lines = env_example.read_text().splitlines()
     else:
         lines = [
-            "# OpenPI Environment Configuration",
+            "# PoggioAI/MSc Environment Configuration",
             "# Copy API keys here. This file is gitignored.",
             "",
             "# Required: at least one LLM API key",
@@ -106,7 +106,7 @@ def run_preflight(mode: str) -> bool:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="OpenPI quick setup")
+    parser = argparse.ArgumentParser(description="PoggioAI/MSc quick setup")
     parser.add_argument(
         "--mode",
         choices=["local", "tinker", "hpc"],
@@ -116,7 +116,7 @@ def main() -> None:
     args = parser.parse_args()
 
     print("=" * 60)
-    print("  OpenPI Setup")
+    print("  PoggioAI/MSc Setup")
     print("=" * 60)
 
     # Detect or use explicit mode
@@ -147,10 +147,10 @@ def main() -> None:
     # Summary
     print(f"\n--- Quick Start ---")
     print(f"  # Dry run (validates setup, no API cost):")
-    print(f"  ./openpi run --mode {mode} --task \"test\" --dry-run")
+    print(f"  ./poggioaimsc run --mode {mode} --task \"test\" --dry-run")
     print()
     print(f"  # Real run:")
-    print(f"  ./openpi run --mode {mode} --task \"Your research question here\"")
+    print(f"  ./poggioaimsc run --mode {mode} --task \"Your research question here\"")
 
     if mode == "local":
         print()

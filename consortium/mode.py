@@ -1,5 +1,5 @@
 """
-Deployment mode resolution for OpenPI.
+Deployment mode resolution for PoggioAI/MSc.
 
 Supports three modes:
   - local:  Laptop-only, CPU experiments, no external compute
@@ -42,7 +42,7 @@ def resolve_mode(args: Any) -> str:
     if explicit:
         if explicit not in VALID_MODES:
             print(
-                f"[OpenPI] ERROR: Unknown mode '{explicit}'. "
+                f"[PoggioAI] ERROR: Unknown mode '{explicit}'. "
                 f"Valid modes: {', '.join(VALID_MODES)}",
                 file=sys.stderr,
             )
@@ -69,7 +69,7 @@ def load_mode_config(mode: str) -> dict:
     """Load the mode profile from config/modes.yaml."""
     if not _MODES_CONFIG_PATH.exists():
         print(
-            f"[OpenPI] WARNING: {_MODES_CONFIG_PATH} not found, using built-in defaults.",
+            f"[PoggioAI] WARNING: {_MODES_CONFIG_PATH} not found, using built-in defaults.",
             file=sys.stderr,
         )
         return _builtin_defaults(mode)
@@ -80,7 +80,7 @@ def load_mode_config(mode: str) -> dict:
     config = all_modes.get(mode)
     if not config:
         print(
-            f"[OpenPI] WARNING: Mode '{mode}' not defined in modes.yaml, "
+            f"[PoggioAI] WARNING: Mode '{mode}' not defined in modes.yaml, "
             f"using built-in defaults.",
             file=sys.stderr,
         )
@@ -108,7 +108,7 @@ def apply_mode_defaults(args: Any, mode_config: dict) -> None:
             missing.append(key)
     if missing:
         print(
-            f"[OpenPI] ERROR: Mode requires these environment variables: "
+            f"[PoggioAI] ERROR: Mode requires these environment variables: "
             f"{', '.join(missing)}\n"
             f"  Set them in your .env file or shell environment.",
             file=sys.stderr,

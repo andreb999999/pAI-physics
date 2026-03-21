@@ -71,6 +71,6 @@ cluster:
   # ---------------------------------------------------------------------------
   # Paths
   # ---------------------------------------------------------------------------
-  repo_root: ${REPO_ROOT:-}                   # e.g. /path/to/OpenPI
+  repo_root: ${REPO_ROOT:-}                   # e.g. /path/to/PoggioAI_MSc
   scratch_root: ${SCRATCH_ROOT:-}             # e.g. /path/to/scratch
-  slurm_output_dir: ${SLURM_OUTPUT_DIR:-}     # e.g. /path/to/OpenPI/slurm_outputs
+  slurm_output_dir: ${SLURM_OUTPUT_DIR:-}     # e.g. /path/to/PoggioAI_MSc/slurm_outputs

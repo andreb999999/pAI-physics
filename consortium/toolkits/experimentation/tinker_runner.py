@@ -1,5 +1,5 @@
 """
-Tinker API experiment runner for OpenPI.
+Tinker API experiment runner for PoggioAI/MSc.
 
 Submits training/fine-tuning jobs to the Tinker API (thinkingmachines.ai/tinker)
 instead of running experiments locally or via SLURM.
@@ -65,7 +65,7 @@ def submit_tinker_job(
     idea_data: dict,
     run_dir: str,
     config: dict,
-    job_name: str = "openpi_experiment",
+    job_name: str = "poggioaimsc_experiment",
     model_name: Optional[str] = None,
 ) -> dict:
     """Submit a training experiment to the Tinker API.

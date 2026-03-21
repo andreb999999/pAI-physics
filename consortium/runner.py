@@ -499,7 +499,7 @@ def main():
     mode = resolve_mode(args)
     mode_config = load_mode_config(mode)
     apply_mode_defaults(args, mode_config)
-    print(f"[OpenPI] Running in {mode} mode — {mode_config.get('description', '')}")
+    print(f"[PoggioAI] Running in {mode} mode — {mode_config.get('description', '')}")
 
     llm_config = load_llm_config()
 

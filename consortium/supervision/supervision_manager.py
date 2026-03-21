@@ -1,8 +1,8 @@
 """
-Supervision Manager for the OpenPI Research System.
+Supervision Manager for the PoggioAI/MSc Research System.
 
 This module manages hierarchical supervision to prevent hallucination and ensure
-quality as specified in the Full OpenPI Agentization Plan.
+quality as specified in the Full PoggioAI/MSc Agentization Plan.
 """
 
 import logging

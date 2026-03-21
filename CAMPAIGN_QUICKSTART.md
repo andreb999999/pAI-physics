@@ -72,7 +72,7 @@ notification:
 ## Step 3: Initialize the Campaign
 
 ```bash
-cd <your-clone-of-OpenPI>
+cd <your-clone-of-PoggioAI_MSc>
 conda activate <your-env>
 
 python scripts/campaign_heartbeat.py --campaign my_campaign.yaml --init
@@ -113,7 +113,7 @@ python scripts/campaign_cli.py --campaign my_campaign.yaml status
 To automate on Linux/macOS without OpenClaw, add a crontab entry:
 ```bash
 # Run heartbeat every 15 minutes
-*/15 * * * * cd /path/to/OpenPI && /path/to/conda/envs/bin/python scripts/campaign_heartbeat.py --campaign my_campaign.yaml >> logs/heartbeat.log 2>&1
+*/15 * * * * cd /path/to/PoggioAI_MSc && /path/to/conda/envs/bin/python scripts/campaign_heartbeat.py --campaign my_campaign.yaml >> logs/heartbeat.log 2>&1
 ```
 
 ---

@@ -1,13 +1,13 @@
 # =============================================================================
-# OpenPI Deployment Mode Profiles
+# PoggioAI/MSc Deployment Mode Profiles
 # =============================================================================
 # Each mode defines defaults for experiment execution, budget, and features.
 # CLI flags and .llm_config.yaml always take precedence over these defaults.
 #
 # Usage:
-#   ./openpi run --mode local --task "..."
-#   ./openpi run --mode tinker --task "..."
-#   ./openpi run --mode hpc --task "..."
+#   ./poggioaimsc run --mode local --task "..."
+#   ./poggioaimsc run --mode tinker --task "..."
+#   ./poggioaimsc run --mode hpc --task "..."
 
 local:
   description: "Laptop-only mode — no external compute, CPU-only experiments"

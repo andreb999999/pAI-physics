@@ -1,5 +1,5 @@
 # =============================================================================
-# OpenPI LLM Configuration
+# PoggioAI/MSc LLM Configuration
 # =============================================================================
 # Customize this file for your runs. See .llm_config.yaml.example for docs.
 # This file is gitignored after the initial clone — your changes stay local.
