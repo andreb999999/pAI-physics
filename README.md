@@ -1,8 +1,15 @@
-# OpenPI: Multi-Agent Research-to-Paper Pipeline
+# PoggioAI/MSc
+### Proof-Oriented Generative General Intelligence Orchestration: Agentic Investigation / Multi-agent Scientific Collaboration
 
-Goal: Bring down the steer rate by 2-3 orders of magnitude. Don't know exactly what research will be automated, but we estimate that to go from idea/hypothesis to final paper of low to average quality, one needs on order of magnitude of 10^2 GPT Pro Calls, and we want to bring this down to 0-10 user prompts (steers). 
+[Website](https://PoggioAI.github.io) | [Discord](https://discord.gg/Pz7spPPY) | [Paper](https://PoggioAI.github.io) | [GitHub](https://github.com/PoggioAI/PoggioAI_MSc)
 
-`consortium` is a local agentic research platform that turns a research prompt into literature-grounded, experiment-backed, and optionally theorem-verified paper artifacts. (The core Python package is named `consortium`; **OpenPI** is the project name.)
+Goal: Bring down the steer rate by 2 orders of magnitude. Don't know exactly what research will be automated, but we estimate that to go from idea/hypothesis to final paper of low to average quality, one needs on order of magnitude of 10^2-10^3 GPT Pro Calls, and we want to bring this down to 0-10 user prompts (steers).
+
+**PoggioAI/MSc** is an open-source, customizable, modular multi-agent system for academic research workflows. Our goal is not autonomous scientific ideation, nor fully automated research. It is narrower and more practical: to reduce by orders of magnitude the human steering required to turn a specified hypothesis into a literature-grounded, mathematically established, experimentally supported, submission-oriented manuscript draft. Built with a current emphasis on machine learning theory and adjacent quantitative fields.
+
+The system implements a fixed workflow that decomposes work into 21 subagents across literature, theory, experiment, synthesis, and writing phases, with repair and follow-up routes when artifacts are incomplete, inconsistent, not novel, or not adequately established. Progress is represented by named intermediate outputs and stage-level validation gates (the *artifact contract*) rather than by free-form dialogue alone. Optional rigor-enhancing components include theorem-oriented reasoning, multi-model debate counsel, and tree-search-based exploration.
+
+(The core Python package is named `consortium`; **PoggioAI/MSc** is the project name.)
 
 - License: MIT (`LICENSE`)
 - Runtime: Python 3.11 (recommended via conda)
@@ -10,6 +17,14 @@ Goal: Bring down the steer rate by 2-3 orders of magnitude. Don't know exactly w
 - Core package: `consortium/`
 
 > Runtime note: the launcher now runs a fixed workflow graph. `--pipeline-mode` is accepted for backward compatibility but ignored.
+
+### Important Remarks
+
+This project was entirely vibecoded in about 3 weeks (Claude Code + Cursor). However, our cumulative years of beliefs of how ML research should be done are hard-coded into the `md` files. In the prehistory of this project, we were inspired by [freephdlabor](https://github.com/ltjed/freephdlabor) and [OpenClaw](https://docs.openclaw.ai/).
+
+Make sure you deeply read and review the papers that PoggioAI develops, run some sanity-check thorough deep researches to check novelty and related work, and ask your reasoning model of choice to deeply and thoroughly proofcheck all the claims!
+
+We hope this will be helpful for you! If you like this project please support us on social media! If PoggioAI helped you with your research please acknowledge us!
 
 ---
 
@@ -106,7 +121,7 @@ Runs are resumable through LangGraph checkpoints (`checkpoints.db`) and can be s
 
 ## Guarantees and Non-Guarantees
 
-### What Consortium Guarantees
+### What PoggioAI/MSc Guarantees
 
 - **Workflow execution**: Given valid API keys and a task prompt, the pipeline will execute every stage in the fixed workflow graph and produce the documented artifacts.
 - **Artifact generation**: Each stage produces its mandatory output files (see [Quality Gates and Artifact Contracts](#quality-gates-and-artifact-contracts)).
@@ -114,7 +129,7 @@ Runs are resumable through LangGraph checkpoints (`checkpoints.db`) and can be s
 - **Checkpointing**: Every completed stage is persisted to SQLite. A crashed run can be resumed from the last checkpoint.
 - **Validation gates**: When `--enforce-paper-artifacts` or `--enforce-editorial-artifacts` are enabled, the pipeline will not report success unless the specified artifacts exist and pass structural checks.
 
-### What Consortium Does NOT Guarantee
+### What PoggioAI/MSc Does NOT Guarantee
 
 - **Scientific correctness**: All generated claims, proofs, experimental results, and literature citations require human verification before any submission or publication.
 - **Reproducibility across runs**: LLM outputs are stochastic. Two runs with the same task and model will produce different papers.
@@ -606,7 +621,7 @@ python scripts/campaign_cli.py --campaign my_campaign.yaml status
 
 To automate without OpenClaw, add a crontab entry:
 ```bash
-*/15 * * * * cd /path/to/OpenPI && python scripts/campaign_heartbeat.py --campaign my_campaign.yaml >> logs/heartbeat.log 2>&1
+*/15 * * * * cd /path/to/PoggioAI_MSc && python scripts/campaign_heartbeat.py --campaign my_campaign.yaml >> logs/heartbeat.log 2>&1
 ```
 
 ### Campaign Lifecycle
@@ -633,7 +648,7 @@ flowchart TD
 
     heartbeat --> launchNext{"Next PENDING\nstage ready?"}
     launchNext -->|"yes"| buildPrompt["Build enriched prompt\n(task + memory summaries)"]
-    buildPrompt --> launch["launch_multiagent.py\n(Consortium multi-agent pipeline)"]
+    buildPrompt --> launch["launch_multiagent.py\n(PoggioAI/MSc multi-agent pipeline)"]
     launchNext -->|"no"| wait
 
     heartbeat -.->|"on events"| notify["Notifications\n(ntfy / Slack / Telegram / SMS)"]
@@ -1039,7 +1054,7 @@ The proofreading and reviewer agents produce `.tex`/`.pdf` report artifacts; the
 
 ## Submission Checklist (NeurIPS / ICML / ICLR)
 
-Consortium produces a paper draft, not a submission-ready manuscript. Before submitting to any venue, complete this human verification checklist:
+PoggioAI/MSc produces a paper draft, not a submission-ready manuscript. Before submitting to any venue, complete this human verification checklist:
 
 ### Novelty and Positioning
 - [ ] Verify the core claim is genuinely novel by searching recent proceedings (not just arXiv) for the same or equivalent result.
@@ -1365,7 +1380,7 @@ export CONSORTIUM_SEARCH_MAX_MATCHES=200
 
 ## Empirical Quality Evidence
 
-_This section is a placeholder for benchmark results measuring the quality of Consortium-generated papers._
+_This section is a placeholder for benchmark results measuring the quality of PoggioAI/MSc-generated papers._
 
 Planned metrics:
 - **Artifact completion rate**: Fraction of runs that produce all required artifacts without manual intervention.
@@ -1396,4 +1411,4 @@ Test modules:
 
 ## License
 
-MIT. See `LICENSE`. Copyright (c) 2025 Tianjin Li and Junyu Ren.
+MIT. See `LICENSE`. Copyright (c) 2025 Mahmoud Abdelmoneum, Pierfrancesco Beneventano, Tomaso Poggio.
