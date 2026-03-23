@@ -36,10 +36,36 @@ The system goes beyond simple prompt chaining. MSc supports multi-model counsel 
 git clone https://github.com/PoggioAI/PoggioAI_MSc.git
 cd PoggioAI_MSc
 git checkout MSc_Prod
+```
 
-python -m venv .venv
+Create a virtual environment with Python 3.10+. Check your version first:
+
+```bash
+python3 --version   # Must be 3.10 or higher
+```
+
+If your default `python3` is 3.10+:
+
+```bash
+python3 -m venv .venv
 source .venv/bin/activate
+pip install --upgrade pip
+pip install -e .
+```
 
+If your default Python is older (e.g., 3.9), use one of these alternatives:
+
+```bash
+# macOS with Homebrew
+brew install python@3.12
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -e .
+
+# With conda
+conda create -n msc python=3.12 -y
+conda activate msc
 pip install -e .
 ```
 
