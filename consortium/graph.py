@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, List, Optional
+from typing import Any, Callable, List, Optional
 
 from langgraph.graph import END, StateGraph
 from langgraph.types import Send
@@ -475,8 +475,9 @@ def _formalize_results_state_mapper(inner_node: Callable) -> Callable:
             import logging
             logging.getLogger(__name__).warning(
                 "formalize_results_agent produced no output — "
-                "formalized_results state key not populated"
+                "writing sentinel to formalized_results"
             )
+            result["formalized_results"] = "[formalize_results_agent produced no output]"
         return result
     wrapped.__name__ = getattr(inner_node, "__name__", "formalize_results_agent")
     return wrapped
@@ -1562,9 +1563,21 @@ def build_duality_gate_node() -> Any:
             }
 
         if both_passed:
+            check_a = duality_result.get("check_a", {})
+            check_b = duality_result.get("check_b", {})
+            summary_parts = []
+            for label, check in [("Practice", check_a), ("Rigor", check_b)]:
+                score = check.get("score", "?")
+                summary_parts.append(f"Check {label}: {score}/10")
+                for s in check.get("suggestions", []):
+                    summary_parts.append(f"  - {s}")
             return {
                 "current_agent": "resource_preparation_agent",
-                "agent_task": None,
+                "agent_task": (
+                    "DUALITY CHECK PASSED. Summary of findings for paper production:\n"
+                    + "\n".join(summary_parts)
+                    + "\n\nFull results: paper_workspace/duality_check.json"
+                ),
             }
 
         if duality_rework >= max_attempts:
@@ -1572,9 +1585,21 @@ def build_duality_gate_node() -> Any:
                 f"Warning: duality_gate failed after {max_attempts} attempts, "
                 "proceeding to resource_preparation anyway."
             )
+            check_a = duality_result.get("check_a", {})
+            check_b = duality_result.get("check_b", {})
+            failures = []
+            if not check_a.get("passed", True):
+                failures.append(f"Practice: {check_a.get('reasoning', 'Failed')} (score {check_a.get('score', '?')}/10)")
+            if not check_b.get("passed", True):
+                failures.append(f"Rigor: {check_b.get('reasoning', 'Failed')} (score {check_b.get('score', '?')}/10)")
             return {
                 "current_agent": "resource_preparation_agent",
-                "agent_task": None,
+                "agent_task": (
+                    f"DUALITY CHECK FORCED FORWARD after {max_attempts} attempts.\n"
+                    "Unresolved issues (address in paper where possible):\n"
+                    + "\n".join(f"- {f}" for f in failures)
+                    + "\n\nFull results: paper_workspace/duality_check.json"
+                ) if failures else None,
             }
 
         check_a = duality_result.get("check_a", {})
