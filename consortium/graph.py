@@ -538,10 +538,14 @@ def build_validation_gate_node() -> Any:
             for gate, result in validation["validation_results"].items()
             if not result.get("is_valid")
         ]
+        # Only increment retry count when review_verdict gate has actually
+        # run (i.e., the reviewer produced a verdict).  Artifact-missing
+        # failures should not consume retry slots.
+        has_review_verdict = "review_verdict" in validation["validation_results"]
         return {
             "validation_results": validation["validation_results"],
             "finished": False,
-            "validation_retry_count": retry_count + 1,
+            "validation_retry_count": retry_count + (1 if has_review_verdict else 0),
             "agent_task": (
                 "Revise the paper to satisfy validation gates before finalization.\n"
                 "Validation failures:\n" + "\n".join(error_lines)

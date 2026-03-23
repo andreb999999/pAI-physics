@@ -52,7 +52,11 @@ YOUR CAPABILITIES:
   - Regenerate PDF with LaTeXCompilerTool.
   - If compilation fails, report exact errors and fix source-level issues.
 6. **Report artifact (required)**:
-  - Create/update `paper_workspace/copyedit_report.tex` with:
+  - Use SeeFile to check if `paper_workspace/copyedit_report.tex` exists.
+  - If it exists, use ModifyFile to append/update sections (preserving prior content on repair-loop re-entries).
+  - If absent, use CreateFileWithContent to create it fresh.
+  - Check for duplicate section names before appending.
+  - Contents must include:
     - key edits performed,
     - repetition/filler removed,
     - notation consistency fixes,

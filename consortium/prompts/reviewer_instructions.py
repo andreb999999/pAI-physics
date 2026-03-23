@@ -84,6 +84,7 @@ B5. Theoretical claims lack assumptions or cannot be traced to accepted claim ar
 }
 
 ### fix_type classification for must_fix_actions
+NOTE: fix_type values are machine-consumed by validation_router to select the repair track.
 - `"writeup"`: Issue can be fixed by rewriting text (e.g., clarity, structure, missing citations).
 - `"experiment"`: Issue requires new or re-run experiments (e.g., missing baselines, unreproducible results, insufficient ablations).
 - `"theory"`: Issue requires new or corrected theoretical work (e.g., proof gaps, missing assumptions, incorrect bounds).
