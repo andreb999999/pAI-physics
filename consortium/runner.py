@@ -194,7 +194,7 @@ def _filter_installed_imports(import_names):
 
 def _resolve_model_settings(args, llm_config):
     """Return (model_name, reasoning_effort, verbosity, budget_tokens, effort)."""
-    model_name = "gpt-5"
+    model_name = "claude-sonnet-4-6"
     reasoning_effort = "high"
     verbosity = "medium"
     budget_tokens = None
@@ -513,18 +513,16 @@ def main():
         print("Error: --start-from-stage requires --resume <workspace_dir>.")
         return 1
 
-    # Set up interrupt socket (used by live-steering via state injection)
-    input_queue = setup_user_input_socket(args.callback_host, args.callback_port)
-    print(f"Interruption port available at {args.callback_host}:{args.callback_port}")
-    # Also start HTTP steering server on port+1 for programmatic clients (e.g. OpenClaw)
-    add_http_steering(input_queue, host=args.callback_host, port=args.callback_port + 1)
-
     model_name, reasoning_effort, verbosity, budget_tokens, effort = _resolve_model_settings(
         args, llm_config
     )
 
     # --- API key validation (always run; also serves as the dry-run check) ---
     key_errors = _validate_api_keys(model_name)
+    # Eagerly validate counsel API keys so we don't fail hours into an expensive run
+    if getattr(args, "enable_counsel", False):
+        for spec in DEFAULT_COUNSEL_MODEL_SPECS:
+            key_errors.extend(_validate_api_keys(spec["model"]))
     if key_errors:
         for err in key_errors:
             print(f"[ERROR] {err}")
@@ -544,6 +542,18 @@ def main():
         print(f"  output format   : {getattr(args, 'output_format', 'latex')}")
         print("\n[dry-run] All checks passed. Remove --dry-run to start the real run.")
         return 0
+
+    # Set up interrupt socket (used by live-steering via state injection)
+    input_queue = None
+    if not getattr(args, "no_steering", False):
+        input_queue = setup_user_input_socket(args.callback_host, args.callback_port)
+        print(f"Interruption port available at {args.callback_host}:{args.callback_port}")
+        # Also start HTTP steering server on port+1 for programmatic clients (e.g. OpenClaw)
+        add_http_steering(input_queue, host=args.callback_host, port=args.callback_port + 1)
+    else:
+        from queue import Queue
+        input_queue = Queue()
+        print("[PoggioAI] Steering sockets disabled (--no-steering)")
 
     print(f"\nLangGraph Research System Initialized — model: {model_name}")
 

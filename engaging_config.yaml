@@ -1,7 +1,21 @@
 # =============================================================================
-# MIT Engaging Cluster Configuration for Consortium
+# HPC / SLURM Cluster Configuration for Consortium
 # =============================================================================
-# Single source of truth for all Engaging-specific settings.
+# This file ships with defaults for the MIT Engaging cluster. If you are
+# deploying on a different SLURM cluster, customize the following fields:
+#
+#   cluster.conda_init_script  — path to your conda conda.sh init script
+#   cluster.conda_env_prefix   — path to your conda environment
+#   cluster.modules.*          — module names available on your cluster
+#   orchestrator.partition     — CPU partition for the orchestrator job
+#   experiment_gpu.partition   — GPU partition for experiment jobs
+#   paths.repo_root            — path to this repository on your cluster
+#   paths.slurm_output_dir    — where to write SLURM logs
+#
+# All fields support env-var expansion: ${VAR:-default}
+# Set env vars (CONDA_INIT_SCRIPT, CONDA_ENV_PREFIX, REPO_ROOT, etc.)
+# or edit the values below directly.
+#
 # Referenced by SLURM scripts, bootstrap, and the SLURM experiment runner.
 
 cluster:
@@ -71,6 +85,6 @@ cluster:
   # ---------------------------------------------------------------------------
   # Paths
   # ---------------------------------------------------------------------------
-  repo_root: ${REPO_ROOT:-}                   # e.g. /path/to/PoggioAI_MSc
+  repo_root: ${REPO_ROOT:-}                   # e.g. /path/to/OpenPI
   scratch_root: ${SCRATCH_ROOT:-}             # e.g. /path/to/scratch
-  slurm_output_dir: ${SLURM_OUTPUT_DIR:-}     # e.g. /path/to/PoggioAI_MSc/slurm_outputs
+  slurm_output_dir: ${SLURM_OUTPUT_DIR:-}     # e.g. /path/to/OpenPI/slurm_outputs

@@ -1,6 +1,6 @@
 [build-system]
 requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.backends.legacy:build"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "consortium"
@@ -41,12 +41,10 @@ observability = [
 ]
 
 # pip install consortium[docs]
+# Matches requirements-docs.txt
 docs = [
-    "pypandoc",
-    "python-docx",
-    "pillow",
-    "mammoth",
-    "markdownify",
+    "mammoth==1.9.1",
+    "markdownify==1.1.0",
     "python-pptx",
     "puremagic",
     "pydub",
@@ -55,10 +53,10 @@ docs = [
 ]
 
 # pip install consortium[web]
+# Matches requirements-web.txt
 web = [
-    "playwright",
     "crawl4ai",
-    "jina",
+    "playwright",
     "serpapi",
     "pathvalidate",
 ]
@@ -72,6 +70,12 @@ experiment = [
     "tokenizers",
     "tqdm",
     "wandb",
+]
+
+# pip install consortium[dev]
+dev = [
+    "pytest",
+    "pytest-cov",
 ]
 
 # pip install consortium[all]  — everything except vllm / gpu extras

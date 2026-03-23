@@ -237,6 +237,14 @@ Examples:
     )
 
     parser.add_argument(
+        "--no-steering",
+        action="store_true",
+        help="Disable the TCP/HTTP live-steering sockets (ports 5001/5002). "
+             "Use this in Docker containers, restricted environments, or shared servers "
+             "where binding ports is not possible.",
+    )
+
+    parser.add_argument(
         "--output-format",
         type=str,
         choices=["latex", "markdown"],

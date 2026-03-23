@@ -10,7 +10,7 @@
 
 ```bash
 # 1. Clone the repo and enter it
-git clone <repo-url> PoggioAI_MSc && cd PoggioAI_MSc
+git clone <repo-url> OpenPI && cd OpenPI
 
 # 2. Bootstrap the environment (creates conda env + installs deps)
 ./scripts/bootstrap.sh consortium full
@@ -60,7 +60,7 @@ All cluster-specific settings are centralized here:
 **Important**: Set these paths for your cluster either via env vars or by editing the file directly:
 - `CONDA_INIT_SCRIPT` — path to your conda `conda.sh` init script
 - `CONDA_ENV_PREFIX` — path to your conda environment
-- `REPO_ROOT` — path to the PoggioAI_MSc clone
+- `REPO_ROOT` — path to the OpenPI clone
 - `SLURM_OUTPUT_DIR` — where to write SLURM logs
 
 ### .llm_config.yaml

@@ -1,7 +1,7 @@
 # PoggioAI/MSc
 ### Proof-Oriented Generative General Intelligence Orchestration: Agentic Investigation / Multi-agent Scientific Collaboration
 
-[Website](https://PoggioAI.github.io) | [Discord](https://discord.gg/Pz7spPPY) | [Paper](https://PoggioAI.github.io) | [GitHub](https://github.com/PoggioAI/PoggioAI_MSc)
+[Website](https://PoggioAI.github.io) | [Discord](https://discord.gg/Pz7spPPY) | [Paper](https://PoggioAI.github.io) | [GitHub](https://github.com/PierBeneventano/OpenPI)
 
 **Goal:** In our experience, moving from a strong human-developed idea to a solid machine-learning-theory manuscript still often takes on the order of $10^2$ to $10^3$ prompts---if possible at all---with frontier reasoning models and agentic systems as Claude Code or GPT Pro. The goal here is to bring this down to 0-10 user prompts (steers).
 
@@ -31,6 +31,8 @@ We hope this will be helpful for you! If you like this project please support us
 ## 5-Minute Quickstart
 
 > **Cost**: ~$2–10 (single model, no counsel) | **Time**: 15–40 min | **Requires**: one API key
+>
+> **Prerequisites**: [conda](https://docs.conda.io/en/latest/miniconda.html) (Miniconda or Anaconda) must be installed first.
 
 ```bash
 # 1. Bootstrap environment (one-time, ~5 min)
@@ -621,7 +623,7 @@ python scripts/campaign_cli.py --campaign my_campaign.yaml status
 
 To automate without OpenClaw, add a crontab entry:
 ```bash
-*/15 * * * * cd /path/to/PoggioAI_MSc && python scripts/campaign_heartbeat.py --campaign my_campaign.yaml >> logs/heartbeat.log 2>&1
+*/15 * * * * cd /path/to/OpenPI && python scripts/campaign_heartbeat.py --campaign my_campaign.yaml >> logs/heartbeat.log 2>&1
 ```
 
 ### Campaign Lifecycle

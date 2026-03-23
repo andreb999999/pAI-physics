@@ -32,22 +32,30 @@ WORKDIR /app
 FROM base AS minimal
 
 COPY pyproject.toml .
+COPY requirements-minimal.txt .
+COPY requirements-docs.txt .
 COPY consortium/ consortium/
 COPY launch_multiagent.py .
+COPY config/ config/
 COPY .env.example .
 
 RUN pip install --no-cache-dir -e ".[docs]"
 
 ENV CONSORTIUM_LOG_TO_FILES=0
-ENTRYPOINT ["python", "launch_multiagent.py"]
+ENTRYPOINT ["python", "launch_multiagent.py", "--no-steering"]
 
 # ── Stage 3: full install (all optional extras) ───────────────────────────────
 FROM base AS full
 
 COPY pyproject.toml .
+COPY requirements-minimal.txt .
+COPY requirements-docs.txt .
+COPY requirements-web.txt .
+COPY requirements-observability.txt .
 COPY consortium/ consortium/
 COPY launch_multiagent.py .
 COPY scripts/ scripts/
+COPY config/ config/
 COPY .env.example .
 COPY automation_tasks/ automation_tasks/
 COPY examples/ examples/

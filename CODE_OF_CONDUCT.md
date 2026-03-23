@@ -63,7 +63,7 @@ offline event.
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
 reported to the community leaders responsible for enforcement through the
 project's GitHub repository at
-https://github.com/PoggioAI/PoggioAI_MSc or by direct message to a maintainer
+https://github.com/PierBeneventano/OpenPI or by direct message to a maintainer
 through the official Discord server at https://discord.gg/Pz7spPPY. Please mark
 reports as Code of Conduct matters and request private handling when possible.
 All complaints will be reviewed and investigated promptly and fairly.

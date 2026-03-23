@@ -93,7 +93,10 @@ fi
 
 python -m pip install --upgrade pip
 python -m pip install -r "$REPO_ROOT/requirements-minimal.txt"
-python -m pip install -r "$REPO_ROOT/requirements-observability.txt"
+
+if has_capability observability || has_capability full; then
+  python -m pip install -r "$REPO_ROOT/requirements-observability.txt"
+fi
 
 if has_capability docs; then
   python -m pip install -r "$REPO_ROOT/requirements-docs.txt"
