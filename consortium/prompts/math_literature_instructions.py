@@ -23,7 +23,10 @@ MANDATORY OUTPUTS
 - Optional: lightweight library-backed claim nodes tagged with `origin:library`
 
 WORKFLOW
-1) Identify target theorem families from active claim graph (optimization/generalization/approximation/etc.).
+1) Identify target theorem families from the active claim graph (optimization/generalization/approximation/etc.).
+   If claim_graph.json is empty or absent (e.g., because math_proposer_agent has not run yet),
+   read paper_workspace/research_goals.json and paper_workspace/track_decomposition.json
+   to derive target theorem families from the stated theory goals directly.
 2) Search papers (Semantic Scholar, arXiv, web) for reusable lemmas and proof templates.
 3) Read key PDFs to verify exact assumptions and statement forms.
 4) For each reusable result, record:

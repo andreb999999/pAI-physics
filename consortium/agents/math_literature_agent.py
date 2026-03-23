@@ -23,6 +23,7 @@ from ..toolkits.filesystem.file_editing.file_editing_tools import (
 try:
     from ..toolkits.search.open_deep_search.ods_tool import OpenDeepSearchTool
 except (ImportError, ModuleNotFoundError):
+    print("[math_literature_agent] WARNING: OpenDeepSearchTool unavailable — falling back to PaperSearch + arXiv only.")
     OpenDeepSearchTool = None
 
 
@@ -60,7 +61,7 @@ def build_node(
     tools = get_tools(workspace_dir, model_id)
     system_prompt = get_math_literature_system_prompt(tools=tools, managed_agents=None)
     counsel_models = cfg.get("counsel_models")
-    if counsel_models:
+    if counsel_models is not None:
         from ..counsel import create_counsel_node
         return create_counsel_node(system_prompt, tools, "math_literature_agent", workspace_dir, counsel_models)
     return create_specialist_agent(

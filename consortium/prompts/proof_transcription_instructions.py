@@ -24,6 +24,15 @@ MANDATORY OUTPUTS
 - `paper_workspace/theory_track_summary.json`
 
 MANDATORY PRE-CHECK (before transcribing any claim):
+- Check if math_workspace/human_review_flags.md exists. If so, read it.
+  Any claim listed there has an unresolved tool-vs-manual verification conflict.
+  Transcribe these claims with an explicit \\footnote{Pending human review: <reason from flags file>}
+  rather than the standard tier footnote, regardless of their claim graph status.
+- Check if any checks/<claim_id>.jsonl files contain dependency_demotion_warning entries.
+  If a claim at verified_numeric or verified_symbolic has a demoted dependency,
+  downgrade it to \\begin{conjecture} with a remark explaining the dependency issue,
+  or add a caveat footnote: "Warning: dependency <dep_id> was demoted; this result
+  may require re-verification."
 - Read claim_graph.json and identify all claims with status=proved_draft
   (not verified_symbolic, verified_numeric, or accepted).
 - For each proved_draft claim that is must_accept:
@@ -77,7 +86,12 @@ theory_sections.tex:
   \\label{thm:<claim_id>}
 - Use \\cite{<key>} for all references; keys from paper_workspace/references.bib.
 - All notation via \\newcommand — no hardcoded symbols. Definitions go in
-  paper_workspace/math_preamble.tex (create if absent).
+  paper_workspace/math_preamble.tex. IMPORTANT: Before writing this file:
+  (1) Use SeeFile to check if math_preamble.tex already exists.
+  (2) If it exists, read its contents and APPEND new \\newcommand entries
+      using ModifyFile — do NOT overwrite with CreateFileWithContent.
+  (3) Before appending, check for duplicate command names to avoid redefinition errors.
+  (4) Only use CreateFileWithContent if the file does not exist yet.
 
 appendix_proofs.tex:
 - Fragment only: no \\appendix command — writeup_agent controls document structure.

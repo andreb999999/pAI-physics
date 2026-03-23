@@ -82,7 +82,7 @@ Step 0:
 
 Step 0.5 — Read Literature Context:
 - Run ListDir on math_workspace/ to discover files written by math_literature_agent.
-- Read math_workspace/literature_notes.md (or equivalent) for:
+- Read math_workspace/literature_lemma_notes.md for:
   - Relevant theorems and proof techniques from the literature.
   - Assumption patterns (e.g., L-smoothness, sub-Gaussian tails) that are
     standard in this area and should be reused rather than re-derived.

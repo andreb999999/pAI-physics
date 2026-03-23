@@ -458,7 +458,7 @@ def build_tree_search_theory_track(
     from consortium.pdf_summary import with_pdf_summary
 
     graph = StateGraph(ResearchState)
-    counsel_kwargs = {"counsel_models": counsel_models} if counsel_models else {}
+    counsel_kwargs = {"counsel_models": counsel_models} if counsel_models is not None else {}
 
     def _wrap(node, name):
         return with_pdf_summary(node, name, workspace_dir, summary_model_id)

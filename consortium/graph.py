@@ -615,9 +615,10 @@ def build_theory_track_subgraph(
     counsel_models: Optional[List[Any]] = None,
     summary_model_id: Optional[str] = "claude-sonnet-4-6",
     model_registry: Optional[Any] = None,
+    adversarial_verification: bool = False,
 ):
     graph = StateGraph(ResearchState)
-    counsel_kwargs = {"counsel_models": counsel_models} if counsel_models else {}
+    counsel_kwargs = {"counsel_models": counsel_models} if counsel_models is not None else {}
 
     def _m(agent_name: str) -> Any:
         if model_registry is not None:
@@ -641,7 +642,7 @@ def build_theory_track_subgraph(
     )
     graph.add_node(
         "math_rigorous_verifier_agent",
-        _wrap(build_math_rigorous_verifier_node(_m("math_rigorous_verifier_agent"), workspace_dir, authorized_imports, **counsel_kwargs), "math_rigorous_verifier_agent"),
+        _wrap(build_math_rigorous_verifier_node(_m("math_rigorous_verifier_agent"), workspace_dir, authorized_imports, adversarial=adversarial_verification, **counsel_kwargs), "math_rigorous_verifier_agent"),
     )
     graph.add_node(
         "math_empirical_verifier_agent",
@@ -651,13 +652,152 @@ def build_theory_track_subgraph(
         "proof_transcription_agent",
         _wrap(build_proof_transcription_node(_m("proof_transcription_agent"), workspace_dir, authorized_imports, **counsel_kwargs), "proof_transcription_agent"),
     )
+    # -- Issue 3: goal tag validation gate (warn-only, no LLM) --
+    def goal_tag_validation_gate(state: dict) -> dict:
+        """Check that all must_accept claims have goal:<id> tags."""
+        math_ws = os.path.join(workspace_dir, "math_workspace")
+        cg_path = os.path.join(math_ws, "claim_graph.json")
+        warnings = []
+        try:
+            with open(cg_path) as f:
+                cg = json.load(f)
+            for claim in cg.get("claims", []):
+                if claim.get("must_accept") and claim.get("status") != "rejected":
+                    tags = [str(t) for t in claim.get("tags", [])]
+                    has_goal_tag = any(t.startswith("goal:") for t in tags)
+                    if not has_goal_tag:
+                        warnings.append(
+                            f"- {claim.get('id')}: must_accept=true but no goal:<id> tag"
+                        )
+        except (FileNotFoundError, json.JSONDecodeError):
+            pass  # claim graph may not exist yet if proposer failed
+        if warnings:
+            warn_path = os.path.join(math_ws, "goal_tag_warnings.md")
+            content = "# Goal Tag Warnings\n\nThe following must_accept claims are missing goal:<id> tags.\nThis may cause verify_completion to under-count goal progress.\n\n" + "\n".join(warnings) + "\n"
+            os.makedirs(math_ws, exist_ok=True)
+            with open(warn_path, "w") as f:
+                f.write(content)
+            print(f"[goal_tag_validation_gate] WARNING: {len(warnings)} must_accept claims missing goal tags. See {warn_path}")
+        return {"agent_task": None}
+
+    # -- Issue 6: human review gate (scan checks for human_review_needed) --
+    def human_review_gate(state: dict) -> dict:
+        """Scan checks/*.jsonl for human_review_needed flags and write summary."""
+        math_ws = os.path.join(workspace_dir, "math_workspace")
+        checks_dir = os.path.join(math_ws, "checks")
+        flags = []
+        if os.path.isdir(checks_dir):
+            for fname in os.listdir(checks_dir):
+                if fname.endswith(".jsonl"):
+                    fpath = os.path.join(checks_dir, fname)
+                    try:
+                        with open(fpath) as f:
+                            for line in f:
+                                line = line.strip()
+                                if not line:
+                                    continue
+                                try:
+                                    entry = json.loads(line)
+                                except json.JSONDecodeError:
+                                    continue
+                                if entry.get("next_action") == "human_review_needed":
+                                    claim_id = fname.replace(".jsonl", "")
+                                    reason = entry.get("reason", entry.get("message", "tool-vs-manual conflict"))
+                                    flags.append(f"- {claim_id}: {reason}")
+                    except OSError:
+                        continue
+        if flags:
+            flag_path = os.path.join(math_ws, "human_review_flags.md")
+            content = "# Human Review Flags\n\nThe following claims have unresolved tool-vs-manual verification conflicts.\n\n" + "\n".join(flags) + "\n"
+            with open(flag_path, "w") as f:
+                f.write(content)
+            print(f"[human_review_gate] {len(flags)} claims flagged for human review. See {flag_path}")
+        return {"agent_task": None}
+
+    # -- Issue 10: intra-track repair gate (max 2 retries) --
+    REPAIR_THRESHOLD = 0.7  # must_accept completion ratio below which we retry
+    MAX_THEORY_REPAIRS = 2
+
+    def theory_track_repair_gate(state: dict) -> dict:
+        """Check must_accept claim completion; route back to prover if below threshold."""
+        repair_count = state.get("theory_repair_count", 0)
+        math_ws = os.path.join(workspace_dir, "math_workspace")
+        summary_path = os.path.join(workspace_dir, "paper_workspace", "theory_track_summary.json")
+
+        # Try to read the structured summary
+        must_accept_total = 0
+        must_accept_ok = 0
+        try:
+            with open(summary_path) as f:
+                summary = json.load(f)
+            verified = set(summary.get("verified_numeric_claims", []))
+            verified |= set(summary.get("verified_symbolic_claims", []))
+            # Count must_accept claims from the claim graph
+            cg_path = os.path.join(math_ws, "claim_graph.json")
+            with open(cg_path) as f:
+                cg = json.load(f)
+            for claim in cg.get("claims", []):
+                if claim.get("must_accept"):
+                    must_accept_total += 1
+                    if claim.get("status") in ("verified_symbolic", "verified_numeric", "accepted"):
+                        must_accept_ok += 1
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            # Can't assess — don't retry
+            return {"agent_task": None}
+
+        ratio = must_accept_ok / must_accept_total if must_accept_total > 0 else 1.0
+        if ratio < REPAIR_THRESHOLD and repair_count < MAX_THEORY_REPAIRS:
+            print(f"[theory_track_repair_gate] must_accept ratio {ratio:.2f} < {REPAIR_THRESHOLD}, "
+                  f"retry {repair_count + 1}/{MAX_THEORY_REPAIRS} — routing back to prover")
+            # Write a targeted repair task for the prover
+            failed_claims = []
+            try:
+                with open(os.path.join(math_ws, "claim_graph.json")) as f:
+                    cg = json.load(f)
+                for claim in cg.get("claims", []):
+                    if claim.get("must_accept") and claim.get("status") in ("proved_draft", "proposed"):
+                        failed_claims.append(claim.get("id", "unknown"))
+            except (FileNotFoundError, json.JSONDecodeError):
+                pass
+            repair_task = (
+                f"REPAIR PASS {repair_count + 1}: Focus on these blocked must_accept claims: "
+                + ", ".join(failed_claims[:10])
+                + ". Read their checks/*.jsonl audit logs for specific failure reasons and fix the proofs."
+            )
+            return {
+                "agent_task": repair_task,
+                "theory_repair_count": repair_count + 1,
+            }
+        if ratio < REPAIR_THRESHOLD:
+            print(f"[theory_track_repair_gate] must_accept ratio {ratio:.2f} still below threshold "
+                  f"after {MAX_THEORY_REPAIRS} retries — proceeding to END")
+        return {"agent_task": None}
+
+    def theory_repair_router(state: dict) -> str:
+        """Route to prover for retry or END."""
+        task = state.get("agent_task")
+        if task and task.startswith("REPAIR PASS"):
+            return "math_prover_agent"
+        return END
+
+    graph.add_node("goal_tag_validation_gate", goal_tag_validation_gate)
+    graph.add_node("human_review_gate", human_review_gate)
+    graph.add_node("theory_track_repair_gate", theory_track_repair_gate)
+
     graph.set_entry_point("math_literature_agent")
     graph.add_edge("math_literature_agent", "math_proposer_agent")
-    graph.add_edge("math_proposer_agent", "math_prover_agent")
+    graph.add_edge("math_proposer_agent", "goal_tag_validation_gate")
+    graph.add_edge("goal_tag_validation_gate", "math_prover_agent")
     graph.add_edge("math_prover_agent", "math_rigorous_verifier_agent")
-    graph.add_edge("math_rigorous_verifier_agent", "math_empirical_verifier_agent")
+    graph.add_edge("math_rigorous_verifier_agent", "human_review_gate")
+    graph.add_edge("human_review_gate", "math_empirical_verifier_agent")
     graph.add_edge("math_empirical_verifier_agent", "proof_transcription_agent")
-    graph.add_edge("proof_transcription_agent", END)
+    graph.add_edge("proof_transcription_agent", "theory_track_repair_gate")
+    graph.add_conditional_edges(
+        "theory_track_repair_gate",
+        theory_repair_router,
+        {"math_prover_agent": "math_prover_agent", END: END},
+    )
     return graph.compile()
 
 
@@ -670,7 +810,7 @@ def build_experiment_track_subgraph(
     model_registry: Optional[Any] = None,
 ):
     graph = StateGraph(ResearchState)
-    counsel_kwargs = {"counsel_models": counsel_models} if counsel_models else {}
+    counsel_kwargs = {"counsel_models": counsel_models} if counsel_models is not None else {}
 
     def _m(agent_name: str) -> Any:
         if model_registry is not None:
@@ -713,14 +853,25 @@ def build_track_subgraph_node(
     subgraph: Any,
     status_field: str,
     status_value: str = "completed",
+    workspace_dir: Optional[str] = None,
 ) -> Any:
     def node(state: dict) -> dict:
         final_state = subgraph.invoke(state)
-        return {
+        result = {
             "agent_outputs": final_state.get("agent_outputs", {}),
             status_field: status_value,
             "agent_task": None,
         }
+        # Forward structured track summaries if available on disk
+        if workspace_dir:
+            summary_path = os.path.join(workspace_dir, "paper_workspace", "theory_track_summary.json")
+            if os.path.isfile(summary_path):
+                try:
+                    with open(summary_path) as f:
+                        result["theory_track_summary"] = json.load(f)
+                except (json.JSONDecodeError, OSError):
+                    pass
+        return result
 
     node.__name__ = status_field.removesuffix("_status")
     return node
@@ -747,7 +898,7 @@ def build_synthesis_literature_node(
         model,
         workspace_dir,
         authorized_imports,
-        **({"counsel_models": counsel_models} if counsel_models else {}),
+        **({"counsel_models": counsel_models} if counsel_models is not None else {}),
     )
 
     def synthesis_node(state: dict) -> dict:
@@ -1366,7 +1517,7 @@ def build_followup_lit_review_node(
         model,
         workspace_dir,
         authorized_imports,
-        **({"counsel_models": counsel_models} if counsel_models else {}),
+        **({"counsel_models": counsel_models} if counsel_models is not None else {}),
     )
 
     def followup_node(state: dict) -> dict:
@@ -1447,7 +1598,7 @@ def build_research_graph_v2(config: "ResearchGraphConfig"):
     enable_duality_check = config.duality_check.enabled
     from .persona_council import create_persona_council_node, create_duality_check_node
 
-    counsel_kwargs = {"counsel_models": counsel_models} if counsel_models else {}
+    counsel_kwargs = {"counsel_models": counsel_models} if counsel_models is not None else {}
 
     def _m(agent_name: str) -> Any:
         """Resolve the model for *agent_name* from the registry or fallback."""
@@ -1482,8 +1633,9 @@ def build_research_graph_v2(config: "ResearchGraphConfig"):
                 counsel_models=counsel_models,
                 summary_model_id=summary_model_id,
                 model_registry=model_registry,
+                adversarial_verification=adversarial_verification,
             )
-        theory_track_node = build_track_subgraph_node(theory_subgraph, "theory_track_status")
+        theory_track_node = build_track_subgraph_node(theory_subgraph, "theory_track_status", workspace_dir=workspace_dir)
 
     if tree_search_config and getattr(tree_search_config, "enabled", False):
         from consortium.tree_search.experiment_tree_integration import (

@@ -85,6 +85,8 @@ class ResearchState(TypedDict):
     theory_track_status: Optional[str]       # pending | in_progress | completed
     experiment_track_status: Optional[str]   # pending | in_progress | completed
     track_decomposition: Optional[dict]      # {"empirical_questions": [...], "theory_questions": [...]}
+    theory_track_summary: Optional[dict]     # structured summary from proof_transcription_agent
+    theory_repair_count: int                 # intra-track retry counter (max 2)
 
     # -----------------------------------------------------------------
     # Agentic tree search state

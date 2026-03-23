@@ -71,7 +71,7 @@ Step 3:
 - Run math_proof_rigor_checker_tool(check_level="strict").
 - If fail, do not upgrade status.
 
-Step 4a (blocking checks — FAIL FAST: stop immediately if any fail):
+Step 4a (blocking checks — run ALL four, record every failure):
 1) Statement precision: explicit quantifiers, domains, constants throughout
 2) Assumptions: explicitly stated, labeled A1/A2/..., and actually used in the proof
 3) Dependency gate: all dependency claim_ids are referenced and their statuses
@@ -79,10 +79,9 @@ Step 4a (blocking checks — FAIL FAST: stop immediately if any fail):
 4) Logical continuity: each proof step follows from established prior facts with
    no unresolved logical jumps
 
-If any check in 4a fails:
-- Record verdict=fail and the specific failing check in issues[].
-- Set severity=CRITICAL.
-- STOP. Do not run 4b. Proceed directly to Step 5 with verdict=fail.
+Run all four checks even if earlier ones fail. For each failing check:
+- Record the specific failing check in issues[] with severity=CRITICAL.
+If ANY check in 4a fails, do not run 4b. Proceed directly to Step 5 with verdict=fail.
 
 Step 4b (depth checks — run ALL even if some fail, record all findings):
 5) Dimensions, shapes, and norm types are consistent throughout

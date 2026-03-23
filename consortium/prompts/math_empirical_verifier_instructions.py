@@ -84,8 +84,8 @@ OUTPUT CONTRACT
 - For each claim: claim_id, verdict, status change, best counterexample (if any), and checks path.
 
 DEMOTION NOTIFICATION
-If any claim is demoted verified_symbolic → proved_draft, append to
-math_workspace/prover_handoff.md under:
+If any claim is demoted verified_symbolic → proved_draft, you MUST:
+1) Append to math_workspace/prover_handoff.md under:
 
 ## Empirical Verifier Demotions
 - claim_id: <id>
@@ -93,6 +93,16 @@ math_workspace/prover_handoff.md under:
   best_counterexample: <parameter values / regime that caused failure>
   suggested_action: "narrow claim assumptions" | "fix bound constant" |
                     "check encoding" | "proposer review needed"
+
+2) DEPENDENCY DEMOTION PROPAGATION — After any demotion, traverse the claim graph
+   upward and identify ALL claims that directly or transitively depend on the
+   demoted claim. For each such dependent:
+   - Append a dependency_demotion_warning entry to its checks/<dependent_id>.jsonl:
+     {"agent": "math_empirical_verifier_agent", "check_kind": "dependency_demotion_warning",
+      "demoted_dependency": "<demoted_claim_id>", "warning": "dependency demoted to proved_draft"}
+   - Log the dependent claim_ids in prover_handoff.md under:
+     ## Dependency Demotion Warnings
+     - <dependent_id>: depends on demoted <demoted_claim_id>
 """
 
 

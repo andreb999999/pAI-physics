@@ -87,7 +87,7 @@ def build_node(
         system_prompt = get_experiment_verification_system_prompt(tools=tools, managed_agents=None)
     counsel_models = cfg.get("counsel_models")
     agent_name = "experiment_verification_agent"
-    if counsel_models:
+    if counsel_models is not None:
         from ..counsel import create_counsel_node
         return create_counsel_node(system_prompt, tools, agent_name, workspace_dir, counsel_models)
     return create_specialist_agent(

@@ -105,7 +105,7 @@ def build_node(
         system_prompt = get_math_rigorous_verifier_system_prompt(tools=tools, managed_agents=None)
     counsel_models = cfg.get("counsel_models")
     agent_name = "math_rigorous_verifier_agent"
-    if counsel_models:
+    if counsel_models is not None:
         from ..counsel import create_counsel_node
         return create_counsel_node(system_prompt, tools, agent_name, workspace_dir, counsel_models)
     return create_specialist_agent(

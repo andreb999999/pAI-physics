@@ -51,7 +51,7 @@ def build_node(
     tools = get_tools(workspace_dir, authorized_imports=authorized_imports)
     system_prompt = get_experiment_design_system_prompt(tools=tools, managed_agents=None)
     counsel_models = cfg.get("counsel_models")
-    if counsel_models:
+    if counsel_models is not None:
         from ..counsel import create_counsel_node
         return create_counsel_node(system_prompt, tools, "experiment_design_agent", workspace_dir, counsel_models)
     return create_specialist_agent(
