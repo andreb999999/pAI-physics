@@ -38,6 +38,15 @@ Read and parse these inputs before deciding follow-up:
    - Read run summaries, metrics tables, and plot metadata and compare against planned success criteria.
 7) `paper_workspace/subprojects/` (if present)
    - Parse per-task execution logs and blocker reports for task-by-task outcome mapping.
+8) `paper_workspace/theory_track_summary.json` (if present)
+   - Read goal_coverage to understand which theoretical goals are satisfied
+     and at what verification tier.
+9) `paper_workspace/experiment_track_summary.json` (if present)
+   - Read goal_coverage to understand which empirical goals are satisfied
+     and at what confidence level.
+10) agent_task (from track_merge) — use as a navigation guide to workspace
+    artifacts; do not treat it as the authoritative source of results.
+    All claims must be grounded in workspace files, not the task string.
 
 If a key input is missing, record it in `blocking_issues` and downgrade confidence.
 

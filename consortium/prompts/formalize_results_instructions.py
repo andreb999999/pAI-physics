@@ -48,22 +48,29 @@ Read and parse ALL of these files before formalizing results:
    - Read individual proof files for detailed proof status and key arguments.
 7) `math_workspace/numerical_verification/` (if present)
    - Parse numerical checks that support or contradict theoretical claims.
+8) `paper_workspace/theory_track_summary.json` (if present)
+   - Read goal_coverage mapping for theory claims — provides structured
+     per-goal satisfaction levels and output file locations.
 
 **Experiment Track Outputs (what was measured):**
-8) `experiment_workspace/experiment_design.json` (if present)
+9) `experiment_workspace/experiment_design.json` (if present)
    - Parse hypotheses, metrics, baselines, and planned ablations.
-9) `experiment_workspace/verification_results.json` (if present)
-   - Parse pass/partial/fail verdicts and verification issues per experiment.
-10) `experiment_runs/` directory (if present)
+10) `experiment_workspace/verification_results.json` (if present)
+    - Parse pass/partial/fail verdicts and verification issues per experiment.
+11) `experiment_runs/` directory (if present)
     - Read run summaries, metrics tables (CSV/JSON), and plot metadata.
     - Compare measured values against success criteria thresholds.
-11) `experiment_workspace/ablation_results/` (if present)
+12) `experiment_workspace/ablation_results/` (if present)
     - Parse ablation outcomes to assess confounding control.
+13) `paper_workspace/experiment_track_summary.json` (if present)
+    - Read goal_coverage mapping for experiment results — provides structured
+      per-goal satisfaction levels, passed/partial/failed lists, and output
+      file locations.
 
 **Prior Context:**
-12) `paper_workspace/brainstorm.json` (if present)
+14) `paper_workspace/brainstorm.json` (if present)
     - Check which approaches were attempted vs. deferred.
-13) `paper_workspace/followup_decision.json` (if present)
+15) `paper_workspace/followup_decision.json` (if present)
     - If this is a follow-up cycle, incorporate prior formalized results.
 
 If key inputs are missing, record each missing file in a "missing_inputs" field and

@@ -27,6 +27,16 @@ Read these files before designing experiments:
    - Read experiment tasks, success criteria, dependencies, and outputs.
 3) `experiment_workspace/experiment_literature.md`
 4) `experiment_workspace/experiment_baselines.json`
+5) `paper_workspace/research_goals.json`
+   - For each empirical/both goal, read its goal_id and success_criteria
+     (strong and minimum_viable).
+   - Each experiment's success_criteria field in experiment_design.json must
+     be at least as strong as the minimum_viable criterion for its goal.
+   - Tag each experiment with "goal_id": "<id>" (or "goal_ids": [...] for
+     multi-goal experiments).
+6) `experiment_workspace/literature_handoff.md`
+   - Read flags and recommendations before finalizing experiment_design.json.
+   - Resolve all open decisions flagged by the literature agent.
 
 REQUIRED DESIGN CONTENT
 1) One or more experiment specifications, each with:
@@ -56,6 +66,7 @@ BATCHING RULES
     {
       "experiment_id": "...",
       "title": "...",
+      "goal_id": "...",
       "addresses_questions": ["..."],
       "hypothesis": "...",
       "model": "...",
@@ -65,11 +76,24 @@ BATCHING RULES
       "ablations": ["..."],
       "success_criteria": "...",
       "estimated_runtime_hours": 1.0,
-      "end_stage": 4
+      "end_stage": 4,
+      "end_stage_rationale": "..."
     }
   ],
   "batching_rationale": "..."
 }
+
+END_STAGE SELECTION RULES (MANDATORY)
+- end_stage=4: required for any experiment whose goal_id maps to a goal
+  with strong success_criteria involving ablations or cross-seed stability.
+- end_stage=3: acceptable for goals with minimum_viable success criteria
+  that do not require ablations.
+- end_stage=2: acceptable for stretch/optional goals or pilot experiments
+  explicitly scoped as such in research_plan_tasks.json.
+- end_stage=1: only for implementation-only validation runs; never for
+  a primary experiment serving a research goal.
+- Record end_stage_rationale in the experiment_design.json schema field
+  and in experiment_rationale.md.
 
 ANTI-HALLUCINATION RULES
 - Ground every design choice in the plan or literature artifacts.

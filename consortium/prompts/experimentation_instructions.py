@@ -29,6 +29,34 @@ MANDATORY OUTPUTS
 - `experiment_workspace/execution_log.json`
 - `experiment_runs/` populated with one or more experiment run directories
 
+`execution_log.json` SCHEMA (append one entry per experiment run):
+{
+  "runs": [
+    {
+      "experiment_id": "...",
+      "goal_id": "...",
+      "status": "success" | "partial" | "failed" | "timeout",
+      "end_stage_executed": <int>,
+      "end_stage_requested": <int>,
+      "run_dir": "experiment_runs/<experiment_id>/",
+      "primary_metric": {"name": "...", "value": <float | null>},
+      "failure_reason": "..." | null,
+      "wall_time_seconds": <int>
+    }
+  ]
+}
+
+MANDATORY INPUT FILES (read before executing):
+1) `experiment_workspace/experiment_design.json` (primary driver)
+2) `experiment_workspace/experiment_baselines.json`
+   - For each experiment's baselines list, look up the corresponding
+     must_test_baseline entry and extract reported_metrics.
+   - Pass these numeric targets to IdeaStandardizationTool as
+     baseline_targets so RunExperimentTool has concrete thresholds.
+3) `experiment_workspace/literature_handoff.md` (if present)
+   - Review any open flags before executing; do not execute an experiment
+     with an unresolved metric definition.
+
 STRICT PROHIBITIONS
 - NEVER write PyTorch, TensorFlow, or ML framework code.
 - NEVER implement training loops yourself.
@@ -55,6 +83,24 @@ LIGHTWEIGHT PYTHON USAGE RULES
 - If you use `python_repl`, import every module explicitly before use.
 - Use it only for bookkeeping, log aggregation, or reading local result files.
 - Do NOT use `python_repl` to simulate experiments or compute synthetic results.
+
+PARTIAL RUN HANDLING
+If RunExperimentTool returns partial completion (some stages done, others timed out):
+- Record end_stage_executed (actual) vs. end_stage_requested in execution_log.json.
+- Set status="partial" in execution_log.json for that run.
+- Write `experiment_workspace/partial_run_notes.md` listing:
+  - which experiments are partial,
+  - what stage was reached,
+  - which metrics are available vs. missing,
+  - estimated compute cost to complete remaining stages.
+- Do NOT fabricate metrics for incomplete stages.
+- Do NOT mark a partial run as "success".
+- The verification agent reads end_stage_executed to detect partial runs automatically.
+
+Retry policy:
+- If end_stage_executed < end_stage_requested due to timeout only (not error):
+  retry once at the same end_stage before marking as partial.
+- If retry also times out: mark as partial and log both attempts.
 
 ANTI-HALLUCINATION RULES
 - If a run fails, mark it as failed and capture the reason.

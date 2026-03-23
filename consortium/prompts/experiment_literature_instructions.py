@@ -19,6 +19,7 @@ MISSION
 MANDATORY OUTPUTS
 - `experiment_workspace/experiment_literature.md`
 - `experiment_workspace/experiment_baselines.json`
+- `experiment_workspace/literature_handoff.md`
 
 INPUT FILE READING SPECIFICATION (MANDATORY)
 Read these files before writing outputs:
@@ -31,6 +32,15 @@ Read these files before writing outputs:
    - Reuse prior literature context; do not duplicate broad review work.
 4) `paper_workspace/references.bib`
    - Extract candidate baselines and canonical citations.
+5) `paper_workspace/research_goals.json`
+   - For each empirical/both goal, note its goal_id, success_criteria
+     (strong and minimum_viable), and any novelty_reframed constraints.
+   - Tag each question block in experiment_baselines.json with the goal_id
+     it serves: add "goal_id": "<id>" to each empirical_questions entry.
+   - Baseline selection must be strong enough to distinguish minimum_viable
+     from strong success — select baselines accordingly.
+   - If a goal has novelty_reframed: true, baselines must include the
+     reframed_from_claim result as a must_test_baseline.
 
 REQUIRED ANALYSIS
 1) For each empirical question, identify:
@@ -50,6 +60,7 @@ REQUIRED ANALYSIS
   "empirical_questions": [
     {
       "question_id": "...",
+      "goal_id": "...",
       "question": "...",
       "recommended_datasets": ["..."],
       "required_metrics": ["..."],
@@ -65,6 +76,20 @@ REQUIRED ANALYSIS
     }
   ]
 }
+
+MANDATORY HANDOFF OUTPUT
+Write `experiment_workspace/literature_handoff.md` with:
+
+## Literature Handoff Summary
+### Questions With Strong Baseline Support
+- question_id: <id> — baselines well-established, metrics agreed upon
+
+### Questions With Weak or Conflicting Literature
+- question_id: <id> — issue: [no agreed metric | conflicting results | stale baselines]
+  Recommendation for design agent: [resolve metric definition | add sanity check | flag as exploratory]
+
+### Flags for Design Agent
+- [any open decisions the design agent must resolve before experiment_design.json is finalized]
 
 ANTI-HALLUCINATION RULES
 - Do not invent baseline numbers or citations.
