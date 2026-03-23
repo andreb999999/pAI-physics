@@ -3,16 +3,25 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "consortium"
-version = "0.1.0"
-description = "Local multi-agent research-to-paper system powered by LangGraph"
+name = "poggio-ai"
+version = "1.0.0"
+description = "PoggioAI/MSc — End-to-end agentic research system by the Poggio Lab at MIT"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
+authors = [
+    { name = "Poggio Lab at MIT" },
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "License :: OSI Approved :: MIT License",
+]
 
-# Minimal runtime dependencies (matches requirements-minimal.txt).
-# Install extras for full functionality — see below.
+# Runtime dependencies: engine + CLI
 dependencies = [
+    # Engine (LangGraph pipeline)
     "langgraph>=0.4.0",
     "langchain-core>=0.3.0",
     "langchain-community>=0.3.0",
@@ -31,17 +40,20 @@ dependencies = [
     "pypdf==6.7.3",
     "chardet<6",
     "toml",
+    # CLI
+    "click>=8.1",
+    "rich>=13.0",
+    "questionary>=2.0",
 ]
 
 [project.optional-dependencies]
-# pip install consortium[observability]
+# pip install poggio-ai[observability]
 observability = [
     "langsmith>=0.1.0",
     "wandb",
 ]
 
-# pip install consortium[docs]
-# Matches requirements-docs.txt
+# pip install poggio-ai[docs]
 docs = [
     "mammoth==1.9.1",
     "markdownify==1.1.0",
@@ -52,8 +64,7 @@ docs = [
     "youtube-transcript-api",
 ]
 
-# pip install consortium[web]
-# Matches requirements-web.txt
+# pip install poggio-ai[web]
 web = [
     "crawl4ai",
     "playwright",
@@ -61,7 +72,7 @@ web = [
     "pathvalidate",
 ]
 
-# pip install consortium[experiment]
+# pip install poggio-ai[experiment]
 experiment = [
     "torch",
     "transformers",
@@ -72,19 +83,28 @@ experiment = [
     "wandb",
 ]
 
-# pip install consortium[dev]
+# pip install poggio-ai[dev]
 dev = [
     "pytest",
     "pytest-cov",
 ]
 
-# pip install consortium[all]  — everything except vllm / gpu extras
+# pip install poggio-ai[secure]
+secure = [
+    "keyring>=24.0",
+]
+
+# pip install poggio-ai[all] — everything except vllm / gpu extras
 all = [
-    "consortium[observability,docs,web,experiment]",
+    "poggio-ai[observability,docs,web,experiment,secure]",
 ]
 
 [project.scripts]
+msc = "consortium.cli.main:cli"
 consortium = "consortium.runner:main"
+
+[project.urls]
+Homepage = "https://github.com/PierBeneventano/OpenPI"
 
 [tool.setuptools.packages.find]
 where = ["."]

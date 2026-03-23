@@ -22,6 +22,10 @@ venv/
 *.swo
 .DS_Store
 
+# MSc project-local config
+.msc/
+.openpi/
+
 # Project-specific
 .cache/
 cache/
