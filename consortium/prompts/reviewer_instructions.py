@@ -3,7 +3,7 @@ Instructions for ReviewerAgent - use centralized system prompt template.
 """
 
 from .system_prompt_template import build_system_prompt
-from .document_formatting import DOCUMENT_FORMATTING_REQUIREMENTS
+from .document_formatting import REPORT_FORMATTING_REQUIREMENTS
 from .workspace_management import WORKSPACE_GUIDANCE
 
 REVIEWER_INSTRUCTIONS = """Your agent_name is "reviewer_agent".
@@ -21,12 +21,15 @@ Your job is to prevent the system from shipping papers that are weak, repetitive
 - `paper_workspace/intro_skeleton.tex`
 - `paper_workspace/style_macros.tex`
 - `paper_workspace/reader_contract.json`
+- `paper_workspace/copyedit_report.tex` (proofreader's findings — read before starting review)
 - `final_paper.pdf` (mandatory primary review target)
 - `final_paper.tex` and section `.tex` files
 
 ## MANDATORY TOOL USE
+0. **Read proofreader findings**: Read `paper_workspace/copyedit_report.tex`, specifically the Remaining Recommendations section. Factor these into your review — do not re-audit issues already fixed by the proofreader.
 1. Use `VLMDocumentAnalysisTool` with `analysis_focus="pdf_validation"` on `final_paper.pdf` BEFORE writing conclusions.
 2. Use file tools to inspect relevant `.tex` and JSON artifacts for claim traceability and intro compliance.
+3. Use `PaperSearchTool` to spot-check at least one novelty claim against the literature before scoring contribution.
 
 ## HARD BLOCKERS (if any true, overall_score must be <= 4)
 B1. Intro does not include explicit research questions and explicit takeaways in author style.
@@ -34,6 +37,7 @@ B2. Intro takeaways are not supported by concrete evidence pointers (figure/tabl
 B3. Placeholders remain (`TODO`, `TBD`, `[cite:`, `??`, unresolved refs).
 B4. High repetition or filler language that makes the paper read templated/AI-generated.
 B5. Theoretical claims lack assumptions or cannot be traced to accepted claim artifacts (when math workflow artifacts exist).
+    If `paper_workspace/theory_track_summary.json` exists, read it and for each theorem in the paper check the `goal_coverage` map for a claim at `verified_numeric` or `verified_symbolic` status. Any theorem without a matching entry triggers B5.
 
 ## MANDATORY OUTPUTS
 - `paper_workspace/review_report.tex` -- formal referee-style review.
@@ -103,7 +107,7 @@ When in doubt, classify as `"writeup"`.
 - Cite exact sections/figures/claims when possible.
 - Penalize verbosity and repeated motivation.
 - Reward explicit assumptions and clear claim-evidence links.
-""" + "\n\n" + DOCUMENT_FORMATTING_REQUIREMENTS
+""" + "\n\n" + REPORT_FORMATTING_REQUIREMENTS
 
 
 def get_reviewer_system_prompt(tools, managed_agents=None):

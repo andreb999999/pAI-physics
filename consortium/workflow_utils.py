@@ -213,7 +213,8 @@ def run_validation_gates(state: dict) -> dict:
             }
             all_valid = all_valid and ok
 
-    if state.get("enforce_editorial_artifacts", False):
+    # Review verdict: run when enforce_editorial_artifacts OR full_research mode
+    if state.get("enforce_editorial_artifacts", False) or should_enforce:
         min_score = state.get("min_review_score", 8)
         review = validate_review_verdict(workspace_dir=workspace, min_review_score=min_score)
         ok = review.get("is_valid", True)
@@ -223,6 +224,7 @@ def run_validation_gates(state: dict) -> dict:
         }
         all_valid = all_valid and ok
 
+    if state.get("enforce_editorial_artifacts", False):
         quality = validate_paper_quality(workspace_dir=workspace)
         ok = quality.get("is_valid", True)
         results["paper_quality"] = {

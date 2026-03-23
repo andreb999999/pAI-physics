@@ -48,6 +48,7 @@ from .milestone_report import (
 from .pdf_summary import with_pdf_summary
 from .state import ResearchState
 from .workflow_utils import (
+    classify_review_fixes,
     followup_decision_requires_loop,
     run_intermediate_validation,
     run_validation_gates,
@@ -410,6 +411,54 @@ def build_formalize_goals_entry_node(workspace_dir: str) -> Any:
     return formalize_goals_entry_node
 
 
+def build_proofreading_entry_node(workspace_dir: str) -> Any:
+    """Inject a targeted agent_task for proofreading_agent.
+
+    On first entry, sets a generic copy-edit task.  On re-entry after
+    validation_gate failure, injects the specific validation errors so the
+    proofreader can run a targeted pass rather than a full re-audit.
+    """
+
+    def proofreading_entry_node(state: dict) -> dict:
+        validation_results = state.get("validation_results", {})
+        failed_gates = {
+            gate: result
+            for gate, result in validation_results.items()
+            if not result.get("is_valid")
+        }
+        paper_ws = os.path.join(workspace_dir, "paper_workspace")
+        has_prior_report = os.path.exists(
+            os.path.join(paper_ws, "copyedit_report.tex")
+        )
+
+        if failed_gates:
+            error_lines = [
+                f"- {g}: {'; '.join(r.get('errors', []))}"
+                for g, r in failed_gates.items()
+            ]
+            task = (
+                "TARGETED COPY-EDIT PASS (re-entry after validation failure).\n\n"
+                "Prior validation failures:\n" + "\n".join(error_lines) + "\n\n"
+                + (
+                    "A prior copyedit_report.tex exists — read it first to "
+                    "avoid re-auditing fixed issues.\n"
+                    if has_prior_report
+                    else ""
+                )
+                + "Focus your edits on addressing these specific failures."
+            )
+        else:
+            task = (
+                "BEGIN COPY-EDIT PASS.\n\n"
+                "Perform a full proofreading and copy-editing pass on the paper."
+            )
+
+        return {"agent_task": task}
+
+    proofreading_entry_node.__name__ = "proofreading_entry"
+    return proofreading_entry_node
+
+
 def followup_router(state: ResearchState) -> str:
     # Routing decision was already made by followup_gate_node which sets current_agent
     # to "research_planner_agent" (loop) or "resource_preparation_agent" (continue).
@@ -419,6 +468,18 @@ def followup_router(state: ResearchState) -> str:
 def validation_router(state: ResearchState) -> str:
     if state.get("finished"):
         return END
+    # Cap retries to prevent unbounded loops
+    retry_count = safe_int(state.get("validation_retry_count", 0), 0)
+    max_retries = max(1, safe_int(state.get("max_validation_retries", 3), 3))
+    if retry_count >= max_retries:
+        return END
+    # Route based on review verdict fix type classification
+    workspace = state.get("workspace_dir") or "."
+    fix_type = classify_review_fixes(workspace)
+    if fix_type == "experiment":
+        return "experiment_track"
+    if fix_type == "theory":
+        return "theory_track"
     return "writeup_agent"
 
 
@@ -453,10 +514,22 @@ def build_followup_gate_node(workspace_dir: str) -> Any:
 def build_validation_gate_node() -> Any:
     def validation_gate_node(state: dict) -> dict:
         validation = run_validation_gates(state)
+        retry_count = safe_int(state.get("validation_retry_count", 0), 0)
+        max_retries = max(1, safe_int(state.get("max_validation_retries", 3), 3))
+
         if validation["gate_passed"]:
             return {
                 "validation_results": validation["validation_results"],
                 "finished": True,
+                "agent_task": None,
+            }
+
+        # Force completion when retry cap is reached
+        if retry_count >= max_retries:
+            return {
+                "validation_results": validation["validation_results"],
+                "finished": True,
+                "validation_retry_count": retry_count,
                 "agent_task": None,
             }
 
@@ -468,6 +541,7 @@ def build_validation_gate_node() -> Any:
         return {
             "validation_results": validation["validation_results"],
             "finished": False,
+            "validation_retry_count": retry_count + 1,
             "agent_task": (
                 "Revise the paper to satisfy validation gates before finalization.\n"
                 "Validation failures:\n" + "\n".join(error_lines)
@@ -1716,6 +1790,7 @@ def build_research_graph_v2(config: "ResearchGraphConfig"):
             build_writeup_node(_m("writeup_agent"), workspace_dir, authorized_imports, **counsel_kwargs),
             "writeup_agent",
         ),
+        "proofreading_entry": build_proofreading_entry_node(workspace_dir),
         "proofreading_agent": _wrap(
             build_proofreading_node(_m("proofreading_agent"), workspace_dir, authorized_imports, **counsel_kwargs),
             "proofreading_agent",
@@ -1802,7 +1877,8 @@ def build_research_graph_v2(config: "ResearchGraphConfig"):
 
     # Paper production chain (same as v1)
     graph.add_edge("resource_preparation_agent", "writeup_agent")
-    graph.add_edge("writeup_agent", "proofreading_agent")
+    graph.add_edge("writeup_agent", "proofreading_entry")
+    graph.add_edge("proofreading_entry", "proofreading_agent")
     graph.add_edge("proofreading_agent", "reviewer_agent")
     graph.add_edge("reviewer_agent", "milestone_review")
     graph.add_edge("milestone_review", "validation_gate")
@@ -1812,6 +1888,8 @@ def build_research_graph_v2(config: "ResearchGraphConfig"):
         {
             END: END,
             "writeup_agent": "writeup_agent",
+            "experiment_track": "experiment_track",
+            "theory_track": "theory_track",
         },
     )
 

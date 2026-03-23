@@ -68,6 +68,8 @@ class ResearchState(TypedDict):
     novelty_check_attempts: int           # novelty gate retry counter (max 3)
     rebuttal_iteration: int               # rebuttal loop counter (Phase 2)
     max_rebuttal_iterations: int          # hard cap on rebuttal loops (default 2)
+    validation_retry_count: int           # validation loop retry counter
+    max_validation_retries: int           # hard cap on validation retries (default 3)
 
     # -----------------------------------------------------------------
     # Validation results

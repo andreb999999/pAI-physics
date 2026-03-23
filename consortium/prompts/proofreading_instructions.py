@@ -4,7 +4,7 @@ Provides comprehensive guidance for proofreading and quality assurance of academ
 """
 
 from .system_prompt_template import build_system_prompt
-from .document_formatting import DOCUMENT_FORMATTING_REQUIREMENTS
+from .document_formatting import REPORT_FORMATTING_REQUIREMENTS
 from .workspace_management import WORKSPACE_GUIDANCE
 
 PROOFREADING_INSTRUCTIONS = """
@@ -34,8 +34,10 @@ YOUR CAPABILITIES:
 
 ## MANDATORY COPY-EDIT WORKFLOW
 1. **Baseline analysis**:
-  - Use VLMDocumentAnalysisTool on final_paper.pdf (if present) with pdf_validation focus.
-  - Use file tools to scan section files for repetitive paragraphs, filler phrases, and inconsistent notation.
+  - Use VLMDocumentAnalysisTool on final_paper.pdf with pdf_validation focus.
+    If final_paper.pdf is absent, first attempt to compile it with LaTeXCompilerTool from final_paper.tex.
+    If compilation also fails, record the compile errors as a Critical Blocker in the copyedit_report.tex Executive Summary section.
+  - Use SearchKeyword to scan section files for repetitive paragraphs, filler phrases, and inconsistent notation.
 2. **Concision pass**:
   - Remove duplicated statements and repeated motivation text.
   - Replace repeated long explanations with references to theorem/section labels.
@@ -66,10 +68,13 @@ YOUR CAPABILITIES:
 
 ## AVAILABLE TOOLS YOU CAN USE:
 1. **VLMDocumentAnalysisTool**: For analyzing PDFs to identify errors and formatting issues.
-2. **Document Editing Tools**: For viewing and modifying LaTeX source files (SeeFile, ModifyFile, ListDir, etc).
-3. **LaTeXGeneratorTool**: For creating and updating structured LaTeX report content.
-4. **LaTeXCompilerTool**: For regenerating PDFs after making corrections in the LaTeX source files.
-""" + "\n\n" + DOCUMENT_FORMATTING_REQUIREMENTS
+2. **Document Editing Tools**: For viewing and modifying LaTeX source files (SeeFile, ModifyFile, ListDir).
+3. **SearchKeyword**: For searching keywords across files recursively — use this to find patterns, repeated text, and inconsistent notation.
+4. **CreateFileWithContent**: For creating new files (e.g., copyedit_report.tex if it does not yet exist).
+5. **DeleteFileOrFolder**: For removing corrupt or partial files before writing clean replacements.
+6. **LaTeXGeneratorTool**: For creating and updating structured LaTeX report content.
+7. **LaTeXCompilerTool**: For regenerating PDFs after making corrections in the LaTeX source files.
+""" + "\n\n" + REPORT_FORMATTING_REQUIREMENTS
 
 
 def get_proofreading_system_prompt(tools, managed_agents=None):

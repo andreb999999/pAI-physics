@@ -12,3 +12,12 @@ DOCUMENT_FORMATTING_REQUIREMENTS = """DOCUMENT FORMATTING REQUIREMENTS (applies 
 - The document must compile cleanly with pdflatex.
 - After writing the .tex file, compile it to PDF using latex_compiler_tool.
 """
+
+REPORT_FORMATTING_REQUIREMENTS = """REPORT FORMATTING REQUIREMENTS (applies to internal pipeline reports)
+- Write in formal academic English suitable for sharing with research collaborators.
+- Use complete paragraphs with clear topic sentences and logical flow.
+- Use LaTeX sectioning (section, subsection, paragraph) for clear hierarchy.
+- Use tables (tabular) for structured comparisons and itemize/enumerate for lists.
+- The document must compile cleanly with pdflatex.
+- After writing the .tex file, compile it to PDF using latex_compiler_tool.
+"""
