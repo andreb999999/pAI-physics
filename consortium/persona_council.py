@@ -339,6 +339,7 @@ def run_persona_council(
         f"Debate ({len(debate_history)} rounds):\n" + "\n---\n".join(debate_history)
     )
 
+    _synthesis_extra = {"reasoning_effort": "high"} if any(p in synthesis_model for p in ("claude", "gpt")) else {}
     try:
         resp = litellm.completion(
             model=synthesis_model,
@@ -347,7 +348,7 @@ def run_persona_council(
                 {"role": "user", "content": synthesis_input},
             ],
             max_tokens=8192,
-            reasoning_effort="high",
+            **_synthesis_extra,
         )
         proposal_text = resp.choices[0].message.content or ""
         # Budget recorded automatically via litellm.completion monkey-patch
@@ -447,7 +448,7 @@ def run_persona_council(
                     {"role": "user", "content": synthesis_input_retry},
                 ],
                 max_tokens=8192,
-                reasoning_effort="high",
+                **_synthesis_extra,
             )
             proposal_text = resp.choices[0].message.content or ""
             print("[persona_council] Phase 4 — re-synthesis complete after post-vote rejection.")
@@ -510,7 +511,15 @@ def run_duality_check(
         "formalized_results.md": os.path.join(workspace_dir, "math_workspace", "formalized_results.md"),
         "formalized_results.json": os.path.join(workspace_dir, "math_workspace", "formalized_results.json"),
         "claim_graph.json": os.path.join(workspace_dir, "math_workspace", "claim_graph.json"),
-        "experiment_results.json": os.path.join(workspace_dir, "experiment_results.json"),
+        "experiment_results.json": next(
+            (p for p in [
+                os.path.join(workspace_dir, "paper_workspace", "experiment_results.json"),
+                os.path.join(workspace_dir, "experiment_workspace", "results_summary.json"),
+                os.path.join(workspace_dir, "writeup_agent", "experiment_results.json"),
+                os.path.join(workspace_dir, "experiment_results.json"),
+            ] if os.path.isfile(p)),
+            os.path.join(workspace_dir, "experiment_results.json"),  # fallback (may not exist)
+        ),
     }
 
     context_parts: List[str] = []
@@ -526,6 +535,8 @@ def run_duality_check(
     # ------------------------------------------------------------------
     default_fail = {"passed": False, "reasoning": "Check did not complete.", "score": 0, "suggestions": []}
 
+    _check_extra = {"reasoning_effort": "high"} if any(p in check_model for p in ("claude", "gpt")) else {}
+
     def _run_check(prompt_template: str, check_label: str) -> Tuple[str, dict]:
         user_content = f"{prompt_template}\n\n--- WORKSPACE ARTIFACTS ---\n\n{workspace_context}"
         try:
@@ -533,7 +544,7 @@ def run_duality_check(
                 model=check_model,
                 messages=[{"role": "user", "content": user_content}],
                 max_tokens=4096,
-                reasoning_effort="high",
+                **_check_extra,
             )
             raw = resp.choices[0].message.content or ""
             # Budget recorded automatically via litellm.completion monkey-patch
@@ -729,6 +740,10 @@ def create_duality_check_node(
             "agent_outputs": {
                 **state.get("agent_outputs", {}),
                 "duality_check": summary,
+            },
+            "artifacts": {
+                **state.get("artifacts", {}),
+                "duality_check": check_path,
             },
         }
 

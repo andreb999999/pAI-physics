@@ -1524,9 +1524,19 @@ def build_duality_gate_node() -> Any:
 
     def duality_gate_node(state: dict) -> dict:
         duality_result = state.get("duality_check_result") or {}
-        both_passed = duality_result.get("both_passed", True)
+        both_passed = duality_result.get("both_passed", False)
         duality_rework = safe_int(state.get("duality_rework_attempts", 0), 0)
         max_attempts = 2
+
+        if not duality_result:
+            print(
+                "Warning: duality_check_result is missing or empty, "
+                "proceeding to resource_preparation anyway."
+            )
+            return {
+                "current_agent": "resource_preparation_agent",
+                "agent_task": None,
+            }
 
         if both_passed:
             return {
@@ -1565,6 +1575,7 @@ def build_duality_gate_node() -> Any:
                 + "\n".join(f"- {s}" for s in suggestions)
                 + "\n\nConduct a targeted follow-up literature review addressing "
                 "these gaps, then re-enter the brainstorm phase."
+                "\n\nFull structured results: paper_workspace/duality_check.json"
             ),
         }
 
@@ -1583,7 +1594,10 @@ def verify_completion_router(state: ResearchState) -> str:
 
 
 def duality_gate_router(state: ResearchState) -> str:
-    return state.get("current_agent") or "resource_preparation_agent"
+    target = state.get("current_agent")
+    if target in {"resource_preparation_agent", "followup_lit_review"}:
+        return target
+    return "resource_preparation_agent"
 
 
 def build_followup_lit_review_node(
@@ -1785,7 +1799,7 @@ def build_research_graph_v2(config: "ResearchGraphConfig"):
         ),
         "followup_lit_review": _wrap(
             build_followup_lit_review_node(_m("followup_lit_review"), workspace_dir, authorized_imports, counsel_models),
-            "followup_lit_review",
+            "followup_lit_review_agent",
         ),
         # Paper production chain (reused from v1)
         "resource_preparation_agent": _wrap(
