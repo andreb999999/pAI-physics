@@ -17,7 +17,10 @@ from ..toolkits.filesystem.file_editing.file_editing_tools import (
     SeeFile,
 )
 from ..toolkits.writeup.latex_compiler_tool import LaTeXCompilerTool
+from ..toolkits.writeup.latex_content_verification_tool import LaTeXContentVerificationTool
 from ..toolkits.writeup.latex_generator_tool import LaTeXGeneratorTool
+from ..toolkits.writeup.latex_reflection_tool import LaTeXReflectionTool
+from ..toolkits.writeup.latex_syntax_checker_tool import LaTeXSyntaxCheckerTool
 from ..toolkits.writeup.vlm_document_analysis_tool import VLMDocumentAnalysisTool
 from ..toolkits.code_execution_tool import PythonCodeExecutionTool
 
@@ -30,6 +33,9 @@ def get_tools(
     tools = [
         LaTeXGeneratorTool(model=model_id, working_dir=workspace_dir),
         LaTeXCompilerTool(working_dir=workspace_dir, model=model_id),
+        LaTeXSyntaxCheckerTool(working_dir=workspace_dir),
+        LaTeXContentVerificationTool(working_dir=workspace_dir),
+        LaTeXReflectionTool(model=model_id, working_dir=workspace_dir),
         VLMDocumentAnalysisTool(working_dir=workspace_dir, model=model_id),
         SeeFile(working_dir=workspace_dir),
         ModifyFile(working_dir=workspace_dir),

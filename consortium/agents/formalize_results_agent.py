@@ -17,12 +17,14 @@ from ..toolkits.search.fetch_arxiv_papers.fetch_arxiv_papers_tools import FetchA
 from ..toolkits.writeup.citation_search_tool import CitationSearchTool
 from ..toolkits.writeup.latex_compiler_tool import LaTeXCompilerTool
 from ..toolkits.writeup.latex_generator_tool import LaTeXGeneratorTool
+from ..toolkits.writeup.latex_content_verification_tool import LaTeXContentVerificationTool
+from ..toolkits.writeup.latex_reflection_tool import LaTeXReflectionTool
 from ..toolkits.writeup.latex_syntax_checker_tool import LaTeXSyntaxCheckerTool
 from ..toolkits.writeup.vlm_document_analysis_tool import VLMDocumentAnalysisTool
 from ..toolkits.code_execution_tool import PythonCodeExecutionTool
 
 
-def get_tools(workspace_dir: Optional[str], model_id: str) -> list:
+def get_tools(workspace_dir: Optional[str], model_id: str, authorized_imports: Optional[List[str]] = None) -> list:
     tools = [
         PaperSearchTool(),
         FetchArxivPapersTool(working_dir=workspace_dir),
@@ -31,6 +33,8 @@ def get_tools(workspace_dir: Optional[str], model_id: str) -> list:
         LaTeXGeneratorTool(model=model_id, working_dir=workspace_dir),
         LaTeXCompilerTool(model=model_id, working_dir=workspace_dir),
         LaTeXSyntaxCheckerTool(working_dir=workspace_dir),
+        LaTeXContentVerificationTool(working_dir=workspace_dir),
+        LaTeXReflectionTool(model=model_id, working_dir=workspace_dir),
     ]
     if workspace_dir:
         tools += [
@@ -40,7 +44,7 @@ def get_tools(workspace_dir: Optional[str], model_id: str) -> list:
             ListDir(working_dir=workspace_dir),
             SearchKeyword(working_dir=workspace_dir),
             DeleteFileOrFolder(working_dir=workspace_dir),
-            PythonCodeExecutionTool(workspace_dir=workspace_dir, authorized_imports=[]),
+            PythonCodeExecutionTool(workspace_dir=workspace_dir, authorized_imports=authorized_imports or []),
         ]
     return tools
 
@@ -53,7 +57,7 @@ def build_node(
 ) -> Callable:
     from ..toolkits.model_utils import get_raw_model
     model_id = get_raw_model(model)
-    tools = get_tools(workspace_dir, model_id)
+    tools = get_tools(workspace_dir, model_id, authorized_imports=authorized_imports)
     system_prompt = get_formalize_results_system_prompt(tools=tools, managed_agents=None)
     counsel_models = cfg.get("counsel_models")
     if counsel_models is not None:

@@ -421,10 +421,11 @@ def build_proofreading_entry_node(workspace_dir: str) -> Any:
 
     def proofreading_entry_node(state: dict) -> dict:
         validation_results = state.get("validation_results", {})
+        _PROOFREADING_GATES = {"paper_quality", "artifact_gate"}
         failed_gates = {
             gate: result
             for gate, result in validation_results.items()
-            if not result.get("is_valid")
+            if not result.get("is_valid") and gate in _PROOFREADING_GATES
         }
         paper_ws = os.path.join(workspace_dir, "paper_workspace")
         has_prior_report = os.path.exists(
@@ -453,10 +454,22 @@ def build_proofreading_entry_node(workspace_dir: str) -> Any:
                 "Perform a full proofreading and copy-editing pass on the paper."
             )
 
-        return {"agent_task": task}
+        return {"agent_task": task, "validation_results": {}}
 
     proofreading_entry_node.__name__ = "proofreading_entry"
     return proofreading_entry_node
+
+
+def _formalize_results_state_mapper(inner_node: Callable) -> Callable:
+    """Copy agent output into the top-level formalized_results state key."""
+    def wrapped(state: dict) -> dict:
+        result = inner_node(state)
+        agent_output = (result or {}).get("agent_outputs", {}).get("formalize_results_agent")
+        if agent_output is not None:
+            result["formalized_results"] = agent_output
+        return result
+    wrapped.__name__ = getattr(inner_node, "__name__", "formalize_results_agent")
+    return wrapped
 
 
 def followup_router(state: ResearchState) -> str:
@@ -1793,10 +1806,10 @@ def build_research_graph_v2(config: "ResearchGraphConfig"):
         "track_merge": build_track_merge_node(workspace_dir=workspace_dir),
         # Post-track verification (new v2 gates)
         "verify_completion": build_verify_completion_node(workspace_dir),
-        "formalize_results_agent": _wrap(
+        "formalize_results_agent": _formalize_results_state_mapper(_wrap(
             build_formalize_results_node(_m("formalize_results_agent"), workspace_dir, authorized_imports, **counsel_kwargs),
             "formalize_results_agent",
-        ),
+        )),
         "followup_lit_review": _wrap(
             build_followup_lit_review_node(_m("followup_lit_review"), workspace_dir, authorized_imports, counsel_models),
             "followup_lit_review_agent",
