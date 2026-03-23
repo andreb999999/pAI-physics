@@ -104,7 +104,7 @@ msc = "consortium.cli.main:cli"
 consortium = "consortium.runner:main"
 
 [project.urls]
-Homepage = "https://github.com/PierBeneventano/OpenPI"
+Homepage = "https://github.com/PoggioAI/PoggioAI_MSc"
 
 [tool.setuptools.packages.find]
 where = ["."]

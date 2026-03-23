@@ -8,7 +8,7 @@ Built by the [Poggio Lab](https://poggio-lab.mit.edu/) at MIT.
 ![License: MIT](https://img.shields.io/badge/license-MIT-green)
 ![pip install poggio-ai](https://img.shields.io/badge/pip%20install-poggio--ai-orange)
 
-[Website](https://PoggioAI.github.io) | [Discord](https://discord.gg/Pz7spPPY) | [Paper](https://PoggioAI.github.io) | [GitHub](https://github.com/PierBeneventano/OpenPI)
+[Website](https://PoggioAI.github.io) | [Discord](https://discord.gg/Pz7spPPY) | [Paper](https://PoggioAI.github.io) | [GitHub](https://github.com/PoggioAI/PoggioAI_MSc)
 
 ---
 
@@ -33,8 +33,9 @@ The system goes beyond simple prompt chaining. MSc supports multi-model counsel 
 ### Step 1: Install
 
 ```bash
-git clone https://github.com/PierBeneventano/OpenPI.git
-cd OpenPI
+git clone https://github.com/PoggioAI/PoggioAI_MSc.git
+cd PoggioAI_MSc
+git checkout MSc_Prod
 
 python -m venv .venv
 source .venv/bin/activate
@@ -70,7 +71,7 @@ The setup wizard will:
 2. **Configure API keys** -- prompts for your LLM provider keys and stores them securely in `~/.msc/.env`.
 3. **Select models** -- choose your primary model and optional counsel models for multi-model debate.
 4. **Set budget limits** -- configure a default spending cap per run.
-5. **Configure notifications** (optional) -- set up Telegram, Slack, or email alerts for run completion.
+5. **Configure notifications** (optional) -- set up Telegram or Slack alerts for run completion.
 
 ### Step 3: Verify Installation
 
@@ -106,7 +107,7 @@ msc logs -f    # Tail live output
 msc runs       # List past runs
 ```
 
-Output manuscripts are saved to the `outputs/` directory by default.
+Output manuscripts are saved to the `results/` directory by default.
 
 ---
 
@@ -154,8 +155,8 @@ msc campaign start my_project_campaign.yaml
 # Monitor progress
 msc campaign status my_project_campaign.yaml
 
-# View the campaign dashboard
-msc campaign dashboard
+# List all campaigns
+msc campaign list
 ```
 
 Campaigns support automatic archival of completed stages, budget enforcement with threshold alerts, artifact validation gates, and resume-on-failure.
@@ -173,7 +174,7 @@ msc notify setup
 # Test a configured channel
 msc notify test --channel telegram
 
-# Supported channels: telegram, slack, email, desktop
+# Supported channels: telegram, slack
 ```
 
 Notifications fire on run completion, budget threshold warnings, and pipeline errors.
@@ -274,9 +275,9 @@ This submits pipeline stages as SLURM jobs with appropriate resource requests, h
 Track and control spending:
 
 ```bash
-msc budget                    # View spending summary across all runs
-msc budget --run latest       # Spending for the most recent run
-msc config set budget_usd 50  # Set default cap
+msc budget                              # View spending summary across all runs
+msc budget --results-dir results/myrun  # Spending for a specific run
+msc config set budget_usd 50            # Set default cap
 ```
 
 Budget enforcement is hard-capped: the pipeline halts cleanly when the limit is reached, preserving all artifacts produced so far.
