@@ -657,18 +657,20 @@ def build_milestone_gate_node(phase_name: str, workspace_dir: str) -> Any:
             budget_status=budget_status,
         )
 
-        prev_reports = list(state.get("milestone_reports") or [])
-        if report_path:
-            prev_reports.append(report_path)
-
-        update: dict = {"milestone_reports": prev_reports}
+        update: dict = {"milestone_reports": [report_path] if report_path else []}
         update.update(validation_update)
 
-        if state.get("enable_milestone_gates"):
+        if state.get("enable_milestone_gates") and not state.get("autonomous_mode"):
             timeout = state.get("milestone_timeout", 3600)
             feedback = wait_for_human_response(timeout=timeout)
             if feedback:
-                update["human_feedback"] = feedback
+                from datetime import datetime, timezone as _tz
+                update["human_feedback_history"] = [{
+                    "phase": phase_name,
+                    "action": feedback.get("action", "approve"),
+                    "feedback": feedback.get("feedback", ""),
+                    "timestamp": datetime.now(_tz.utc).isoformat(),
+                }]
                 action = feedback.get("action", "approve")
                 if action == "modify":
                     update["agent_task"] = feedback.get("feedback", "")

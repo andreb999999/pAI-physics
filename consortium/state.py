@@ -8,6 +8,7 @@ without overwriting prior conversation history.
 
 from __future__ import annotations
 
+import operator
 from typing import Annotated, Optional
 
 from langgraph.graph.message import add_messages
@@ -100,15 +101,15 @@ class ResearchState(TypedDict):
     # -----------------------------------------------------------------
     # Milestone reports & human-in-the-loop gates
     # -----------------------------------------------------------------
-    milestone_reports: list[str]             # paths to generated milestone report PDFs
-    human_feedback: Optional[dict]           # latest human feedback from milestone gate
+    milestone_reports: Annotated[list[str], operator.add]  # paths to generated milestone report PDFs
+    human_feedback_history: Annotated[list[dict], operator.add]  # [{phase, action, feedback, timestamp}]
     enable_milestone_gates: bool             # pause at milestones for human input
     milestone_timeout: int                   # seconds to wait for human (default 3600)
 
     # -----------------------------------------------------------------
     # Intermediate validation checkpoints
     # -----------------------------------------------------------------
-    intermediate_validation_log: list[dict]  # [{checkpoint, timestamp, results}]
+    intermediate_validation_log: Annotated[list[dict], operator.add]  # [{checkpoint, timestamp, results}]
 
     # -----------------------------------------------------------------
     # V2 pipeline — persona council output

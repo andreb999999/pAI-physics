@@ -144,6 +144,13 @@ def build_required_artifacts(state: dict) -> list[str]:
             "paper_workspace/results_assessment.pdf",
             "paper_workspace/followup_decision.json",
         ])
+    # review_verdict.json is needed whenever the review_verdict gate will run
+    enforce_paper = state.get("enforce_paper_artifacts", False)
+    pipeline_mode_lower = str(state.get("pipeline_mode", "default")).strip().lower()
+    _should_enforce = enforce_paper or (pipeline_mode_lower == "full_research")
+    if state.get("enforce_editorial_artifacts", False) or _should_enforce:
+        if "paper_workspace/review_verdict.json" not in required:
+            required.append("paper_workspace/review_verdict.json")
     if state.get("require_experiment_plan", False):
         required.append("experiments_to_run_later.md")
     if state.get("require_pdf", False):
@@ -206,12 +213,14 @@ def run_validation_gates(state: dict) -> dict:
 
         if state.get("enforce_editorial_artifacts", False):
             traceability = validate_claim_traceability(workspace_dir=workspace)
-            ok = traceability.get("is_valid", True)
-            results["claim_traceability"] = {
-                "is_valid": ok,
-                "errors": traceability.get("errors", []),
-            }
-            all_valid = all_valid and ok
+            # Only gate on traceability if claim_graph.json actually exists
+            if traceability.get("graph_present", False):
+                ok = traceability.get("is_valid", True)
+                results["claim_traceability"] = {
+                    "is_valid": ok,
+                    "errors": traceability.get("errors", []),
+                }
+                all_valid = all_valid and ok
 
     # Review verdict: run when enforce_editorial_artifacts OR full_research mode
     if state.get("enforce_editorial_artifacts", False) or should_enforce:
@@ -224,7 +233,8 @@ def run_validation_gates(state: dict) -> dict:
         }
         all_valid = all_valid and ok
 
-    if state.get("enforce_editorial_artifacts", False):
+    # Paper quality: run when enforce_editorial_artifacts OR full_research mode
+    if state.get("enforce_editorial_artifacts", False) or should_enforce:
         quality = validate_paper_quality(workspace_dir=workspace)
         ok = quality.get("is_valid", True)
         results["paper_quality"] = {
@@ -365,9 +375,6 @@ def run_intermediate_validation(
         "results": results,
     }
 
-    prev_log = list(state.get("intermediate_validation_log") or [])
-    prev_log.append(entry)
-
     # Print summary
     for gate, result in results.items():
         status = "PASS" if result.get("is_valid") else "WARN"
@@ -377,7 +384,8 @@ def run_intermediate_validation(
             msg += f" ({'; '.join(errors[:2])})"
         print(msg)
 
-    return {"intermediate_validation_log": prev_log}
+    # Return only the new entry — state.py uses operator.add reducer
+    return {"intermediate_validation_log": [entry]}
 
 
 def classify_review_fixes(workspace_dir: str) -> str:

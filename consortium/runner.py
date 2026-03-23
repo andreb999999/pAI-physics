@@ -830,7 +830,7 @@ def main():
             "tree_state_path": None,
             "active_branch_id": None,
             "milestone_reports": [],
-            "human_feedback": None,
+            "human_feedback_history": [],
             "enable_milestone_gates": enable_milestone_gates,
             "milestone_timeout": milestone_timeout,
             "intermediate_validation_log": [],

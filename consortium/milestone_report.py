@@ -137,6 +137,7 @@ PHASE_CONTEXTS = {
         "key_artifacts": [
             "paper_workspace/review_report.tex",
             "paper_workspace/review_verdict.json",
+            "paper_workspace/copyedit_report.tex",
             "final_paper.tex",
         ],
         "what_to_review": [
@@ -173,7 +174,7 @@ def _collect_validation_signals(state: dict) -> list[str]:
         errors = result.get("errors", [])
         signals.append(f"{gate}: {status}" + (f" ({'; '.join(errors)})" if errors else ""))
 
-    intermediate = state.get("intermediate_validation_log", [])
+    intermediate = list(state.get("intermediate_validation_log") or [])
     for entry in intermediate[-5:]:  # last 5 entries
         checkpoint = entry.get("checkpoint", "unknown")
         results = entry.get("results", {})
@@ -239,6 +240,7 @@ def _format_milestone_latex(
         lines.append("\\toprule")
         lines.append("Path & Status & Size \\\\")
         lines.append("\\midrule")
+        lines.append("\\endhead")
         for a in artifacts:
             path = a["path"].replace("_", "\\_")
             status = "EXISTS" if a["exists"] else "MISSING"

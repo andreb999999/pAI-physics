@@ -103,6 +103,17 @@ def validate_review_verdict(workspace_dir: str, min_review_score: int = 8) -> Di
         if not _to_bool(intro.get(key)):
             errors.append(f"intro_compliance failed: {key} != true")
 
+    # Validate must_fix_actions structure for downstream routing
+    must_fix = verdict.get("must_fix_actions", [])
+    if must_fix is not None and not isinstance(must_fix, list):
+        errors.append("must_fix_actions must be a list")
+    elif isinstance(must_fix, list):
+        for i, fix in enumerate(must_fix):
+            if not isinstance(fix, dict):
+                errors.append(f"must_fix_actions[{i}] must be an object")
+            elif "fix_type" not in fix:
+                errors.append(f"must_fix_actions[{i}] missing fix_type field")
+
     return {
         "present": True,
         "is_valid": len(errors) == 0,

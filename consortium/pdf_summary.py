@@ -277,11 +277,9 @@ def _compile_tex_to_pdf(tex_path: str) -> Optional[str]:
     env = os.environ.copy()
     env["PATH"] = f"{os.path.dirname(pdflatex)}:{env.get('PATH', '')}"
 
-    original_dir = os.getcwd()
     try:
-        os.chdir(tex_dir)
-
         # Two passes: first resolves references, second fills them in
+        # Use cwd= instead of os.chdir to avoid process-wide race conditions
         for pass_num in range(1, 3):
             result = subprocess.run(
                 [pdflatex, "-interaction=nonstopmode", tex_filename],
@@ -289,6 +287,7 @@ def _compile_tex_to_pdf(tex_path: str) -> Optional[str]:
                 text=True,
                 timeout=120,
                 env=env,
+                cwd=tex_dir,
             )
             if result.returncode != 0 and pass_num == 1:
                 # Log but try second pass anyway (some warnings are non-fatal)
@@ -308,8 +307,6 @@ def _compile_tex_to_pdf(tex_path: str) -> Optional[str]:
     except Exception as e:
         print(f"[pdf_summary] compilation error: {e}")
         return None
-    finally:
-        os.chdir(original_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -321,7 +318,7 @@ def generate_stage_summary_pdf(
     agent_name: str,
     agent_output: str,
     workspace_dir: str,
-    model_id: str = "claude-sonnet-4-6",
+    model_id: str = "claude-sonnet-4-5",
 ) -> Optional[str]:
     """
     Generate a standalone PDF summarising one pipeline stage's output.
@@ -363,7 +360,7 @@ def with_pdf_summary(
     node_fn: Callable,
     agent_name: str,
     workspace_dir: str,
-    model_id: Optional[str] = "claude-sonnet-4-6",
+    model_id: Optional[str] = "claude-sonnet-4-5",
 ) -> Callable:
     """
     Wrap a LangGraph node callable to generate a PDF summary after execution.

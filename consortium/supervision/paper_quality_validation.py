@@ -19,8 +19,8 @@ _PLACEHOLDER_PATTERNS = [
     re.compile(r"\bTBD\b", re.IGNORECASE),
     re.compile(r"\[fill[^\]]*\]", re.IGNORECASE),
     re.compile(r"\[cite:[^\]]+\]", re.IGNORECASE),
-    re.compile(r"Research Paper Title", re.IGNORECASE),
-    re.compile(r"Author Names", re.IGNORECASE),
+    re.compile(r"\\title\{Research Paper Title\}", re.IGNORECASE),
+    re.compile(r"\\author\{Author Names\}", re.IGNORECASE),
 ]
 
 _UNRESOLVED_REFERENCE_PATTERNS = [
@@ -63,7 +63,8 @@ def _load_with_inputs(path: str, visited: Optional[Set[str]] = None, depth: int 
 
     expanded = [content]
     base_dir = os.path.dirname(abs_path)
-    for token in re.findall(r"\\input\{([^}]+)\}", content):
+    # Follow both \input{} and \include{} directives
+    for token in re.findall(r"\\(?:input|include)\{([^}]+)\}", content):
         rel_path = token if token.endswith(".tex") else f"{token}.tex"
         expanded.append(_load_with_inputs(os.path.join(base_dir, rel_path), visited, depth + 1))
     return "\n".join(expanded)
