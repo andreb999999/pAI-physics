@@ -7,7 +7,7 @@
 
 **PoggioAI/MSc** is an open-source, customizable, modular multi-agent system for academic research workflows. Our goal is not autonomous scientific ideation, nor fully automated research. It is narrower and more practical: to reduce by orders of magnitude the human steering required to turn a specified hypothesis into a literature-grounded, mathematically established, experimentally supported, submission-oriented manuscript draft. Built with a current emphasis on machine learning theory and adjacent quantitative fields.
 
-The system implements a fixed workflow that decomposes work into 21 subagents across literature, theory, experiment, synthesis, and writing phases, with repair and follow-up routes when artifacts are incomplete, inconsistent, not novel, or not adequately established. Progress is represented by named intermediate outputs and stage-level validation gates (the *artifact contract*) rather than by free-form dialogue alone. Optional rigor-enhancing components include theorem-oriented reasoning, multi-model debate counsel, and tree-search-based exploration.
+The system implements a fixed workflow that decomposes work into 23+ specialist nodes across literature, theory, experiment, synthesis, and writing phases, with repair and follow-up routes when artifacts are incomplete, inconsistent, not novel, or not adequately established. Progress is represented by named intermediate outputs and stage-level validation gates (the *artifact contract*) rather than by free-form dialogue alone. Optional rigor-enhancing components include theorem-oriented reasoning, multi-model debate counsel, and tree-search-based exploration.
 
 (The core Python package is named `consortium`; **PoggioAI/MSc** is the project name.)
 
@@ -160,16 +160,23 @@ The pipeline is a persona-council-driven LangGraph workflow with feedback loops 
 - `literature_review_agent`
 - `lit_review_gate` — feasibility check; loops back to `persona_council` if infeasible
 - `brainstorm_agent`
+- `formalize_goals_entry` — entry gate that prepares state for goal formalization
 - `formalize_goals_agent`
+- `research_plan_writeup_agent` — drafts a structured research plan
+- `track_decomposition_gate` — validates and writes `track_decomposition.json`
+- `milestone_goals` — milestone gate (pauses for human input when milestone gates are enabled)
 
 **2. Parallel Track Execution**
 - **Theory track** (when `--enable-math-agents` is enabled and the planner selects theory work):
   - `math_literature_agent`
   - `math_proposer_agent`
+  - `goal_tag_validation_gate` — validates claim graph tags before proving
   - `math_prover_agent`
   - `math_rigorous_verifier_agent`
+  - `human_review_gate` — optional pause for human review of proofs
   - `math_empirical_verifier_agent`
   - `proof_transcription_agent`
+  - `theory_track_repair_gate` — can loop back to `math_prover_agent` for repair passes
 - **Experiment track** (when the planner selects empirical work):
   - `experiment_literature_agent`
   - `experiment_design_agent`
@@ -184,14 +191,16 @@ The pipeline is a persona-council-driven LangGraph workflow with feedback loops 
 **4. Results Formalization and Quality Check**
 - `formalize_results_agent`
 - `duality_check` — internal consistency check (`--no-duality-check` to skip)
-- `duality_gate` — pass proceeds to paper production; fail loops to `brainstorm_agent` via follow-up literature review
+- `duality_gate` — pass proceeds to paper production; fail loops to `brainstorm_agent` via `followup_lit_review`
 
 **5. Paper Production and Final QA**
 - `resource_preparation_agent`
 - `writeup_agent`
+- `proofreading_entry` — entry gate that prepares state for proofreading
 - `proofreading_agent`
 - `reviewer_agent`
-- `validation_gate`
+- `milestone_review` — milestone gate (pauses for human review of the paper when enabled)
+- `validation_gate` — routes to END on pass; can loop back to `writeup_agent`, `experiment_track`, or `theory_track` on fail
 
 ```mermaid
 flowchart TD
@@ -200,40 +209,55 @@ flowchart TD
     litGate -->|"feasible"| brainstorm["④BrainstormAgent"]
     litGate -->|"infeasible"| personaCouncil
 
-    brainstorm --> formalGoals["⑤FormalizeGoalsAgent"]
-    formalGoals --> milestoneGoals["⑥MilestoneGoals"]
-    milestoneGoals --> trackRouter{"⑦TrackRouter"}
+    brainstorm --> fgEntry["⑤FormalizeGoalsEntry"] --> formalGoals["⑥FormalizeGoalsAgent"]
+    formalGoals --> rpWriteup["⑦ResearchPlanWriteupAgent"]
+    rpWriteup --> tdGate["⑧TrackDecompositionGate"]
+    tdGate --> milestoneGoals{"⑨MilestoneGoals"}
+    milestoneGoals --> trackRouter{"TrackRouter"}
 
     subgraph theoryTrack ["TheoryTrack (--enable-math-agents)"]
-        mathLit["⑧MathLiterature"] --> mathProp["⑨MathProposer"] --> mathProver["⑩MathProver\n(or TreeSearch)"] --> mathRigorous["⑪MathRigorousVerifier"] --> mathEmpirical["⑫MathEmpiricalVerifier"] --> proofTrans["⑬ProofTranscription"]
+        mathLit["⑩MathLiterature"] --> mathProp["⑪MathProposer"]
+        mathProp --> goalTagGate["GoalTagValidation"]
+        goalTagGate --> mathProver["⑫MathProver\n(or TreeSearch)"]
+        mathProver --> mathRigorous["⑬MathRigorousVerifier"]
+        mathRigorous --> humanGate["HumanReviewGate"]
+        humanGate --> mathEmpirical["⑭MathEmpiricalVerifier"]
+        mathEmpirical --> proofTrans["⑮ProofTranscription"]
+        proofTrans --> repairGate{"TheoryRepairGate"}
+        repairGate -->|"repair"| mathProver
     end
 
     subgraph experimentTrack [ExperimentTrack]
-        expLit["⑭ExperimentLiterature"] --> expDesign["⑮ExperimentDesign"] --> expExec["⑯Experimentation"] --> expVerify["⑰ExperimentVerification"] --> expTrans["⑱ExperimentTranscription"]
+        expLit["⑯ExperimentLiterature"] --> expDesign["⑰ExperimentDesign"] --> expExec["⑱Experimentation"] --> expVerify["⑲ExperimentVerification"] --> expTrans["⑳ExperimentTranscription"]
     end
 
     trackRouter -->|"theory"| mathLit
     trackRouter -->|"empirical"| expLit
-    proofTrans --> trackMerge["⑲TrackMerge"]
+    repairGate -->|"done"| trackMerge["㉑TrackMerge"]
     expTrans --> trackMerge
 
-    trackMerge --> verifyCompletion{"⑳VerifyCompletion"}
-    verifyCompletion -->|"complete"| formalResults["㉑FormalizeResultsAgent"]
+    trackMerge --> verifyCompletion{"㉒VerifyCompletion"}
+    verifyCompletion -->|"complete"| formalResults["㉓FormalizeResultsAgent"]
     verifyCompletion -->|"incomplete"| formalGoals
     verifyCompletion -->|"rethink"| brainstorm
 
-    formalResults --> dualityCheck["㉒DualityCheck\n(--no-duality-check to skip)"]
-    dualityCheck --> dualityGate{"㉓DualityGate"}
-    dualityGate -->|"pass"| resourcePrep["㉔ResourcePreparation"]
-    dualityGate -->|"fail"| followupLit["㉕FollowupLitReview"] --> brainstorm
+    formalResults --> dualityCheck["㉔DualityCheck\n(--no-duality-check to skip)"]
+    dualityCheck --> dualityGate{"㉕DualityGate"}
+    dualityGate -->|"pass"| resourcePrep["㉖ResourcePreparation"]
+    dualityGate -->|"fail"| followupLit["㉗FollowupLitReview"] --> brainstorm
 
-    resourcePrep --> writeup["㉖Writeup"] --> proofread["㉗Proofreading"] --> reviewer["㉘Reviewer"]
-    reviewer --> validationGate{"㉙ValidationGate"}
-    validationGate -->|"pass"| endNode(("㉚END"))
-    validationGate -->|"fail"| writeup
+    resourcePrep --> writeup["㉘Writeup"]
+    writeup --> pfEntry["ProofreadingEntry"] --> proofread["㉙Proofreading"]
+    proofread --> reviewer["㉚Reviewer"]
+    reviewer --> milestoneReview{"MilestoneReview"}
+    milestoneReview --> validationGate{"㉛ValidationGate"}
+    validationGate -->|"pass"| endNode(("END"))
+    validationGate -->|"revise"| writeup
+    validationGate -->|"more experiments"| expLit
+    validationGate -->|"more theory"| mathLit
 
     classDef counselNode stroke:#6366f1,stroke-width:2px,stroke-dasharray:5
-    class litReview,brainstorm,formalGoals,formalResults,mathLit,mathProp,mathProver,mathRigorous,mathEmpirical,proofTrans,expLit,expDesign,expExec,expVerify,expTrans,resourcePrep,writeup,proofread,reviewer counselNode
+    class litReview,brainstorm,formalGoals,rpWriteup,formalResults,mathLit,mathProp,mathProver,mathRigorous,mathEmpirical,proofTrans,expLit,expDesign,expExec,expVerify,expTrans,resourcePrep,writeup,proofread,reviewer counselNode
 ```
 
 If no execution tracks are selected, the graph falls through directly to `track_merge`, then continues through verify-completion.
@@ -246,6 +270,7 @@ If no execution tracks are selected, the graph falls through directly to `track_
 - `--persona-debate-rounds N` — number of debate rounds in persona council (default: 3)
 - `--no-duality-check` — skip the duality check gate (formalize results goes directly to paper production)
 - `--adversarial-verification` — run a hostile red-team verifier after cooperative verifiers pass
+- `--no-steering` — disable TCP/HTTP live-steering sockets (for Docker or restricted environments)
 
 ## Quick Start
 
@@ -566,10 +591,12 @@ These templates define a **campaign-style multi-run workflow** (`theory -> exper
 
 ## Live Steering During a Run
 
-Launcher opens:
+Launcher opens (unless `--no-steering` is passed):
 
 - TCP control socket at `--callback_host:--callback_port` (default `127.0.0.1:5001`)
 - HTTP steering API at `callback_port + 1` (default `5002`)
+
+Use `--no-steering` to disable socket binding entirely (e.g., in Docker containers or shared servers where ports may be restricted).
 
 ### TCP Steering
 
@@ -650,7 +677,7 @@ flowchart TD
 
     heartbeat --> launchNext{"Next PENDING\nstage ready?"}
     launchNext -->|"yes"| buildPrompt["Build enriched prompt\n(task + memory summaries)"]
-    buildPrompt --> launch["launch_multiagent.py\n(PoggioAI/MSc multi-agent pipeline)"]
+    buildPrompt --> launch["launch_multiagent.py\n(consortium pipeline)"]
     launchNext -->|"no"| wait
 
     heartbeat -.->|"on events"| notify["Notifications\n(ntfy / Slack / Telegram / SMS)"]
@@ -894,7 +921,7 @@ Use `python launch_multiagent.py --help` for full output.
 | Flag | Default | Description |
 |---|---|---|
 | `--mode` | auto-detect | Deployment mode (`local`\|`tinker`\|`hpc`) |
-| `--model` | `None` | Model override for all agents |
+| `--model` | from config (default: `claude-sonnet-4-6`) | Model override for all agents |
 | `--debug` | `false` | Enable debug logging |
 | `--log-to-files` | env-driven | Force stdout/stderr redirection to `logs/` |
 | `--no-log-to-files` | env-driven | Disable file redirection |
@@ -931,6 +958,7 @@ Use `python launch_multiagent.py --help` for full output.
 | `--no-autonomous-mode` | — | Enable milestone gates and human approval checkpoints |
 | `--max-run-seconds` | `None` | Hard timeout for the entire pipeline run (SIGALRM kill) |
 | `--dry-run` | `false` | Validate setup without running pipeline |
+| `--no-steering` | `false` | Disable TCP/HTTP live-steering sockets (for Docker, containers, shared servers) |
 | `--output-format` | `latex` | Output format (`latex` or `markdown`) |
 | `--list-runs` | `false` | List past runs and exit |
 
@@ -1101,7 +1129,7 @@ Core orchestration:
 
 Major package areas:
 
-- `consortium/agents/`: 22+ specialist agent implementations, base agent factory, and track merge node
+- `consortium/agents/`: 23 specialist agent implementations, base agent factory, and track merge node
 - `consortium/toolkits/search/`: arXiv/web/search/document inspection tools (including Open Deep Search with web scraping, reranking, and SERP integration)
 - `consortium/toolkits/experimentation/`: experiment execution helpers (including SLURM job submission)
 - `consortium/toolkits/writeup/`: LaTeX generation/compilation/reflection, citation search, data visualization (comparison plots, training analysis, statistical analysis, multi-panel composition), and VLM document analysis
@@ -1116,10 +1144,10 @@ Major package areas:
 
 Notable agent groups:
 
-- **Discovery**: `persona_council`, `literature_review_agent`, `brainstorm_agent`, `formalize_goals_agent`
+- **Discovery**: `persona_council`, `literature_review_agent`, `brainstorm_agent`, `formalize_goals_agent`, `research_plan_writeup_agent`
 - **Theory track**: `math_literature_agent`, `math_proposer_agent`, `math_prover_agent`, `math_rigorous_verifier_agent`, `math_empirical_verifier_agent`, `proof_transcription_agent`
 - **Experiment track**: `experiment_literature_agent`, `experiment_design_agent`, `experimentation_agent`, `experiment_verification_agent`, `experiment_transcription_agent`
-- **Post-track**: `track_merge`, `verify_completion`, `formalize_results_agent`, `duality_check`, `resource_preparation_agent`, `writeup_agent`, `proofreading_agent`, `reviewer_agent`
+- **Post-track**: `track_merge`, `verify_completion`, `formalize_results_agent`, `results_analysis_agent`, `duality_check`, `followup_lit_review`, `resource_preparation_agent`, `writeup_agent`, `proofreading_agent`, `reviewer_agent`
 
 ## Math Workflow
 
@@ -1176,7 +1204,7 @@ By default, three frontier models run independently, with a separate synthesis m
 | 0 | `claude-opus-4-6` | Anthropic | `reasoning_effort=high` |
 | 1 | `gpt-5.4` | OpenAI | `reasoning_effort=high` |
 | 2 | `gemini-3-pro-preview` | Google | `thinking_budget=65536` |
-| synthesis | `claude-sonnet-4-6` | Anthropic | Reviews all solutions and debate rounds |
+| synthesis | `claude-opus-4-6` | Anthropic | Reviews all solutions and debate rounds |
 
 Custom model specs can be set in `.llm_config.yaml` under `counsel.models`.
 
@@ -1186,7 +1214,7 @@ Each pipeline stage runs through four phases:
 
 1. **Sandbox phase** (parallel): Each model receives the same task and system prompt but works in an isolated copy of the workspace (`counsel_sandboxes/<agent>/<model>/`). All three models execute simultaneously via `ThreadPoolExecutor`.
 2. **Debate phase** (parallel per round): After all sandbox runs complete, each model critiques all three solutions. This runs for `max_debate_rounds` rounds (default: 3, configurable via `--counsel-max-debate-rounds` or `CONSORTIUM_COUNSEL_MAX_DEBATE_ROUNDS`). Each round's critiques run in parallel.
-3. **Synthesis phase**: The synthesis model (default: `claude-sonnet-4-6`, configurable in `.llm_config.yaml`) reviews all solutions and all debate rounds, then produces a single authoritative output for the stage.
+3. **Synthesis phase**: The synthesis model (default: `claude-opus-4-6`, configurable in `.llm_config.yaml`) reviews all solutions and all debate rounds, then produces a single authoritative output for the stage.
 4. **Artifact promotion**: Files from each sandbox are merged into the main workspace. Later sandboxes win on file-level conflicts (last-write-wins).
 
 ### When to Use Counsel
@@ -1396,6 +1424,7 @@ We will publish benchmark results here once a standardized evaluation suite is a
 ## Running Tests
 
 ```bash
+pip install -e ".[dev]"   # installs pytest + pytest-cov
 pytest tests/
 ```
 
@@ -1405,11 +1434,16 @@ Test modules:
 - `tests/test_config.py` — configuration loading and precedence
 - `tests/test_prereqs.py` — prerequisite checks
 - `tests/test_graph.py` — graph construction and routing
+- `tests/test_graph_config.py` — graph configuration and parameterization
 - `tests/test_parallel_graph.py` — parallel track execution
 - `tests/test_runner.py` — runner lifecycle
 - `tests/test_state.py` — state schema and reducers
 - `tests/test_budget.py` — budget tracking, ledger, lock files
 - `tests/test_counsel.py` — counsel model specs and imports
+- `tests/test_lit_review_gate.py` — literature review feasibility gate
+- `tests/test_track_decomposition_gate.py` — track decomposition validation
+- `tests/test_extract_verdict.py` — verdict extraction from agent outputs
+- `tests/test_deep_research_tool.py` — deep research tool integration
 
 ## License
 
