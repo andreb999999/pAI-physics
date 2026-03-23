@@ -454,7 +454,11 @@ def build_proofreading_entry_node(workspace_dir: str) -> Any:
                 "Perform a full proofreading and copy-editing pass on the paper."
             )
 
-        return {"agent_task": task, "validation_results": {}}
+        cleared = {
+            k: v for k, v in validation_results.items()
+            if k not in _PROOFREADING_GATES
+        }
+        return {"agent_task": task, "validation_results": cleared}
 
     proofreading_entry_node.__name__ = "proofreading_entry"
     return proofreading_entry_node
@@ -467,6 +471,12 @@ def _formalize_results_state_mapper(inner_node: Callable) -> Callable:
         agent_output = (result or {}).get("agent_outputs", {}).get("formalize_results_agent")
         if agent_output is not None:
             result["formalized_results"] = agent_output
+        else:
+            import logging
+            logging.getLogger(__name__).warning(
+                "formalize_results_agent produced no output — "
+                "formalized_results state key not populated"
+            )
         return result
     wrapped.__name__ = getattr(inner_node, "__name__", "formalize_results_agent")
     return wrapped
@@ -1806,10 +1816,12 @@ def build_research_graph_v2(config: "ResearchGraphConfig"):
         "track_merge": build_track_merge_node(workspace_dir=workspace_dir),
         # Post-track verification (new v2 gates)
         "verify_completion": build_verify_completion_node(workspace_dir),
-        "formalize_results_agent": _formalize_results_state_mapper(_wrap(
-            build_formalize_results_node(_m("formalize_results_agent"), workspace_dir, authorized_imports, **counsel_kwargs),
+        "formalize_results_agent": _wrap(
+            _formalize_results_state_mapper(
+                build_formalize_results_node(_m("formalize_results_agent"), workspace_dir, authorized_imports, **counsel_kwargs)
+            ),
             "formalize_results_agent",
-        )),
+        ),
         "followup_lit_review": _wrap(
             build_followup_lit_review_node(_m("followup_lit_review"), workspace_dir, authorized_imports, counsel_models),
             "followup_lit_review_agent",
