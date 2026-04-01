@@ -22,34 +22,32 @@ budget:
   usd_limit: 25                      # safe exploration budget; increase for production
   hard_stop: true
   fail_closed: true
+  # OpenRouter pricing (includes ~5% markup over direct provider rates)
   pricing:
-    claude-opus-4-6:
-      input_per_1k: 0.005
-      output_per_1k: 0.025
-    claude-sonnet-4-6:
-      input_per_1k: 0.003
-      output_per_1k: 0.015
-    claude-sonnet-4-5:
-      input_per_1k: 0.003
-      output_per_1k: 0.015
     gpt-5:
-      input_per_1k: 0.002
-      output_per_1k: 0.012
+      input_per_1k: 0.0021
+      output_per_1k: 0.0126
     gpt-5.2:
-      input_per_1k: 0.00175
-      output_per_1k: 0.014
+      input_per_1k: 0.00184
+      output_per_1k: 0.0147
     gpt-5.4:
-      input_per_1k: 0.0025
-      output_per_1k: 0.015
-    gpt-5.3-codex:
-      input_per_1k: 0.002
-      output_per_1k: 0.01
+      input_per_1k: 0.00263
+      output_per_1k: 0.01575
     gemini-3-pro-preview:
-      input_per_1k: 0.00125
-      output_per_1k: 0.01
-
-# --- Multi-model counsel (debate) ---
-# Requires API keys for ALL listed providers. Disabled by default.
+      input_per_1k: 0.00131
+      output_per_1k: 0.0105
+    gpt-5.3-codex:
+      input_per_1k: 0.0021
+      output_per_1k: 0.0105
+    claude-opus-4-6:
+      input_per_1k: 0.00525
+      output_per_1k: 0.02625
+    claude-sonnet-4-6:
+      input_per_1k: 0.00315
+      output_per_1k: 0.01575
+    claude-sonnet-4-5:
+      input_per_1k: 0.00315
+      output_per_1k: 0.01575
 counsel:
   enabled: false                     # set true + add all API keys to enable
   max_debate_rounds: 3

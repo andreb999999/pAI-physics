@@ -263,43 +263,10 @@ def main() -> int:
             "Install ffmpeg for audio transcription features."
         )
 
-    # --- Mode-aware checks ---
-    mode = args.mode
-
-    # SLURM availability (HPC mode)
-    if mode == "hpc":
-        if not shutil.which("sbatch"):
-            errors.append(
-                "sbatch not found on PATH. HPC mode requires a SLURM installation. "
-                "Are you on a login/compute node?"
-            )
-        if not shutil.which("sacct"):
-            warnings.append("sacct not found — SLURM job status polling may not work.")
-        engaging_cfg = REPO_ROOT / "engaging_config.yaml"
-        if not engaging_cfg.exists():
-            warnings.append(
-                "engaging_config.yaml not found. Copy and edit it for your cluster's "
-                "partitions, modules, and conda paths."
-            )
-
-    # Tinker API key (tinker mode)
-    if mode == "tinker":
-        if not os.getenv("TINKER_API_KEY"):
-            errors.append(
-                "TINKER_API_KEY not set. Sign up at https://auth.thinkingmachines.ai/sign-up "
-                "and add TINKER_API_KEY to your .env file."
-            )
-
-    api_key_names = [
-        "OPENAI_API_KEY",
-        "ANTHROPIC_API_KEY",
-        "GOOGLE_API_KEY",
-        "OPENROUTER_API_KEY",
-        "DEEPSEEK_API_KEY",
-    ]
-    if not any(os.getenv(name) for name in api_key_names):
+    if not os.getenv("OPENROUTER_API_KEY"):
         warnings.append(
-            "No API key detected in environment. Add at least one key in .env or shell env vars."
+            "OPENROUTER_API_KEY not set. All LLM calls are routed through OpenRouter.\n"
+            "  Add it to your .env file:  OPENROUTER_API_KEY=your_key_here"
         )
 
     llm_cfg = REPO_ROOT / ".llm_config.yaml"
