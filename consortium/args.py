@@ -68,6 +68,22 @@ Examples:
     )
 
     parser.add_argument(
+        "--log-training-data",
+        action="store_true",
+        default=False,
+        help="Log all LLM input/output pairs to training_data.jsonl in the "
+             "workspace directory (OpenAI fine-tuning JSONL format). "
+             "Also respects CONSORTIUM_LOG_TRAINING_DATA=1 env var."
+    )
+
+    parser.add_argument(
+        "--no-tool-calls-in-training-data",
+        action="store_true",
+        default=False,
+        help="Exclude tool call/result messages from training data logs."
+    )
+
+    parser.add_argument(
         "--reasoning-effort",
         type=str,
         choices=["none", "minimal", "low", "medium", "high", "xhigh"],
@@ -126,6 +142,27 @@ Examples:
             "Requires --resume. Accepts canonical stage names (e.g., "
             "'experimentation_agent') and short aliases (e.g., 'experimentation')."
         ),
+    )
+
+    # -----------------------------------------------------------------
+    # Iterate mode (revision from prior paper + feedback)
+    # -----------------------------------------------------------------
+    parser.add_argument(
+        "--iterate",
+        type=str,
+        default=None,
+        metavar="DIR",
+        help="Path to a directory containing a prior paper (.pdf or .tex) and "
+             "feedback files (.tex/.md). The pipeline re-runs in revision mode, "
+             "skipping discovery phases and producing an improved paper.",
+    )
+
+    parser.add_argument(
+        "--iterate-start-stage",
+        type=str,
+        default="resource_preparation_agent",
+        help="Override the entry stage for iterate mode (default: resource_preparation_agent). "
+             "Use 'writeup_agent' to skip resource preparation if paper_workspace is ready.",
     )
 
     parser.add_argument(

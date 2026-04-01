@@ -7,6 +7,7 @@ this module can be imported/tested independently.
 
 import importlib.util
 import json
+import logging
 import os
 import platform
 import signal
@@ -29,6 +30,8 @@ from .token_usage_tracker import initialize_run_token_tracker
 from .counsel import create_counsel_models, DEFAULT_COUNSEL_MODEL_SPECS, set_counsel_timeout
 from .graph import build_pipeline_stages_v2, get_default_checkpointer
 from .utils import create_model, create_model_registry, save_agent_memory
+
+logger = logging.getLogger(__name__)
 
 load_dotenv(override=True)
 
@@ -124,14 +127,14 @@ def _setup_optional_tracing():
         "1", "true", "yes", "on",
     }
     if not enabled:
-        print("Tracing disabled (set CONSORTIUM_ENABLE_TRACING=1 to enable).")
+        logger.debug("Tracing disabled (set CONSORTIUM_ENABLE_TRACING=1 to enable).")
         return
     # LangSmith auto-tracing is enabled via LANGCHAIN_TRACING_V2 env var.
     # Just confirm it's configured.
     if os.getenv("LANGCHAIN_TRACING_V2"):
-        print("LangSmith tracing enabled.")
+        logger.info("LangSmith tracing enabled.")
     else:
-        print("Set LANGCHAIN_TRACING_V2=true and LANGCHAIN_API_KEY to enable LangSmith tracing.")
+        logger.info("Set LANGCHAIN_TRACING_V2=true and LANGCHAIN_API_KEY to enable LangSmith tracing.")
 
 
 def _install_litellm_token_callback():
@@ -139,10 +142,16 @@ def _install_litellm_token_callback():
     private token ledger.  This is a belt-and-suspenders layer: even if
     BudgetTrackingCallback or BudgetedLiteLLMModel is bypassed, every litellm
     call gets recorded for cost accounting.
+
+    Also logs full input/output pairs for training data when the
+    TrainingDataLogger is active.
     """
     from .token_usage_tracker import record_token_usage
 
     def _on_litellm_success(kwargs, response_obj, start_time, end_time):
+        prompt_tokens = 0
+        completion_tokens = 0
+        model = "unknown"
         try:
             usage = getattr(response_obj, "usage", None)
             if usage is None:
@@ -163,18 +172,56 @@ def _install_litellm_token_callback():
             # Use a counter to avoid flooding logs — warn after 10 failures.
             _on_litellm_success._fail_count = getattr(_on_litellm_success, "_fail_count", 0) + 1
             if _on_litellm_success._fail_count <= 3:
-                import logging
-                logging.getLogger(__name__).debug(
+                logger.debug(
                     "Token recording failed (occurrence #%d)", _on_litellm_success._fail_count,
                     exc_info=True,
                 )
             elif _on_litellm_success._fail_count == 10:
-                import logging
-                logging.getLogger(__name__).warning(
+                logger.warning(
                     "Token recording has failed %d times — token tracking may be inaccurate. "
                     "Check disk space and permissions.",
                     _on_litellm_success._fail_count,
                 )
+
+        # --- Training data logging (best-effort) ---
+        try:
+            from .logging.training_data_logger import get_training_data_logger
+            tdl = get_training_data_logger()
+            if tdl is None or not tdl.enabled:
+                return
+
+            messages = kwargs.get("messages", [])
+            response_content = ""
+            tool_calls = None
+            if hasattr(response_obj, "choices") and response_obj.choices:
+                choice = response_obj.choices[0]
+                msg = getattr(choice, "message", None)
+                if msg:
+                    response_content = getattr(msg, "content", "") or ""
+                    tool_calls = getattr(msg, "tool_calls", None)
+
+            duration_ms = None
+            if start_time and end_time:
+                try:
+                    duration_ms = int((end_time - start_time).total_seconds() * 1000)
+                except Exception:
+                    pass
+
+            tdl.log_completion(
+                messages=messages,
+                response_content=response_content,
+                model_id=model,
+                source="litellm_callback",
+                token_usage={
+                    "input_tokens": prompt_tokens,
+                    "output_tokens": completion_tokens,
+                },
+                call_id=kwargs.get("litellm_call_id"),
+                duration_ms=duration_ms,
+                tool_calls=tool_calls,
+            )
+        except Exception:
+            pass  # Never break LLM calls for training data logging
 
     litellm.success_callback.append(_on_litellm_success)
 
@@ -188,7 +235,7 @@ def _filter_installed_imports(import_names):
         else:
             missing.append(name)
     if missing:
-        print("Skipping unavailable authorized imports: " + ", ".join(sorted(set(missing))))
+        logger.info("Skipping unavailable authorized imports: " + ", ".join(sorted(set(missing))))
     return available
 
 
@@ -208,17 +255,17 @@ def _resolve_model_settings(args, llm_config):
         budget_tokens = cfg.get("budget_tokens", budget_tokens)
         # Support both "effort" (legacy) and "reasoning_effort" config keys
         effort = cfg.get("effort") or cfg.get("reasoning_effort", effort)
-        print("Loaded config file settings for main agents")
+        logger.info("Loaded config file settings for main agents")
 
     if args.model is not None:
         model_name = args.model
-        print(f"CLI override: using model {model_name}")
+        logger.info("CLI override: using model %s", model_name)
     if args.reasoning_effort is not None:
         reasoning_effort = args.reasoning_effort
-        print(f"CLI override: reasoning_effort={reasoning_effort}")
+        logger.info("CLI override: reasoning_effort=%s", reasoning_effort)
     if args.verbosity is not None:
         verbosity = args.verbosity
-        print(f"CLI override: verbosity={verbosity}")
+        logger.info("CLI override: verbosity=%s", verbosity)
 
     return model_name, reasoning_effort, verbosity, budget_tokens, effort
 
@@ -332,8 +379,8 @@ def _list_runs(results_dir: str = "results") -> None:
                 total = bd.get("total_usd", bd.get("total_cost_usd", None))
                 if total is not None:
                     cost_str = f"${float(total):.2f}"
-            except Exception:
-                pass
+            except (json.JSONDecodeError, OSError):
+                logger.debug("Failed to read budget_state.json for %s", name, exc_info=True)
         # Status
         status_str = "unknown"
         status_path = os.path.join(ws, "STATUS.txt")
@@ -341,8 +388,8 @@ def _list_runs(results_dir: str = "results") -> None:
             try:
                 with open(status_path) as f:
                     status_str = f.read().strip()[:20]
-            except Exception:
-                pass
+            except OSError:
+                logger.debug("Failed to read STATUS.txt for %s", name, exc_info=True)
         # Task
         task_str = ""
         summary_path = os.path.join(ws, "run_summary.json")
@@ -351,8 +398,8 @@ def _list_runs(results_dir: str = "results") -> None:
                 with open(summary_path) as f:
                     sm = json.load(f)
                 task_str = sm.get("task", "")[:43]
-            except Exception:
-                pass
+            except (json.JSONDecodeError, OSError):
+                logger.debug("Failed to read run_summary.json for %s", name, exc_info=True)
         print(f"{name:<45} {task_str:<45} {cost_str:>8}  {status_str}")
 
 
@@ -363,8 +410,8 @@ def _write_experiment_metadata(workspace_dir: str, args, model_name: str, task: 
         git_commit = subprocess.check_output(
             ["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL, text=True
         ).strip()
-    except Exception:
-        pass
+    except OSError:
+        logger.debug("Could not determine git commit hash", exc_info=True)
 
     git_dirty = False
     try:
@@ -372,8 +419,8 @@ def _write_experiment_metadata(workspace_dir: str, args, model_name: str, task: 
             ["git", "status", "--porcelain"], stderr=subprocess.DEVNULL, text=True
         )
         git_dirty = bool(result.strip())
-    except Exception:
-        pass
+    except OSError:
+        logger.debug("Could not determine git dirty status", exc_info=True)
 
     metadata = {
         "timestamp": datetime.now().isoformat(),
@@ -395,8 +442,8 @@ def _write_experiment_metadata(workspace_dir: str, args, model_name: str, task: 
     try:
         with open(out_path, "w") as f:
             json.dump(metadata, f, indent=2)
-    except Exception:
-        pass
+    except OSError:
+        logger.debug("Failed to write experiment_metadata.json", exc_info=True)
 
 
 def _write_run_summary(workspace_dir: str, task: str, model_name: str,
@@ -411,8 +458,8 @@ def _write_run_summary(workspace_dir: str, task: str, model_name: str,
             with open(budget_path) as f:
                 bd = json.load(f)
             total_cost = bd.get("total_usd", bd.get("total_cost_usd"))
-        except Exception:
-            pass
+        except (json.JSONDecodeError, OSError):
+            logger.debug("Failed to read budget_state.json in run summary", exc_info=True)
 
     total_tokens = None
     token_path = os.path.join(workspace_dir, "run_token_usage.json")
@@ -421,8 +468,8 @@ def _write_run_summary(workspace_dir: str, task: str, model_name: str,
             with open(token_path) as f:
                 tok = json.load(f)
             total_tokens = tok.get("total_tokens")
-        except Exception:
-            pass
+        except (json.JSONDecodeError, OSError):
+            logger.debug("Failed to read run_token_usage.json in run summary", exc_info=True)
 
     # Detect final paper path
     paper_path = None
@@ -447,9 +494,9 @@ def _write_run_summary(workspace_dir: str, task: str, model_name: str,
     try:
         with open(out_path, "w") as f:
             json.dump(summary, f, indent=2)
-        print(f"Run summary written: {out_path}")
-    except Exception:
-        pass
+        logger.info("Run summary written: %s", out_path)
+    except OSError:
+        logger.debug("Failed to write run_summary.json", exc_info=True)
 
 
 def main():
@@ -472,7 +519,7 @@ def main():
         os.makedirs("logs", exist_ok=True)
         out_path = f"logs/consortium_{timestamp}.out"
         err_path = f"logs/consortium_{timestamp}.err"
-        print(f"Redirecting stdout/stderr to: {out_path}, {err_path}")
+        logger.info("Redirecting stdout/stderr to: %s, %s", out_path, err_path)
         sys.stdout = open(out_path, "w", buffering=1)
         sys.stderr = open(err_path, "w", buffering=1)
 
@@ -484,7 +531,6 @@ def main():
     # P2-9: Suppress non-fatal Vertex AI credential errors that flood stderr.
     # These fire every time litellm tries (and fails) to use Vertex AI as a
     # fallback provider. They are harmless but produce thousands of log lines.
-    import logging
     logging.getLogger("LiteLLM").setLevel(logging.WARNING)
     _vertex_logger = logging.getLogger("LiteLLM Router")
     _vertex_logger.setLevel(logging.ERROR)
@@ -499,18 +545,18 @@ def main():
     mode = resolve_mode(args)
     mode_config = load_mode_config(mode)
     apply_mode_defaults(args, mode_config)
-    print(f"[PoggioAI] Running in {mode} mode — {mode_config.get('description', '')}")
+    logger.info("[PoggioAI] Running in %s mode — %s", mode, mode_config.get('description', ''))
 
     llm_config = load_llm_config()
 
     if args.pipeline_mode is not None:
-        print(
-            "Warning: --pipeline-mode is deprecated and ignored. "
+        logger.warning(
+            "--pipeline-mode is deprecated and ignored. "
             "Running fixed-stage full pipeline mode."
         )
 
     if args.start_from_stage and not args.resume:
-        print("Error: --start-from-stage requires --resume <workspace_dir>.")
+        logger.error("--start-from-stage requires --resume <workspace_dir>.")
         return 1
 
     model_name, reasoning_effort, verbosity, budget_tokens, effort = _resolve_model_settings(
@@ -525,37 +571,37 @@ def main():
             key_errors.extend(_validate_api_keys(spec["model"]))
     if key_errors:
         for err in key_errors:
-            print(f"[ERROR] {err}")
-        print("\nFix the above before running. See .env.example for the full list of keys.")
+            logger.error(err)
+        logger.error("Fix the above before running. See .env.example for the full list of keys.")
         return 1
 
     # --- Dry-run mode: validate config and exit without touching the pipeline ---
     if getattr(args, "dry_run", False):
         budget_config = llm_config.get("budget", {}) if llm_config else {}
         usd_limit = budget_config.get("usd_limit", "not set")
-        print("\n[dry-run] Environment checks passed:")
-        print(f"  model           : {model_name}")
-        print(f"  reasoning_effort: {reasoning_effort}")
-        print(f"  budget cap      : ${usd_limit}")
-        print(f"  math agents     : {getattr(args, 'enable_math_agents', False)}")
-        print(f"  counsel mode    : {getattr(args, 'enable_counsel', False)}")
-        print(f"  output format   : {getattr(args, 'output_format', 'latex')}")
-        print("\n[dry-run] All checks passed. Remove --dry-run to start the real run.")
+        logger.info("[dry-run] Environment checks passed:")
+        logger.info("  model           : %s", model_name)
+        logger.info("  reasoning_effort: %s", reasoning_effort)
+        logger.info("  budget cap      : $%s", usd_limit)
+        logger.info("  math agents     : %s", getattr(args, 'enable_math_agents', False))
+        logger.info("  counsel mode    : %s", getattr(args, 'enable_counsel', False))
+        logger.info("  output format   : %s", getattr(args, 'output_format', 'latex'))
+        logger.info("[dry-run] All checks passed. Remove --dry-run to start the real run.")
         return 0
 
     # Set up interrupt socket (used by live-steering via state injection)
     input_queue = None
     if not getattr(args, "no_steering", False):
         input_queue = setup_user_input_socket(args.callback_host, args.callback_port)
-        print(f"Interruption port available at {args.callback_host}:{args.callback_port}")
+        logger.info("Interruption port available at %s:%s", args.callback_host, args.callback_port)
         # Also start HTTP steering server on port+1 for programmatic clients (e.g. OpenClaw)
         add_http_steering(input_queue, host=args.callback_host, port=args.callback_port + 1)
     else:
         from queue import Queue
         input_queue = Queue()
-        print("[PoggioAI] Steering sockets disabled (--no-steering)")
+        logger.info("[PoggioAI] Steering sockets disabled (--no-steering)")
 
-    print(f"\nLangGraph Research System Initialized — model: {model_name}")
+    logger.info("LangGraph Research System Initialized — model: %s", model_name)
 
     # --- Experiment tool env config ---
     if llm_config and "run_experiment_tool" in llm_config:
@@ -570,18 +616,38 @@ def main():
     if args.resume:
         results_base_dir = os.path.abspath(args.resume)
         if not os.path.exists(results_base_dir):
-            print(f"Workspace directory does not exist: {results_base_dir}")
+            logger.error("Workspace directory does not exist: %s", results_base_dir)
             return 1
         if not os.path.isdir(results_base_dir):
-            print(f"Path is not a directory: {results_base_dir}")
+            logger.error("Path is not a directory: %s", results_base_dir)
             return 1
         task = args.task or _CONTINUATION_TASK
-        print(f"Resuming from: {results_base_dir}")
+        logger.info("Resuming from: %s", results_base_dir)
+    elif getattr(args, "iterate", None):
+        # --- Iterate mode: revision from prior paper + feedback ---
+        if args.start_from_stage:
+            logger.error("--iterate and --start-from-stage cannot be used together. "
+                         "Use --iterate-start-stage instead.")
+            return 1
+        from .iterate import validate_iterate_dir, build_iterate_state_seed
+        try:
+            validate_iterate_dir(args.iterate)
+        except ValueError as e:
+            logger.error("Iterate validation failed: %s", e)
+            return 1
+        results_base_dir = os.path.join("results", f"consortium_{timestamp}_iterate")
+        os.makedirs(results_base_dir, exist_ok=True)
+        task = args.task or "Revise and improve the paper based on reviewer feedback."
+        iterate_seed = build_iterate_state_seed(args.iterate, results_base_dir)
+        logger.info("Created iterate workspace: %s", results_base_dir)
+        logger.info("Prior paper: %s", iterate_seed.get('iterate_prior_paper_path', 'N/A'))
+        logger.info("Feedback: %s", iterate_seed.get('iterate_feedback_summary', 'N/A'))
+        _write_experiment_metadata(results_base_dir, args, model_name, task)
     else:
         results_base_dir = os.path.join("results", f"consortium_{timestamp}")
         os.makedirs(results_base_dir, exist_ok=True)
         task = args.task or _DEFAULT_TASK
-        print(f"Created workspace: {results_base_dir}")
+        logger.info("Created workspace: %s", results_base_dir)
         _write_experiment_metadata(results_base_dir, args, model_name, task)
 
     os.environ["RESULTS_BASE_DIR"] = results_base_dir
@@ -592,15 +658,29 @@ def main():
     token_file = initialize_run_token_tracker(
         workspace_dir=results_base_dir, run_id=run_id, reset=True,
     )
-    print(f"Token tracker initialized: {token_file}")
+    logger.info("Token tracker initialized: %s", token_file)
 
-    print(f"Task: {task[:100]}{'...' if len(task) > 100 else ''}")
-    print("Pipeline mode: full_research (fixed-stage)")
+    # --- Training data logging ---
+    log_training = getattr(args, "log_training_data", False) or \
+        os.getenv("CONSORTIUM_LOG_TRAINING_DATA", "").strip().lower() in {"1", "true", "yes"}
+    if log_training:
+        from .logging.training_data_logger import initialize_training_data_logger
+        include_tool_calls = not getattr(args, "no_tool_calls_in_training_data", False)
+        initialize_training_data_logger(
+            workspace_dir=results_base_dir,
+            run_id=run_id,
+            enabled=True,
+            include_tool_calls=include_tool_calls,
+        )
+        logger.info("Training data logging enabled: %s/training_data.jsonl", results_base_dir)
+
+    logger.info("Task: %s%s", task[:100], '...' if len(task) > 100 else '')
+    logger.info("Pipeline mode: full_research (fixed-stage)")
     if args.enable_math_agents:
-        print("Math agent workflow enabled.")
+        logger.info("Math agent workflow enabled.")
 
     pipeline_stages = build_pipeline_stages_v2(args.enable_math_agents)
-    print("Pipeline version: v2 (persona-council-driven)")
+    logger.info("Pipeline version: v2 (persona-council-driven)")
     try:
         start_stage_index = (
             _resolve_start_stage_index(args.start_from_stage, pipeline_stages)
@@ -608,14 +688,14 @@ def main():
             else 0
         )
     except ValueError as e:
-        print(str(e))
+        logger.error("%s", e)
         return 1
 
     if args.start_from_stage:
         resolved_stage = pipeline_stages[start_stage_index]
-        print(
-            f"Stage-based resume requested: start from '{resolved_stage}' "
-            f"(index {start_stage_index})."
+        logger.info(
+            "Stage-based resume requested: start from '%s' (index %d).",
+            resolved_stage, start_stage_index,
         )
 
     # --- Artifact gate setup ---
@@ -637,18 +717,18 @@ def main():
     )
 
     if enforce_paper_artifacts:
-        print("Paper artifact gate: " + ", ".join(required_paper_artifacts))
+        logger.info("Paper artifact gate: %s", ", ".join(required_paper_artifacts))
 
     # --- LaTeX prereq check ---
     require_latex = enforce_paper_artifacts or args.require_pdf or enforce_editorial_artifacts
     if require_latex:
         pdflatex_path, bibtex_path, latex_error = check_latex_prereqs()
         if latex_error:
-            print(f"Missing LaTeX prerequisites.\n{latex_error}")
+            logger.error("Missing LaTeX prerequisites.\n%s", latex_error)
             return 1
         os.environ["CONSORTIUM_PDFLATEX_PATH"] = pdflatex_path
         os.environ["CONSORTIUM_BIBTEX_PATH"] = bibtex_path
-        print(f"LaTeX toolchain: pdflatex={pdflatex_path}, bibtex={bibtex_path}")
+        logger.info("LaTeX toolchain: pdflatex=%s, bibtex=%s", pdflatex_path, bibtex_path)
 
     # --- Model setup ---
     budget_config = llm_config.get("budget", {}) if llm_config else {}
@@ -657,7 +737,7 @@ def main():
         effort=effort,
         budget_config=budget_config, budget_dir=results_base_dir,
     )
-    print(f"Created model: {getattr(model, 'model', model_name)}")
+    logger.info("Created model: %s", getattr(model, 'model', model_name))
 
     # --- Per-agent model tiering ---
     model_registry = create_model_registry(
@@ -668,7 +748,7 @@ def main():
         for _agent, _m in model_registry._agent_models.items():
             mid = getattr(_m, "model", "unknown")
             tier_counts[mid] = tier_counts.get(mid, 0) + 1
-        print(f"Per-agent model tiers: {tier_counts}")
+        logger.info("Per-agent model tiers: %s", tier_counts)
 
     essential_imports = _filter_installed_imports([
         "json", "os", "posixpath", "ntpath", "sys", "datetime", "uuid", "typing",
@@ -698,8 +778,8 @@ def main():
         cfg_model_specs = counsel_cfg.get("models")
         model_specs = cfg_model_specs if cfg_model_specs else None
 
-        print(f"Counsel mode enabled — {len(model_specs or DEFAULT_COUNSEL_MODEL_SPECS)} models, "
-              f"{max_debate_rounds} debate rounds per stage.")
+        logger.info("Counsel mode enabled — %d models, %d debate rounds per stage.",
+                    len(model_specs or DEFAULT_COUNSEL_MODEL_SPECS), max_debate_rounds)
         counsel_models_list = create_counsel_models(
             budget_config=budget_config,
             budget_dir=results_base_dir,
@@ -729,7 +809,7 @@ def main():
         enable_milestone_gates = getattr(args, "enable_milestone_gates", False)
         # In autonomous mode, force milestone gates off regardless of other flags
         if autonomous_mode and enable_milestone_gates:
-            print("Autonomous mode: milestone gates disabled.")
+            logger.info("Autonomous mode: milestone gates disabled.")
             enable_milestone_gates = False
         milestone_timeout = getattr(args, "milestone_timeout", 3600)
         adversarial_verification = getattr(args, "adversarial_verification", False)
@@ -780,6 +860,7 @@ def main():
             tree_search=tree_search_config,
             enable_milestone_gates=enable_milestone_gates,
             adversarial_verification=adversarial_verification,
+            iterate_mode=bool(getattr(args, "iterate", None)),
             persona_council=PersonaCouncilConfig(
                 specs=persona_council_specs,
                 debate_rounds=persona_debate_rounds,
@@ -793,16 +874,17 @@ def main():
             model_registry=model_registry,
         )
         graph = build_research_graph_v2(graph_config)
-        print(f"Pipeline: {persona_debate_rounds} persona debate rounds, "
-              f"duality_check={'enabled' if enable_duality_check else 'disabled'}")
+        logger.info("Pipeline: %d persona debate rounds, duality_check=%s",
+                    persona_debate_rounds, 'enabled' if enable_duality_check else 'disabled')
 
         if adversarial_verification:
-            print("Adversarial verification enabled — red-team verifiers will "
-                  "challenge proofs and experiments after cooperative verification passes.")
+            logger.info("Adversarial verification enabled — red-team verifiers will "
+                        "challenge proofs and experiments after cooperative verification passes.")
 
         if enable_milestone_gates:
-            print(f"Milestone gates enabled (timeout={milestone_timeout}s). "
-                  f"POST /milestone_response to approve/modify/abort at each gate.")
+            logger.info("Milestone gates enabled (timeout=%ds). "
+                        "POST /milestone_response to approve/modify/abort at each gate.",
+                        milestone_timeout)
 
         # Build initial state
         initial_state = {
@@ -860,7 +942,24 @@ def main():
             "brainstorm_cycle": 0,
             "verify_rework_attempts": 0,
             "duality_rework_attempts": 0,
+            # Iterate mode fields
+            "iterate_mode": False,
+            "iterate_prior_paper_path": None,
+            "iterate_feedback_path": None,
+            "iterate_feedback_summary": None,
         }
+
+        # --- Iterate mode: merge state seed and override entry stage ---
+        if getattr(args, "iterate", None):
+            initial_state.update(iterate_seed)  # noqa: F821 (defined in iterate branch above)
+            iterate_entry_stage = getattr(args, "iterate_start_stage", "resource_preparation_agent")
+            canonical = _canonical_stage_name(iterate_entry_stage)
+            try:
+                initial_state["pipeline_stage_index"] = pipeline_stages.index(canonical)
+            except ValueError:
+                logger.warning("iterate-start-stage '%s' not in pipeline stages, "
+                              "defaulting to resource_preparation_agent", iterate_entry_stage)
+                initial_state["pipeline_stage_index"] = pipeline_stages.index("resource_preparation_agent")
 
         # Use workspace_dir as thread_id for default resumability.
         # For stage-based resume, create a fresh thread in the same workspace so
@@ -872,7 +971,10 @@ def main():
             thread_id = results_base_dir
         run_config = {"configurable": {"thread_id": thread_id}}
 
-        print(f"\n{'='*50}\nRunning LangGraph research pipeline...\nTask: {task}\n{'='*50}")
+        logger.info("=" * 50)
+        logger.info("Running LangGraph research pipeline...")
+        logger.info("Task: %s", task)
+        logger.info("=" * 50)
 
         # --- Progress heartbeat watchdog (Tier 1.1) ---
         # Writes a .progress_heartbeat file every 2 minutes so the campaign
@@ -889,7 +991,7 @@ def main():
                         json.dump({"ts": time.time(), "pid": os.getpid()}, f)
                     os.replace(tmp, progress_file)
                 except OSError:
-                    pass  # disk full / permissions — non-fatal
+                    logger.debug("Heartbeat write failed (disk full / permissions)", exc_info=True)
                 _graph_done.wait(120)
 
         watchdog_thread = threading.Thread(target=_watchdog_writer, daemon=True)
@@ -906,7 +1008,17 @@ def main():
                 )
             _old_alarm_handler = signal.signal(signal.SIGALRM, _timeout_handler)
             signal.alarm(max_run_seconds)
-            print(f"Hard timeout set: {max_run_seconds}s")
+            logger.info("Hard timeout set: %ds", max_run_seconds)
+
+        # Validate initial state before graph invocation
+        from .state import validate_initial_state
+        try:
+            state_warnings = validate_initial_state(initial_state)
+            for w in state_warnings:
+                logger.warning("[state] %s", w)
+        except ValueError as e:
+            logger.error("[state] FATAL: %s", e)
+            raise
 
         try:
             final_state = graph.invoke(initial_state, config=run_config)
@@ -920,7 +1032,7 @@ def main():
             try:
                 os.remove(progress_file)
             except OSError:
-                pass
+                logger.debug("Could not remove progress heartbeat file", exc_info=True)
 
         result = final_state.get("agent_outputs", {})
         result = sanitize_result_payload(
@@ -929,9 +1041,9 @@ def main():
             required_artifacts=required_paper_artifacts,
         )
         if isinstance(result, dict) and result.get("status") == "incomplete":
-            print(
-                "Run marked incomplete — missing: "
-                + ", ".join(result.get("missing_required_artifacts", []))
+            logger.warning(
+                "Run marked incomplete — missing: %s",
+                ", ".join(result.get("missing_required_artifacts", [])),
             )
 
         # Determine which stages completed (read from state if available)
@@ -948,12 +1060,12 @@ def main():
             stages_completed=stages_done,
         )
 
-        print(f"\n{'='*50}\nTask finished.\n{'='*50}")
+        logger.info("=" * 50)
+        logger.info("Task finished.")
+        logger.info("=" * 50)
 
     except Exception as e:
-        print(f"Error during pipeline execution: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error("Error during pipeline execution: %s", e, exc_info=True)
         return 1
 
     return 0

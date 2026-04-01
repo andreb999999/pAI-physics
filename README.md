@@ -14,7 +14,7 @@ Built by the [Poggio Lab](https://poggio-lab.mit.edu/) at MIT.
 
 ## What is MSc?
 
-**MSc** (Multi-agent Scientific Collaboration) is an open-source research automation system that transforms a research question into a complete, submission-ready manuscript. It orchestrates 22+ specialist AI agents across a structured pipeline covering literature review, theory development, experimental design, synthesis, and writing -- all coordinated through a LangGraph backbone with stage-level validation gates.
+**MSc** (Multi-agent Scientific Collaboration) is an open-source research automation system that transforms a research question into a complete, submission-ready manuscript. It orchestrates 22 specialist agent nodes across a structured pipeline covering literature review, theory development, experimental design, synthesis, and writing -- all coordinated through a LangGraph backbone with stage-level validation gates.
 
 The system goes beyond simple prompt chaining. MSc supports multi-model counsel debate (where multiple frontier models argue and converge on key decisions), tree search exploration (inspired by AI Scientist-v2), and campaign orchestration for multi-stage research projects. You provide a research question; MSc delivers a literature-grounded, mathematically rigorous, experimentally supported manuscript draft in markdown or LaTeX. The goal is to reduce the hundreds of steering prompts typically required to produce a research paper down to fewer than ten.
 
@@ -111,16 +111,16 @@ This runs a comprehensive environment check: Python version, installed packages,
 
 ```bash
 # Quick test (~$2-5, 30 min)
-msc run "What are the key differences between transformer and state-space models?" --preset quick
+msc run "What are the key differences between transformer and state-space models?"
 
 # Standard (~$10-25, 2 hrs)
 msc run "Survey the landscape of mechanistic interpretability methods"
 
 # Thorough with counsel (~$40-100, 6 hrs)
-msc run "Analyze the theoretical foundations of in-context learning" --preset thorough
+msc run "Analyze the theoretical foundations of in-context learning" --enable-counsel
 
-# Maximum quality (~$80-200, 12+ hrs)
-msc run "Comprehensive analysis of attention mechanisms" --preset maximum
+# Maximum quality with math agents (~$80-200, 12+ hrs)
+msc run "Comprehensive analysis of attention mechanisms" --enable-counsel --enable-math-agents --enable-tree-search
 ```
 
 Each run creates a timestamped output directory containing all intermediate artifacts, the final manuscript, and a detailed execution log.
@@ -137,14 +137,16 @@ Output manuscripts are saved to the `results/` directory by default.
 
 ---
 
-## Research Presets
+## Recommended Configurations
 
-| Preset | Approx. Cost | Time | Features | Best For |
+These are typical cost/time profiles depending on the flags you enable. There is no `--preset` flag; combine flags manually to match your needs.
+
+| Configuration | Approx. Cost | Time | Flags | Best For |
 |---|---|---|---|---|
-| `quick` | $2 -- $5 | ~30 min | Single model, no counsel, minimal literature search | Testing, quick summaries, sanity checks |
-| `standard` | $10 -- $25 | ~2 hrs | Single model, standard literature search, full pipeline | Most research questions, drafts |
-| `thorough` | $40 -- $100 | ~6 hrs | Multi-model counsel debate, expanded search, tree exploration | Publication-quality drafts |
-| `maximum` | $80 -- $200 | 12+ hrs | Full counsel, deep tree search, multiple revision passes, experimental validation | Rigorous manuscripts, comprehensive surveys |
+| Quick | $2 -- $5 | ~30 min | *(default)* | Testing, quick summaries, sanity checks |
+| Standard | $10 -- $25 | ~2 hrs | *(default)* | Most research questions, drafts |
+| Thorough | $40 -- $100 | ~6 hrs | `--enable-counsel` | Publication-quality drafts |
+| Maximum | $80 -- $200 | 12+ hrs | `--enable-counsel --enable-math-agents --enable-tree-search` | Rigorous manuscripts, comprehensive surveys |
 
 ---
 
@@ -230,10 +232,12 @@ OpenClaw is particularly useful for HPC deployments where runs span multiple SLU
 
 | Provider | Models | Env Variable |
 |---|---|---|
-| Anthropic | `claude-opus-4-6`, `claude-sonnet-4-6` | `ANTHROPIC_API_KEY` |
-| OpenAI | `gpt-5`, `gpt-5-mini`, `gpt-5.4` | `OPENAI_API_KEY` |
-| Google | `gemini-3-pro-preview` | `GOOGLE_API_KEY` |
-| DeepSeek | `deepseek-chat` | `DEEPSEEK_API_KEY` |
+| Anthropic | `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-sonnet-4-5` | `ANTHROPIC_API_KEY` |
+| OpenAI | `gpt-5`, `gpt-5-mini`, `gpt-5-nano`, `gpt-5.4`, `gpt-5.2`, `gpt-4o` | `OPENAI_API_KEY` |
+| OpenAI (reasoning) | `o3-2025-04-16`, `o3-pro-2025-06-10`, `o4-mini-2025-04-16` | `OPENAI_API_KEY` |
+| Google | `gemini-3-pro-preview`, `gemini-2.5-pro`, `gemini-2.5-flash` | `GOOGLE_API_KEY` |
+| DeepSeek | `deepseek-chat`, `deepseek-coder` | `DEEPSEEK_API_KEY` |
+| xAI | `grok-4-0709` | `XAI_API_KEY` |
 
 You need at least one provider configured. For counsel mode (multi-model debate), configure two or more providers.
 

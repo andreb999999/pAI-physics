@@ -3,17 +3,52 @@ Fetches and downloads papers from arXiv based on a search query.
 This tool is taken from https://programmer.ie/post/deepresearch1/
 """
 from __future__ import annotations
-from typing import Optional, Type, Any
+from typing import Dict, Optional, Type, Any
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field, ConfigDict
 
 import os
+import threading
 import time
 import requests
 from pathlib import Path
 from urllib.parse import urlparse
 import hashlib
 import re
+
+# ---------------------------------------------------------------------------
+# Module-level cache for arXiv API responses (metadata only, not PDFs).
+# Keyed by (query, max_results). TTL = 30 min.
+# ---------------------------------------------------------------------------
+_ARXIV_CACHE: Dict[str, tuple[float, str]] = {}
+_ARXIV_CACHE_LOCK = threading.Lock()
+_ARXIV_CACHE_TTL = 1800  # 30 minutes
+_ARXIV_CACHE_MAX = 256
+
+
+def _arxiv_cache_key(query: str, max_results: int) -> str:
+    raw = f"{query.strip().lower()}|{max_results}"
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def _arxiv_cache_get(key: str) -> Optional[str]:
+    with _ARXIV_CACHE_LOCK:
+        entry = _ARXIV_CACHE.get(key)
+        if entry is None:
+            return None
+        ts, val = entry
+        if time.time() - ts > _ARXIV_CACHE_TTL:
+            del _ARXIV_CACHE[key]
+            return None
+        return val
+
+
+def _arxiv_cache_put(key: str, value: str) -> None:
+    with _ARXIV_CACHE_LOCK:
+        if len(_ARXIV_CACHE) >= _ARXIV_CACHE_MAX:
+            oldest = min(_ARXIV_CACHE, key=lambda k: _ARXIV_CACHE[k][0])
+            del _ARXIV_CACHE[oldest]
+        _ARXIV_CACHE[key] = (time.time(), value)
 
 
 SEARCH_QUERY= "agent"  # Replace with desired search term or topic
@@ -112,6 +147,12 @@ class FetchArxivPapersTool(BaseTool):
         print(f"Downloaded: {title}")
 
     def _run(self, search_query: str, max_results: int = 5):
+        # Check cache for previously downloaded results with same query
+        ck = _arxiv_cache_key(search_query, max_results)
+        cached = _arxiv_cache_get(ck)
+        if cached is not None:
+            return cached
+
         # Create output folder if it doesn't exist
         os.makedirs(self.output_folder, exist_ok=True)
 
@@ -120,18 +161,23 @@ class FetchArxivPapersTool(BaseTool):
         response_text = self.fetch_arxiv_papers(search_query, max_results)
         papers = self.parse_paper_links(response_text)
 
-        # Download each paper
+        # Download each paper (skip if already exists on disk)
         print(f"Found {len(papers)} papers. Starting download...")
         downloaded_papers = []
         for title, pdf_link in papers:
             try:
                 safe_title = self.sanitize_filename(title)
                 filename = os.path.join(self.output_folder, f"{safe_title}.pdf")
+                if os.path.exists(filename):
+                    downloaded_papers.append(filename)
+                    continue
                 self.download_paper(title, pdf_link, self.output_folder)
                 downloaded_papers.append(filename)
                 time.sleep(2)  # Pause to avoid hitting rate limits
             except Exception as e:
                 print(f"Failed to download '{title}': {e}")
 
-        return f"Download complete! Saved {len(downloaded_papers)} papers to the '{self.output_folder}' directory: {downloaded_papers}"
+        result = f"Download complete! Saved {len(downloaded_papers)} papers to the '{self.output_folder}' directory: {downloaded_papers}"
+        _arxiv_cache_put(ck, result)
+        return result
 

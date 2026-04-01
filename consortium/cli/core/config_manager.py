@@ -14,9 +14,10 @@ PROJECT_CONFIG_DIR = ".msc"
 
 DEFAULTS: dict[str, Any] = {
     "model": "claude-sonnet-4-6",
-    "preset": "standard",
-    "output_format": "markdown",
-    "budget_usd": 25,
+    "tier": "medium",
+    "preset": "medium",  # backward compat alias for tier
+    "output_format": "latex",
+    "budget_usd": 200,
     "mode": "auto",
     "autonomous_mode": True,
     "enable_counsel": False,

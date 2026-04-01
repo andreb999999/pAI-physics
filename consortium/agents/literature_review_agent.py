@@ -12,7 +12,7 @@ from ..prompts.literature_review_instructions import get_literature_review_syste
 from ..toolkits.filesystem.file_editing.file_editing_tools import (
     CreateFileWithContent, DeleteFileOrFolder, ListDir, ModifyFile, SearchKeyword, SeeFile,
 )
-from ..toolkits.ideation.paper_search_tool import PaperSearchTool
+from ..toolkits.search.deep_research.openrouter_deep_research_tool import OpenRouterDeepResearchTool
 from ..toolkits.search.fetch_arxiv_papers.fetch_arxiv_papers_tools import FetchArxivPapersTool
 from ..toolkits.writeup.citation_search_tool import CitationSearchTool
 from ..toolkits.writeup.latex_compiler_tool import LaTeXCompilerTool
@@ -33,32 +33,33 @@ except (ImportError, ModuleNotFoundError):
 
 
 def get_tools(workspace_dir: Optional[str], model_id: str) -> list:
+    from . import tool_registry as _reg
     tools = [
-        PaperSearchTool(),
-        FetchArxivPapersTool(working_dir=workspace_dir),
-        CitationSearchTool(),
-        VLMDocumentAnalysisTool(model=model_id, working_dir=workspace_dir),
-        LaTeXGeneratorTool(model=model_id, working_dir=workspace_dir),
-        LaTeXCompilerTool(model=model_id, working_dir=workspace_dir),
-        LaTeXSyntaxCheckerTool(working_dir=workspace_dir),
+        _reg.get_or_create(OpenRouterDeepResearchTool),
+        _reg.get_or_create(FetchArxivPapersTool, working_dir=workspace_dir),
+        _reg.get_or_create(CitationSearchTool),
+        _reg.get_or_create(VLMDocumentAnalysisTool, model=model_id, working_dir=workspace_dir),
+        _reg.get_or_create(LaTeXGeneratorTool, model=model_id, working_dir=workspace_dir),
+        _reg.get_or_create(LaTeXCompilerTool, model=model_id, working_dir=workspace_dir),
+        _reg.get_or_create(LaTeXSyntaxCheckerTool, working_dir=workspace_dir),
     ]
     if OpenDeepSearchTool is not None:
-        tools.insert(2, OpenDeepSearchTool(model_name=model_id))
+        tools.insert(2, _reg.get_or_create(OpenDeepSearchTool, model_name=model_id))
     else:
         print("⚠️ OpenDeepSearchTool disabled for LiteratureReviewAgent.")
     if DeepResearchNoveltyScanTool is not None:
-        tools.insert(3, DeepResearchNoveltyScanTool(model_name=model_id))
+        tools.insert(3, _reg.get_or_create(DeepResearchNoveltyScanTool, model_name=model_id))
     else:
         print("⚠️ DeepResearchNoveltyScanTool disabled for LiteratureReviewAgent.")
     if workspace_dir:
         tools += [
-            SeeFile(working_dir=workspace_dir),
-            CreateFileWithContent(working_dir=workspace_dir),
-            ModifyFile(working_dir=workspace_dir),
-            ListDir(working_dir=workspace_dir),
-            SearchKeyword(working_dir=workspace_dir),
-            DeleteFileOrFolder(working_dir=workspace_dir),
-            PythonCodeExecutionTool(workspace_dir=workspace_dir, authorized_imports=[]),
+            _reg.get_or_create(SeeFile, working_dir=workspace_dir),
+            _reg.get_or_create(CreateFileWithContent, working_dir=workspace_dir),
+            _reg.get_or_create(ModifyFile, working_dir=workspace_dir),
+            _reg.get_or_create(ListDir, working_dir=workspace_dir),
+            _reg.get_or_create(SearchKeyword, working_dir=workspace_dir),
+            _reg.get_or_create(DeleteFileOrFolder, working_dir=workspace_dir),
+            _reg.get_or_create(PythonCodeExecutionTool, workspace_dir=workspace_dir, authorized_imports=[]),
         ]
     return tools
 

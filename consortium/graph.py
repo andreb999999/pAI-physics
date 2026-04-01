@@ -11,8 +11,11 @@ This graph replaces the manager hub-and-spoke loop with:
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import Any, Callable, List, Optional
+
+logger = logging.getLogger(__name__)
 
 from langgraph.graph import END, StateGraph
 from langgraph.types import Send
@@ -258,8 +261,8 @@ def build_track_decomposition_gate_node(
         }
 
         if not os.path.exists(td_path):
-            print(
-                "[track_decomposition_gate] WARNING: track_decomposition.json "
+            logger.warning(
+                "[track_decomposition_gate] track_decomposition.json "
                 "missing — defaulting to empirical only."
             )
             default_td["rationale"] = (
@@ -271,9 +274,9 @@ def build_track_decomposition_gate_node(
             with open(td_path) as f:
                 td = json.load(f)
         except Exception as e:
-            print(
-                f"[track_decomposition_gate] Failed to parse "
-                f"track_decomposition.json: {e}"
+            logger.error(
+                "[track_decomposition_gate] Failed to parse "
+                "track_decomposition.json: %s", e
             )
             default_td["rationale"] = (
                 f"track_decomposition.json parse failed: {e}"
@@ -346,13 +349,28 @@ def build_track_decomposition_gate_node(
                 issues.append("Could not recover empirical questions.")
 
         if issues:
-            print(
-                f"[track_decomposition_gate] Issues corrected: {issues}"
+            logger.info(
+                "[track_decomposition_gate] Issues corrected: %s", issues
             )
 
-        # Write corrected version back to disk
-        with open(td_path, "w") as f:
-            json.dump(td, f, indent=2)
+        # Write corrected version back to disk (atomic: write tmp then rename)
+        import fcntl
+        td_tmp = td_path + ".tmp"
+        try:
+            with open(td_tmp, "w") as f:
+                fcntl.flock(f, fcntl.LOCK_EX)
+                json.dump(td, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+                fcntl.flock(f, fcntl.LOCK_UN)
+            os.replace(td_tmp, td_path)
+        except OSError as e:
+            logger.warning(
+                "[track_decomposition_gate] atomic write failed: %s", e
+            )
+            # Fallback to direct write
+            with open(td_path, "w") as f:
+                json.dump(td, f, indent=2)
 
         return {"track_decomposition": td, "agent_task": None}
 
@@ -605,9 +623,9 @@ def build_novelty_gate_node(workspace_dir: str) -> Any:
 
         if attempts >= max_attempts:
             # After max attempts, proceed anyway with a warning
-            print(
-                f"Warning: novelty gate failed after {max_attempts} attempts, "
-                "proceeding to literature review."
+            logger.warning(
+                "novelty gate failed after %s attempts, "
+                "proceeding to literature review.", max_attempts
             )
             return {"current_agent": "literature_review_agent", "agent_task": None}
 
@@ -781,7 +799,7 @@ def build_theory_track_subgraph(
             os.makedirs(math_ws, exist_ok=True)
             with open(warn_path, "w") as f:
                 f.write(content)
-            print(f"[goal_tag_validation_gate] WARNING: {len(warnings)} must_accept claims missing goal tags. See {warn_path}")
+            logger.warning("[goal_tag_validation_gate] %s must_accept claims missing goal tags. See %s", len(warnings), warn_path)
         return {"agent_task": None}
 
     # -- Issue 6: human review gate (scan checks for human_review_needed) --
@@ -815,7 +833,7 @@ def build_theory_track_subgraph(
             content = "# Human Review Flags\n\nThe following claims have unresolved tool-vs-manual verification conflicts.\n\n" + "\n".join(flags) + "\n"
             with open(flag_path, "w") as f:
                 f.write(content)
-            print(f"[human_review_gate] {len(flags)} claims flagged for human review. See {flag_path}")
+            logger.info("[human_review_gate] %s claims flagged for human review. See %s", len(flags), flag_path)
         return {"agent_task": None}
 
     # -- Issue 10: intra-track repair gate (max 2 retries) --
@@ -851,8 +869,9 @@ def build_theory_track_subgraph(
 
         ratio = must_accept_ok / must_accept_total if must_accept_total > 0 else 1.0
         if ratio < REPAIR_THRESHOLD and repair_count < MAX_THEORY_REPAIRS:
-            print(f"[theory_track_repair_gate] must_accept ratio {ratio:.2f} < {REPAIR_THRESHOLD}, "
-                  f"retry {repair_count + 1}/{MAX_THEORY_REPAIRS} — routing back to prover")
+            logger.info("[theory_track_repair_gate] must_accept ratio %.2f < %s, "
+                        "retry %s/%s — routing back to prover",
+                        ratio, REPAIR_THRESHOLD, repair_count + 1, MAX_THEORY_REPAIRS)
             # Write a targeted repair task for the prover
             failed_claims = []
             try:
@@ -873,8 +892,8 @@ def build_theory_track_subgraph(
                 "theory_repair_count": repair_count + 1,
             }
         if ratio < REPAIR_THRESHOLD:
-            print(f"[theory_track_repair_gate] must_accept ratio {ratio:.2f} still below threshold "
-                  f"after {MAX_THEORY_REPAIRS} retries — proceeding to END")
+            logger.warning("[theory_track_repair_gate] must_accept ratio %.2f still below threshold "
+                          "after %s retries — proceeding to END", ratio, MAX_THEORY_REPAIRS)
         return {"agent_task": None}
 
     def theory_repair_router(state: dict) -> str:
@@ -1027,13 +1046,26 @@ def build_synthesis_literature_node(
 # ---------------------------------------------------------------------------
 
 
+# Lightweight mtime-based file cache for gate reads — avoids redundant I/O
+# when multiple gates read the same JSON files within a single graph run.
+_file_cache: dict[str, tuple[float, str]] = {}
+
+
 def _read_file_safe(path: str, max_chars: int = 20000) -> str:
-    """Read a file, returning empty string on failure."""
+    """Read a file, returning empty string on failure. Uses mtime cache."""
     if not os.path.exists(path):
         return ""
     try:
+        mtime = os.path.getmtime(path)
+        cached = _file_cache.get(path)
+        if cached is not None:
+            cached_mtime, cached_content = cached
+            if cached_mtime == mtime:
+                return cached_content[:max_chars]
         with open(path, "r", encoding="utf-8") as f:
-            return f.read(max_chars)
+            content = f.read(max_chars)
+        _file_cache[path] = (mtime, content)
+        return content
     except Exception:
         return ""
 
@@ -1126,7 +1158,7 @@ def build_lit_review_gate_node(workspace_dir: str, max_attempts: int = 2) -> Any
                     if c.get("blocking", False)
                 ]
             except (json.JSONDecodeError, TypeError) as e:
-                print(f"[lit_review_gate] Failed to parse novelty_flags.json: {e}")
+                logger.error("[lit_review_gate] Failed to parse novelty_flags.json: %s", e)
 
         # Gate on blocking novelty claims BEFORE the LLM feasibility call
         if blocking_claims:
@@ -1139,9 +1171,9 @@ def build_lit_review_gate_node(workspace_dir: str, max_attempts: int = 2) -> Any
             )
 
             if attempts >= max_attempts:
-                print(
-                    f"Warning: lit_review_gate — blocking novelty claims after "
-                    f"{max_attempts} attempts, proceeding to brainstorm_agent."
+                logger.warning(
+                    "lit_review_gate — blocking novelty claims after "
+                    "%s attempts, proceeding to brainstorm_agent.", max_attempts
                 )
                 return {
                     "current_agent": "brainstorm_agent",
@@ -1231,7 +1263,7 @@ def build_lit_review_gate_node(workspace_dir: str, max_attempts: int = 2) -> Any
             raw = _re.sub(r"\s*```$", "", raw)
             result = json.loads(raw)
         except Exception as e:
-            print(f"[lit_review_gate] LLM assessment failed: {e}, passing through")
+            logger.error("[lit_review_gate] LLM assessment failed: %s, passing through", e)
             return {
                 "current_agent": "brainstorm_agent",
                 "lit_review_feasibility": {"feasible": True, "reason": f"assessment failed: {e}"},
@@ -1251,9 +1283,9 @@ def build_lit_review_gate_node(workspace_dir: str, max_attempts: int = 2) -> Any
 
         # Infeasible
         if attempts >= max_attempts:
-            print(
-                f"Warning: lit_review_gate failed after {max_attempts} attempts, "
-                "proceeding to brainstorm_agent anyway."
+            logger.warning(
+                "lit_review_gate failed after %s attempts, "
+                "proceeding to brainstorm_agent anyway.", max_attempts
             )
             return {
                 "current_agent": "brainstorm_agent",
@@ -1291,6 +1323,12 @@ def build_verify_completion_node(workspace_dir: str) -> Any:
 
     def verify_completion_node(state: dict) -> dict:
         import re as _re
+        from .state import prune_messages
+
+        # Prune message history on re-entry to prevent unbounded growth
+        pruned = prune_messages(state)
+        if pruned:
+            state = {**state, **pruned}
 
         research_goals = state.get("research_goals") or {}
         goals = research_goals.get("goals", [])
@@ -1415,7 +1453,7 @@ def build_verify_completion_node(workspace_dir: str) -> Any:
             raw = _re.sub(r"\s*```$", "", raw)
             result = json.loads(raw)
         except Exception as e:
-            print(f"[verify_completion] LLM assessment failed: {e}, passing through")
+            logger.error("[verify_completion] LLM assessment failed: %s, passing through", e)
             return {
                 "current_agent": "formalize_results_agent",
                 "verify_completion_result": {
@@ -1441,9 +1479,10 @@ def build_verify_completion_node(workspace_dir: str) -> Any:
             prev_goals_met = prev_result.get("goals_met", 0)
             delta = goals_met - prev_goals_met
             if delta <= 0:
-                print(
-                    f"[verify_completion] Progress stalled: {goals_met} goals met "
-                    f"(prev {prev_goals_met}, delta {delta}). Forcing forward."
+                logger.warning(
+                    "[verify_completion] Progress stalled: %s goals met "
+                    "(prev %s, delta %s). Forcing forward.",
+                    goals_met, prev_goals_met, delta
                 )
                 return {
                     "current_agent": "formalize_results_agent",
@@ -1474,9 +1513,9 @@ def build_verify_completion_node(workspace_dir: str) -> Any:
         if ratio >= 0.5:
             # Incomplete — rework goals
             if verify_rework >= 3:
-                print(
-                    f"Warning: verify_completion 'incomplete' after {verify_rework} "
-                    "rework attempts, forcing forward."
+                logger.warning(
+                    "verify_completion 'incomplete' after %s "
+                    "rework attempts, forcing forward.", verify_rework
                 )
                 new_result["verdict"] = "complete_forced"
                 return {
@@ -1507,9 +1546,9 @@ def build_verify_completion_node(workspace_dir: str) -> Any:
 
         # < 50% — fundamental rethink
         if brainstorm_cyc >= 3:
-            print(
-                f"Warning: verify_completion 'no_half' after {brainstorm_cyc} "
-                "brainstorm cycles, forcing forward."
+            logger.warning(
+                "verify_completion 'no_half' after %s "
+                "brainstorm cycles, forcing forward.", brainstorm_cyc
             )
             new_result["verdict"] = "complete_forced"
             return {
@@ -1553,8 +1592,8 @@ def build_duality_gate_node() -> Any:
         max_attempts = 2
 
         if not duality_result:
-            print(
-                "Warning: duality_check_result is missing or empty, "
+            logger.warning(
+                "duality_check_result is missing or empty, "
                 "proceeding to resource_preparation anyway."
             )
             return {
@@ -1581,9 +1620,9 @@ def build_duality_gate_node() -> Any:
             }
 
         if duality_rework >= max_attempts:
-            print(
-                f"Warning: duality_gate failed after {max_attempts} attempts, "
-                "proceeding to resource_preparation anyway."
+            logger.warning(
+                "duality_gate failed after %s attempts, "
+                "proceeding to resource_preparation anyway.", max_attempts
             )
             check_a = duality_result.get("check_a", {})
             check_b = duality_result.get("check_b", {})
@@ -1723,6 +1762,7 @@ def build_research_graph_v2(config: "ResearchGraphConfig"):
     budget_manager = config.budget_manager
     model_registry = config.model_registry
     tree_search_config = config.tree_search
+    iterate_mode = config.iterate_mode
 
     # Sub-config unpacking
     enforce_paper_artifacts = config.artifacts.enforce_paper_artifacts
@@ -1886,10 +1926,38 @@ def build_research_graph_v2(config: "ResearchGraphConfig"):
     for name, node in nodes.items():
         graph.add_node(name, node)
 
+    # --- Iterate-mode entry node (revision from prior paper + feedback) ---
+    if iterate_mode:
+        def _iterate_entry_node(state: dict) -> dict:
+            """Seed the pipeline with iteration context from prior paper + feedback."""
+            paper_ws = os.path.join(workspace_dir, "paper_workspace")
+            feedback_path = os.path.join(paper_ws, "iteration_feedback.md")
+            feedback_content = ""
+            if os.path.exists(feedback_path):
+                with open(feedback_path, "r", encoding="utf-8") as fh:
+                    feedback_content = fh.read(10_000)
+
+            prior_path = state.get("iterate_prior_paper_path", "")
+            task = (
+                "ITERATE MODE: You are revising an existing paper based on reviewer feedback.\n\n"
+                f"## Prior Paper\nThe prior paper is available at: {prior_path}\n\n"
+                f"## Feedback Summary\n{feedback_content[:5000]}\n\n"
+                "Your task: Prepare resources for the revised paper. Copy the prior paper's "
+                "structure as a starting point and organize the feedback into actionable items."
+            )
+            return {"agent_task": task}
+
+        _iterate_entry_node.__name__ = "iterate_entry"
+        graph.add_node("iterate_entry", _iterate_entry_node)
+
     # --- Edge wiring ---
 
-    # Entry: persona council
-    graph.set_entry_point("persona_council")
+    # Entry point: iterate_entry (revision) or persona_council (fresh run)
+    if iterate_mode:
+        graph.set_entry_point("iterate_entry")
+        graph.add_edge("iterate_entry", "resource_preparation_agent")
+    else:
+        graph.set_entry_point("persona_council")
     graph.add_edge("persona_council", "literature_review_agent")
 
     # Lit review → gate
@@ -1979,5 +2047,5 @@ def get_default_checkpointer(workspace_dir: str):
         conn = sqlite3.connect(db_path, check_same_thread=False)
         return SqliteSaver(conn)
     except (ImportError, Exception) as e:
-        print(f"Checkpointer unavailable ({e}); resumability disabled.")
+        logger.warning("Checkpointer unavailable (%s); resumability disabled.", e)
         return None

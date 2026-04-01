@@ -65,6 +65,8 @@ class BudgetManager:
         self.total_usd = 0.0
         self.by_model: Dict[str, float] = {}
         self._record_lock = threading.Lock()
+        self._record_count = 0
+        self._FLUSH_INTERVAL = 10  # flush every N records
         self._load_state()
 
     def _load_state(self) -> None:
@@ -198,12 +200,6 @@ class BudgetManager:
     ) -> float:
         cost = self._compute_cost(model_id, prompt_tokens, completion_tokens)
 
-        with self._record_lock:
-            self.total_usd += cost
-            self.by_model[model_id] = round(self.by_model.get(model_id, 0.0) + cost, 6)
-            snapshot_total = round(self.total_usd, 6)
-            self._save_state()
-
         entry = {
             "call_id": call_id or str(uuid.uuid4()),
             "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -211,10 +207,24 @@ class BudgetManager:
             "prompt_tokens": int(prompt_tokens),
             "completion_tokens": int(completion_tokens),
             "cost_usd": round(cost, 6),
-            "total_usd": snapshot_total,
-            "usd_limit": self.usd_limit,
         }
+
+        with self._record_lock:
+            self.total_usd += cost
+            self.by_model[model_id] = round(self.by_model.get(model_id, 0.0) + cost, 6)
+            entry["total_usd"] = round(self.total_usd, 6)
+            entry["usd_limit"] = self.usd_limit
+            self._record_count += 1
+
+        # Ledger append is always immediate (cheap append-only I/O)
         self._write_ledger(entry)
+
+        # Batch the expensive state JSON rewrite every _FLUSH_INTERVAL calls.
+        # Always write on the first call (ensures state file exists for readers).
+        with self._record_lock:
+            if self._record_count >= self._FLUSH_INTERVAL or self._record_count == 1:
+                self._save_state()
+                self._record_count = 0
 
         # Also track run-scoped cumulative tokens used by terminal step summaries.
         try:
@@ -227,17 +237,23 @@ class BudgetManager:
                 model_id=model_id,
             )
         except Exception as exc:
-            # Never let token-tracker errors break budget accounting.
             logger.warning("Token tracker recording failed: %s", exc)
 
         if self.hard_stop and self.total_usd >= self.usd_limit:
-            # Create lock file to prevent further calls
+            # Persist state immediately on budget exceeded, then create lock file
+            self.flush()
             os.makedirs(os.path.dirname(self.lock_path), exist_ok=True)
             with open(self.lock_path, "w", encoding="utf-8") as f:
                 f.write(
                     f"Budget exceeded: {self.total_usd:.4f} / {self.usd_limit:.2f} USD\n"
                 )
         return cost
+
+    def flush(self) -> None:
+        """Public flush — call at pipeline end to ensure state is persisted."""
+        with self._record_lock:
+            self._save_state()
+            self._record_count = 0
 
 
 class BudgetTrackingCallback(BaseCallbackHandler):

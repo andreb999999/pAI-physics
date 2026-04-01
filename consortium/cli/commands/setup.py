@@ -18,78 +18,39 @@ from consortium.cli.core.env_manager import (
     load_env_vars,
     save_env_file,
 )
+from consortium.cli.core.llm_config_generator import write_llm_config
 from consortium.cli.core.platform_detect import detect, detect_consortium
+from consortium.cli.core.presets import TIERS, list_tiers
 
 console = Console()
 
 
-# Model choices with quality/speed/cost ratings
-MODEL_OPTIONS = [
-    {
-        "name": "claude-sonnet-4-6",
-        "label": "Claude Sonnet 4.6",
-        "quality": 4, "speed": 4, "cost": "$10-25",
-        "desc": "Balanced, recommended",
-    },
-    {
-        "name": "claude-opus-4-6",
-        "label": "Claude Opus 4.6",
-        "quality": 5, "speed": 2, "cost": "$40-100",
-        "desc": "Highest quality",
-    },
-    {
-        "name": "gpt-5",
-        "label": "GPT-5",
-        "quality": 5, "speed": 3, "cost": "$30-80",
-        "desc": "Strong reasoning",
-    },
-    {
-        "name": "gpt-5-mini",
-        "label": "GPT-5 Mini",
-        "quality": 3, "speed": 5, "cost": "$2-5",
-        "desc": "Cost-effective",
-    },
-    {
-        "name": "gemini-3-pro-preview",
-        "label": "Gemini 3 Pro",
-        "quality": 4, "speed": 3, "cost": "$15-40",
-        "desc": "2M context window",
-    },
-    {
-        "name": "deepseek-chat",
-        "label": "DeepSeek Chat",
-        "quality": 3, "speed": 4, "cost": "$1-3",
-        "desc": "Budget-friendly",
-    },
-]
-
-
-def _rating_bar(n: int, max_n: int = 5) -> str:
-    """Render a rating as filled/empty blocks."""
-    return "\u2588" * n + "\u2591" * (max_n - n)
-
-
-def _print_model_table() -> None:
-    """Display a rich table of available models with ratings."""
+def _print_tier_table() -> None:
+    """Display a rich table of available price tiers."""
     table = Table(
-        title="Available Models",
+        title="Price Tiers",
         border_style="bright_black",
-        show_lines=False,
+        show_lines=True,
         padding=(0, 1),
     )
-    table.add_column("Model", style="bold white", min_width=20)
-    table.add_column("Quality", style="blue", justify="center")
-    table.add_column("Speed", style="blue", justify="center")
-    table.add_column("Cost/run", style="dim white", justify="right")
-    table.add_column("", style="dim white")
+    table.add_column("Tier", style="bold white", min_width=8)
+    table.add_column("Budget", style="blue", justify="right", min_width=10)
+    table.add_column("Model", style="white", min_width=18)
+    table.add_column("Counsel", style="dim white", justify="center")
+    table.add_column("Description", style="dim white")
 
-    for m in MODEL_OPTIONS:
+    for t in list_tiers():
+        counsel_str = (
+            f"{len(t.counsel_model_specs)} models"
+            if t.counsel_model_specs
+            else "off"
+        )
         table.add_row(
-            m["label"],
-            _rating_bar(m["quality"]),
-            _rating_bar(m["speed"]),
-            m["cost"],
-            m["desc"],
+            t.tier_label,
+            t.budget_range,
+            t.model,
+            counsel_str,
+            t.description,
         )
     console.print(table)
 
@@ -241,25 +202,32 @@ def setup(ctx: click.Context, non_interactive: bool, migrate: bool) -> None:
     if not non_interactive:
         _test_api_connectivity(env_vars)
 
-    # ── Step 3: Model Selection ─────────────────────────────────────
-    console.print("\n[bold blue]Step 3:[/] [white]Choose your default model[/]\n")
-    _print_model_table()
+    # ── Step 3: Price Tier Selection ──────────────────────────────────
+    console.print("\n[bold blue]Step 3:[/] [white]Choose your price tier[/]\n")
+    console.print("  [dim]Each tier sets your budget, default models, and counsel settings.[/]\n")
+    _print_tier_table()
     console.print()
 
     if non_interactive:
-        default_model = "claude-sonnet-4-6"
+        selected_tier = TIERS["medium"]
     else:
-        choices = [
-            questionary.Choice(title=f"{m['label']:20s}  {m['desc']}", value=m["name"])
-            for m in MODEL_OPTIONS
+        tier_choices = [
+            questionary.Choice(
+                title=f"{t.tier_label:8s} {t.budget_range:10s}  {t.description}",
+                value=t.name,
+            )
+            for t in list_tiers()
         ]
-        default_model = questionary.select(
-            "Default model:",
-            choices=choices,
-            default="claude-sonnet-4-6",
+        tier_name = questionary.select(
+            "Price tier:",
+            choices=tier_choices,
+            default="medium",
         ).ask()
-        if default_model is None:
+        if tier_name is None:
             raise SystemExit(1)
+        selected_tier = TIERS[tier_name]
+
+    default_model = selected_tier.model
 
     # ── Step 4: Notifications (optional) ────────────────────────────
     console.print("\n[bold blue]Step 4:[/] [white]Notifications (optional)[/]\n")
@@ -283,9 +251,10 @@ def setup(ctx: click.Context, non_interactive: bool, migrate: bool) -> None:
     # Save config.yaml
     config_data = {
         "model": default_model,
-        "preset": "standard",
-        "output_format": "markdown",
-        "budget_usd": 25,
+        "tier": selected_tier.name,
+        "preset": selected_tier.name,  # backward compat
+        "output_format": selected_tier.output_format,
+        "budget_usd": selected_tier.budget_usd,
         "autonomous_mode": True,
         "notifications": {
             "telegram": {
@@ -299,13 +268,18 @@ def setup(ctx: click.Context, non_interactive: bool, migrate: bool) -> None:
     cfg_path = save_config(config_data, config_dir_override)
     console.print(f"  [blue]\u2713[/] Config saved to [bold white]{cfg_path}[/]")
 
+    # Generate .llm_config.yaml template in config dir (reference copy)
+    llm_cfg_path = write_llm_config(selected_tier, str(config_dir / "llm_config.yaml"))
+    console.print(f"  [blue]\u2713[/] LLM config reference saved to [bold white]{llm_cfg_path}[/]")
+    console.print("  [dim]Note: msc run auto-generates .llm_config.yaml in your project directory from the selected tier.[/]")
+
     # ── Done ────────────────────────────────────────────────────────
     console.print(Panel(
-        "[bold blue]\u2713 Setup complete![/]\n\n"
+        f"[bold blue]\u2713 Setup complete![/]  Tier: [bold white]{selected_tier.tier_label}[/] ({selected_tier.budget_range})\n\n"
         "[white]Next steps:[/]\n"
-        f"  [bold white]msc doctor[/]                     [dim]Verify your environment[/]\n"
-        f"  [bold white]msc run \"your question\"[/]         [dim]Start a research run[/]\n"
-        f"  [bold white]msc run --preset quick --dry-run[/] [dim]Test without cost[/]",
+        f"  [bold white]msc doctor[/]                        [dim]Verify your environment[/]\n"
+        f"  [bold white]msc run \"your question\"[/]            [dim]Start a research run[/]\n"
+        f"  [bold white]msc run --tier budget --dry-run[/]    [dim]Test without cost[/]",
         border_style="blue",
     ))
 

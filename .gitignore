@@ -39,8 +39,8 @@ huggingface/
 temp/
 tmp/
 
-# Local private token accounting (never commit)
-.local/private_token_usage/
+# Local private data (never commit)
+.local/
 private_token_usage/
 
 # Model files

@@ -48,7 +48,7 @@ def budget(results_dir: str | None) -> None:
                 try:
                     with open(fpath, "r") as f:
                         data = json.load(f)
-                    cost = data.get("total_cost_usd", 0.0)
+                    cost = data.get("total_usd", data.get("total_cost_usd", 0.0))
                     model = data.get("model", model)
                     if cost > 0:
                         break

@@ -22,22 +22,23 @@ from ..toolkits.filesystem.file_editing.file_editing_tools import (
 
 
 def get_tools(workspace_dir: Optional[str], model_id: str) -> list:
+    from . import tool_registry as _reg
     tools = [
-        MathClaimGraphTool(working_dir=workspace_dir),
-        MathProofWorkspaceTool(working_dir=workspace_dir),
-        LaTeXGeneratorTool(model=model_id, working_dir=workspace_dir),
-        LaTeXReflectionTool(model=model_id, working_dir=workspace_dir),
-        LaTeXSyntaxCheckerTool(working_dir=workspace_dir),
-        LaTeXCompilerTool(model=model_id, working_dir=workspace_dir),
+        _reg.get_or_create(MathClaimGraphTool, working_dir=workspace_dir),
+        _reg.get_or_create(MathProofWorkspaceTool, working_dir=workspace_dir),
+        _reg.get_or_create(LaTeXGeneratorTool, model=model_id, working_dir=workspace_dir),
+        _reg.get_or_create(LaTeXReflectionTool, model=model_id, working_dir=workspace_dir),
+        _reg.get_or_create(LaTeXSyntaxCheckerTool, working_dir=workspace_dir),
+        _reg.get_or_create(LaTeXCompilerTool, model=model_id, working_dir=workspace_dir),
     ]
     if workspace_dir:
         tools += [
-            SeeFile(working_dir=workspace_dir),
-            CreateFileWithContent(working_dir=workspace_dir),
-            ModifyFile(working_dir=workspace_dir),
-            ListDir(working_dir=workspace_dir),
-            SearchKeyword(working_dir=workspace_dir),
-            DeleteFileOrFolder(working_dir=workspace_dir),
+            _reg.get_or_create(SeeFile, working_dir=workspace_dir),
+            _reg.get_or_create(CreateFileWithContent, working_dir=workspace_dir),
+            _reg.get_or_create(ModifyFile, working_dir=workspace_dir),
+            _reg.get_or_create(ListDir, working_dir=workspace_dir),
+            _reg.get_or_create(SearchKeyword, working_dir=workspace_dir),
+            _reg.get_or_create(DeleteFileOrFolder, working_dir=workspace_dir),
         ]
     return tools
 

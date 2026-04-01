@@ -423,7 +423,20 @@ If files cannot be read or are corrupted:
 ✅ references.bib created with FOCUSED citations (10-15 research concepts max, completed within 6 minutes)
 ✅ WriteupAgent can find any resource using structure_analysis.txt
 
-Remember: Your job is complete documentation. WriteupAgent will choose what to use.""" + "\n\n" + DOCUMENT_FORMATTING_REQUIREMENTS
+Remember: Your job is complete documentation. WriteupAgent will choose what to use.
+
+## ITERATION / REVISION MODE
+
+When your agent_task begins with "ITERATE MODE:", you are preparing resources for a paper **revision**, not writing from scratch.
+
+**Key differences from initial resource preparation:**
+1. The prior paper already exists in `paper_workspace/prior_paper/`. Read it with SeeFile.
+2. Copy the prior paper's `.tex` file as the starting `final_paper.tex` in `paper_workspace/` so WriteupAgent can modify it in place.
+3. Preserve existing figures, bibliography, and supplementary materials from the prior paper directory.
+4. Read `paper_workspace/iteration_feedback.md` for all reviewer feedback.
+5. Create `paper_workspace/revision_plan.md` that maps each feedback item to specific sections/files needing changes.
+6. Update `structure_analysis.txt` to reflect the prior paper structure plus planned revisions.
+7. Do NOT recreate resources from scratch — carry forward what already exists and prepare only what is needed for revisions.""" + "\n\n" + DOCUMENT_FORMATTING_REQUIREMENTS
 
 
 def get_resource_preparation_system_prompt(tools=None, managed_agents=None):

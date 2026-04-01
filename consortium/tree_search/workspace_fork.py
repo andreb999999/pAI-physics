@@ -7,6 +7,7 @@ counsel and tree-search share these helpers.
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import time
@@ -14,8 +15,15 @@ from typing import Any, List
 
 from langchain_core.tools import BaseTool
 
+logger = logging.getLogger(__name__)
+
 # Patterns to skip when copying a workspace into a branch.
-SKIP_PATTERNS = ("counsel_sandboxes", "tree_branches", "*.db", "*.lock")
+# Budget files are excluded to prevent parent budget state from bleeding into branches.
+SKIP_PATTERNS = (
+    "counsel_sandboxes", "tree_branches",
+    "*.db", "*.lock",
+    "budget_state.json", "budget_state.json.tmp", "budget_ledger.jsonl",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -75,8 +83,8 @@ def merge_branch(
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             try:
                 shutil.copy2(src, dst)
-            except Exception as exc:
-                print(f"[tree_search] merge warning: failed to copy {rel}: {exc}")
+            except OSError as exc:
+                logger.warning("tree_search merge: failed to copy %s: %s", rel, exc)
 
 
 # ---------------------------------------------------------------------------
@@ -111,8 +119,13 @@ def retarget_tools(
                     else:
                         kwargs[attr] = getattr(tool, attr)
             result.append(cls(**kwargs) if kwargs else tool)
-        except Exception:
-            result.append(tool)
+        except Exception as exc:
+            # Exclude the tool rather than falling back to original (which would
+            # break workspace isolation by writing to the parent workspace).
+            logger.warning(
+                "tree_search: could not retarget tool '%s' (%s). Excluding to preserve isolation.",
+                tool.name, exc,
+            )
     return result
 
 

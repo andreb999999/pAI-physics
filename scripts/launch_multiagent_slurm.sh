@@ -97,16 +97,17 @@ echo "Starting multiagent system..."
 # Get the active Python interpreter from conda environment
 PYTHON_PATH=$(which python)
 
-# Create temporary runner script
-RUNNER_SCRIPT=$(mktemp /tmp/multiagent_runner_XXXXXX)
+# Create temporary runner script in a private directory (avoids race on multi-user systems)
+RUNNER_DIR=$(mktemp -d /tmp/multiagent_runner_XXXXXX)
+RUNNER_SCRIPT="$RUNNER_DIR/run.sh"
 cat > "$RUNNER_SCRIPT" << EOF
 #!/bin/bash
 exec $PYTHON_PATH launch_multiagent.py "\$@"
 EOF
 chmod +x "$RUNNER_SCRIPT"
 
-# Ensure cleanup of temporary wrapper on exit
-cleanup() { rm -f "$RUNNER_SCRIPT"; }
+# Ensure cleanup of temporary directory on exit
+cleanup() { rm -rf "$RUNNER_DIR"; }
 trap cleanup EXIT
 
 # =============================================================================

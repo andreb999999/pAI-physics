@@ -18,18 +18,19 @@ from ..toolkits.filesystem.file_editing.file_editing_tools import (
 
 
 def get_tools(workspace_dir: Optional[str]) -> list:
+    from . import tool_registry as _reg
     tools = [
-        MathClaimGraphTool(working_dir=workspace_dir, allow_accepted_transition=False),
-        MathProofWorkspaceTool(working_dir=workspace_dir),
+        _reg.get_or_create(MathClaimGraphTool, working_dir=workspace_dir, allow_accepted_transition=False),
+        _reg.get_or_create(MathProofWorkspaceTool, working_dir=workspace_dir),
     ]
     if workspace_dir:
         tools += [
-            SeeFile(working_dir=workspace_dir),
-            CreateFileWithContent(working_dir=workspace_dir),
-            ModifyFile(working_dir=workspace_dir),
-            ListDir(working_dir=workspace_dir),
-            SearchKeyword(working_dir=workspace_dir),
-            DeleteFileOrFolder(working_dir=workspace_dir),
+            _reg.get_or_create(SeeFile, working_dir=workspace_dir),
+            _reg.get_or_create(CreateFileWithContent, working_dir=workspace_dir),
+            _reg.get_or_create(ModifyFile, working_dir=workspace_dir),
+            _reg.get_or_create(ListDir, working_dir=workspace_dir),
+            _reg.get_or_create(SearchKeyword, working_dir=workspace_dir),
+            _reg.get_or_create(DeleteFileOrFolder, working_dir=workspace_dir),
         ]
     return tools
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import click
@@ -85,7 +86,7 @@ def campaign_start(campaign_file: str) -> None:
     console.print(f"Starting campaign from [bold]{campaign_file}[/]...")
     try:
         proc = subprocess.run(
-            ["python", "scripts/campaign_heartbeat.py", "--campaign", campaign_file, "--init"],
+            [sys.executable, "scripts/campaign_heartbeat.py", "--campaign", campaign_file, "--init"],
             cwd=_find_project_root(),
         )
         if proc.returncode == 0:
@@ -102,7 +103,7 @@ def campaign_status(campaign_file: str) -> None:
     """Show campaign progress and budget."""
     try:
         proc = subprocess.run(
-            ["python", "scripts/campaign_cli.py", "--campaign", campaign_file, "status"],
+            [sys.executable, "scripts/campaign_cli.py", "--campaign", campaign_file, "status"],
             capture_output=True,
             text=True,
             cwd=_find_project_root(),
@@ -126,7 +127,7 @@ def campaign_repair(campaign_file: str, stage_id: str) -> None:
     """Trigger repair on a failed stage."""
     try:
         proc = subprocess.run(
-            ["python", "scripts/campaign_cli.py", "--campaign", campaign_file, "repair", stage_id],
+            [sys.executable, "scripts/campaign_cli.py", "--campaign", campaign_file, "repair", stage_id],
             cwd=_find_project_root(),
         )
         if proc.returncode == 0:
@@ -154,14 +155,15 @@ def campaign_list() -> None:
 
 
 def _find_project_root() -> str | None:
-    """Try to find the PoggioAI/MSc project root."""
-    candidates = [
-        Path.cwd(),
-        Path.cwd().parent,
-    ]
-    for c in candidates:
-        if (c / "scripts" / "campaign_cli.py").exists():
-            return str(c)
+    """Try to find the PoggioAI/MSc project root by walking up the directory tree."""
+    current = Path.cwd()
+    for _ in range(6):  # check CWD + up to 5 parents
+        if (current / "scripts" / "campaign_cli.py").exists():
+            return str(current)
+        parent = current.parent
+        if parent == current:  # filesystem root
+            break
+        current = parent
     return None
 
 

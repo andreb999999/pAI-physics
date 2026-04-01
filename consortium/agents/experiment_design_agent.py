@@ -14,7 +14,7 @@ from ..toolkits.code_execution_tool import PythonCodeExecutionTool
 from ..toolkits.filesystem.file_editing.file_editing_tools import (
     CreateFileWithContent, DeleteFileOrFolder, ListDir, ModifyFile, SearchKeyword, SeeFile,
 )
-from ..toolkits.ideation.paper_search_tool import PaperSearchTool
+from ..toolkits.search.deep_research.openrouter_deep_research_tool import OpenRouterDeepResearchTool
 from ..toolkits.writeup.citation_search_tool import CitationSearchTool
 
 
@@ -22,19 +22,20 @@ def get_tools(
     workspace_dir: Optional[str],
     authorized_imports: Optional[List[str]] = None,
 ) -> list:
+    from . import tool_registry as _reg
     tools = [
-        PaperSearchTool(),
-        CitationSearchTool(),
+        _reg.get_or_create(OpenRouterDeepResearchTool),
+        _reg.get_or_create(CitationSearchTool),
     ]
     if workspace_dir:
         tools += [
-            SeeFile(working_dir=workspace_dir),
-            CreateFileWithContent(working_dir=workspace_dir),
-            ModifyFile(working_dir=workspace_dir),
-            ListDir(working_dir=workspace_dir),
-            SearchKeyword(working_dir=workspace_dir),
-            DeleteFileOrFolder(working_dir=workspace_dir),
-            PythonCodeExecutionTool(
+            _reg.get_or_create(SeeFile, working_dir=workspace_dir),
+            _reg.get_or_create(CreateFileWithContent, working_dir=workspace_dir),
+            _reg.get_or_create(ModifyFile, working_dir=workspace_dir),
+            _reg.get_or_create(ListDir, working_dir=workspace_dir),
+            _reg.get_or_create(SearchKeyword, working_dir=workspace_dir),
+            _reg.get_or_create(DeleteFileOrFolder, working_dir=workspace_dir),
+            _reg.get_or_create(PythonCodeExecutionTool,
                 workspace_dir=workspace_dir,
                 authorized_imports=authorized_imports or [],
             ),

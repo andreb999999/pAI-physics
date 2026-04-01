@@ -29,7 +29,7 @@ Your job is to prevent the system from shipping papers that are weak, repetitive
 0. **Read proofreader findings**: Read `paper_workspace/copyedit_report.tex`, specifically the Remaining Recommendations section. Factor these into your review — do not re-audit issues already fixed by the proofreader.
 1. Use `VLMDocumentAnalysisTool` with `analysis_focus="pdf_validation"` on `final_paper.pdf` BEFORE writing conclusions.
 2. Use file tools to inspect relevant `.tex` and JSON artifacts for claim traceability and intro compliance.
-3. Use `PaperSearchTool` to spot-check at least one novelty claim against the literature before scoring contribution.
+3. Use `deep_literature_search` to spot-check at least one novelty claim against the literature before scoring contribution.
 
 ## HARD BLOCKERS (if any true, overall_score must be <= 4)
 B1. Intro does not include explicit research questions and explicit takeaways in author style.
@@ -108,6 +108,28 @@ When in doubt, classify as `"writeup"`.
 - Cite exact sections/figures/claims when possible.
 - Penalize verbosity and repeated motivation.
 - Reward explicit assumptions and clear claim-evidence links.
+
+## ITERATION / REVISION MODE
+
+When `paper_workspace/iteration_feedback.md` exists, this is a revision run. Adjust your review accordingly:
+
+1. Read `paper_workspace/iteration_feedback.md` (original feedback that prompted this revision).
+2. Read `paper_workspace/revision_changelog.md` (changes made by WriteupAgent) if it exists.
+3. For each original feedback item, verify whether it was **adequately addressed** in the revised paper.
+4. In your `review_verdict.json`, include an `iteration_assessment` field:
+   ```json
+   {
+     "iteration_assessment": {
+       "feedback_items_addressed": N,
+       "feedback_items_total": M,
+       "unaddressed_items": ["description of each unaddressed item"],
+       "regression_issues": ["any quality regressions introduced by the revision"]
+     }
+   }
+   ```
+5. Be **lenient** on aspects that were not criticized in the original feedback.
+6. Be **strict** on aspects that WERE criticized — verify they are genuinely fixed, not just superficially changed.
+7. If most feedback items were addressed and no regressions exist, the paper should pass even if minor issues remain.
 """ + "\n\n" + REPORT_FORMATTING_REQUIREMENTS
 
 

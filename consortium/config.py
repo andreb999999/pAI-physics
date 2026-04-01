@@ -166,3 +166,24 @@ def load_llm_config():
     else:
         logger.info("No %s found, using CLI arguments", config_path)
         return None
+
+
+# ---------------------------------------------------------------------------
+# Configurable defaults (previously hardcoded)
+# ---------------------------------------------------------------------------
+
+# Fallback defaults — overridden by .llm_config.yaml `defaults:` section
+_BUILTIN_DEFAULTS = {
+    "litellm_timeout": 300,           # seconds; was hardcoded in utils.py
+    "counsel_model_timeout": 3600,    # seconds; was hardcoded in counsel.py
+    "gemini_thinking_budget": 65536,  # tokens; was hardcoded in utils.py
+}
+
+
+def get_default(key: str, config: dict | None = None) -> int | float:
+    """Retrieve a configurable default, checking .llm_config.yaml `defaults:` first."""
+    if config and isinstance(config, dict):
+        defaults_section = config.get("defaults", {})
+        if isinstance(defaults_section, dict) and key in defaults_section:
+            return defaults_section[key]
+    return _BUILTIN_DEFAULTS[key]

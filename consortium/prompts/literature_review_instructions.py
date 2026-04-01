@@ -75,9 +75,13 @@ PER-PAPER DEPTH EXPECTATIONS
 REQUIRED WORKFLOW
 1) Parse the question set and create a review skeleton per question/theme.
 2) Search broadly using:
-   - Semantic Scholar (`PaperSearchTool`)
-   - arXiv (`fetch_arxiv_papers`)
-   - web deep search (`web_search`) for non-arXiv sources and context.
+   - Deep literature search (`deep_literature_search`) — your PRIMARY discovery tool.
+     This searches across arXiv, Semantic Scholar, Google Scholar, and other academic
+     databases simultaneously. Returns structured paper metadata with BibTeX entries.
+   - arXiv PDF downloads (`fetch_arxiv_papers`) — use ONLY to download PDFs of papers
+     you have already identified via deep_literature_search.
+   - web deep search (`web_search`) for non-academic sources and context.
+   - citation search (`citation_search_tool`) for targeted BibTeX lookups by arXiv ID.
 3) Build candidate set, deduplicate, and rank by relevance + credibility.
 3b) CLAIM FALSIFICATION (MANDATORY — do not skip or abbreviate):
     Before reading any PDFs in depth, extract every core claim from
@@ -89,7 +93,7 @@ REQUIRED WORKFLOW
     a) Formulate 3-5 search queries targeting: (i) direct proofs of the claim,
        (ii) known special cases or partial results, (iii) equivalent formulations
        under different terminology or in adjacent fields.
-    b) Search using ALL available tools: PaperSearchTool, FetchArxivPapersTool,
+    b) Search using ALL available tools: deep_literature_search,
        DeepResearchNoveltyScanTool (if available), and web_search targeting
        MathOverflow (mathoverflow.net), zbMATH (zbmath.org), nLab (ncatlab.org),
        and Wikipedia.

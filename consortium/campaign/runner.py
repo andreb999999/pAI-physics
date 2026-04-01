@@ -11,6 +11,7 @@ Key responsibilities:
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import socket
@@ -23,6 +24,8 @@ import yaml
 
 from .spec import CampaignSpec, Stage
 from .status import CampaignStatus
+
+logger = logging.getLogger(__name__)
 
 
 def build_task_prompt(
@@ -139,10 +142,15 @@ def build_stage_workspace(
     # Atomic swap: if workspace already exists, merge staging into it;
     # otherwise rename staging to workspace.
     if os.path.exists(workspace):
-        # Merge staging artifacts into existing workspace
+        # Merge staging artifacts into existing workspace (log overwrites)
         for item in os.listdir(staging_dir):
             s = os.path.join(staging_dir, item)
             d = os.path.join(workspace, item)
+            if os.path.exists(d):
+                logger.info(
+                    "[campaign] Stage '%s': overwriting existing artifact '%s' during merge",
+                    stage.id, item,
+                )
             if os.path.isdir(s):
                 shutil.copytree(s, d, dirs_exist_ok=True)
             else:
@@ -221,6 +229,24 @@ def launch_stage(
         subprocess.Popen handle. The caller is responsible for writing the PID
         to status and calling write_status().
     """
+    # Apply budget degradation profile if campaign has a budget limit
+    try:
+        from .budget_manager import CampaignBudgetManager, DEGRADATION_PROFILES, apply_degradation_profile
+        budget_usd = getattr(spec, "budget_usd", 0)
+        if budget_usd and budget_usd > 0:
+            mgr = CampaignBudgetManager(campaign_dir, usd_limit=budget_usd)
+            rigor = mgr.recommended_rigor_level()
+            profile = DEGRADATION_PROFILES.get(rigor, {})
+            if profile:
+                overrides = apply_degradation_profile(profile)
+                if overrides:
+                    logger.info(
+                        "[campaign] Stage '%s': budget at %.0f%%, rigor=%s, overrides=%s",
+                        stage.id, mgr.spend_fraction * 100, rigor, overrides,
+                    )
+    except Exception as e:
+        logger.debug("Budget degradation check skipped: %s", e)
+
     workspace = build_stage_workspace(stage, spec, status)
 
     # Determine whether this stage uses a custom launcher script

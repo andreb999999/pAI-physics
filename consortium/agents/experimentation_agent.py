@@ -19,20 +19,21 @@ from ..toolkits.code_execution_tool import PythonCodeExecutionTool
 
 
 def get_tools(workspace_dir: Optional[str], model_id: str) -> list:
+    from . import tool_registry as _reg
     tools = [
-        IdeaStandardizationTool(model=model_id),
-        RunExperimentTool(workspace_dir=workspace_dir),
-        LaTeXGeneratorTool(model=model_id, working_dir=workspace_dir),
-        LaTeXCompilerTool(working_dir=workspace_dir, model=model_id),
+        _reg.get_or_create(IdeaStandardizationTool, model=model_id),
+        _reg.get_or_create(RunExperimentTool, workspace_dir=workspace_dir),
+        _reg.get_or_create(LaTeXGeneratorTool, model=model_id, working_dir=workspace_dir),
+        _reg.get_or_create(LaTeXCompilerTool, working_dir=workspace_dir, model=model_id),
     ]
     if workspace_dir:
         tools += [
-            SeeFile(working_dir=workspace_dir),
-            CreateFileWithContent(working_dir=workspace_dir),
-            ModifyFile(working_dir=workspace_dir),
-            ListDir(working_dir=workspace_dir),
-            SearchKeyword(working_dir=workspace_dir),
-            DeleteFileOrFolder(working_dir=workspace_dir),
+            _reg.get_or_create(SeeFile, working_dir=workspace_dir),
+            _reg.get_or_create(CreateFileWithContent, working_dir=workspace_dir),
+            _reg.get_or_create(ModifyFile, working_dir=workspace_dir),
+            _reg.get_or_create(ListDir, working_dir=workspace_dir),
+            _reg.get_or_create(SearchKeyword, working_dir=workspace_dir),
+            _reg.get_or_create(DeleteFileOrFolder, working_dir=workspace_dir),
         ]
     return tools
 
@@ -47,8 +48,9 @@ def build_node(
     model_id = get_raw_model(model)
     tools = get_tools(workspace_dir, model_id)
     if workspace_dir:
+        from . import tool_registry as _reg
         tools.append(
-            PythonCodeExecutionTool(
+            _reg.get_or_create(PythonCodeExecutionTool,
                 workspace_dir=workspace_dir,
                 authorized_imports=authorized_imports or [],
             )

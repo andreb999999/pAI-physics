@@ -12,7 +12,7 @@ from ..prompts.formalize_results_instructions import get_formalize_results_syste
 from ..toolkits.filesystem.file_editing.file_editing_tools import (
     CreateFileWithContent, DeleteFileOrFolder, ListDir, ModifyFile, SearchKeyword, SeeFile,
 )
-from ..toolkits.ideation.paper_search_tool import PaperSearchTool
+from ..toolkits.search.deep_research.openrouter_deep_research_tool import OpenRouterDeepResearchTool
 from ..toolkits.search.fetch_arxiv_papers.fetch_arxiv_papers_tools import FetchArxivPapersTool
 from ..toolkits.writeup.citation_search_tool import CitationSearchTool
 from ..toolkits.writeup.latex_compiler_tool import LaTeXCompilerTool
@@ -25,26 +25,27 @@ from ..toolkits.code_execution_tool import PythonCodeExecutionTool
 
 
 def get_tools(workspace_dir: Optional[str], model_id: str, authorized_imports: Optional[List[str]] = None) -> list:
+    from . import tool_registry as _reg
     tools = [
-        PaperSearchTool(),
-        FetchArxivPapersTool(working_dir=workspace_dir),
-        CitationSearchTool(),
-        VLMDocumentAnalysisTool(model=model_id, working_dir=workspace_dir),
-        LaTeXGeneratorTool(model=model_id, working_dir=workspace_dir),
-        LaTeXCompilerTool(model=model_id, working_dir=workspace_dir),
-        LaTeXSyntaxCheckerTool(working_dir=workspace_dir),
-        LaTeXContentVerificationTool(working_dir=workspace_dir),
-        LaTeXReflectionTool(model=model_id, working_dir=workspace_dir),
+        _reg.get_or_create(OpenRouterDeepResearchTool),
+        _reg.get_or_create(FetchArxivPapersTool, working_dir=workspace_dir),
+        _reg.get_or_create(CitationSearchTool),
+        _reg.get_or_create(VLMDocumentAnalysisTool, model=model_id, working_dir=workspace_dir),
+        _reg.get_or_create(LaTeXGeneratorTool, model=model_id, working_dir=workspace_dir),
+        _reg.get_or_create(LaTeXCompilerTool, model=model_id, working_dir=workspace_dir),
+        _reg.get_or_create(LaTeXSyntaxCheckerTool, working_dir=workspace_dir),
+        _reg.get_or_create(LaTeXContentVerificationTool, working_dir=workspace_dir),
+        _reg.get_or_create(LaTeXReflectionTool, model=model_id, working_dir=workspace_dir),
     ]
     if workspace_dir:
         tools += [
-            SeeFile(working_dir=workspace_dir),
-            CreateFileWithContent(working_dir=workspace_dir),
-            ModifyFile(working_dir=workspace_dir),
-            ListDir(working_dir=workspace_dir),
-            SearchKeyword(working_dir=workspace_dir),
-            DeleteFileOrFolder(working_dir=workspace_dir),
-            PythonCodeExecutionTool(workspace_dir=workspace_dir, authorized_imports=authorized_imports or []),
+            _reg.get_or_create(SeeFile, working_dir=workspace_dir),
+            _reg.get_or_create(CreateFileWithContent, working_dir=workspace_dir),
+            _reg.get_or_create(ModifyFile, working_dir=workspace_dir),
+            _reg.get_or_create(ListDir, working_dir=workspace_dir),
+            _reg.get_or_create(SearchKeyword, working_dir=workspace_dir),
+            _reg.get_or_create(DeleteFileOrFolder, working_dir=workspace_dir),
+            _reg.get_or_create(PythonCodeExecutionTool, workspace_dir=workspace_dir, authorized_imports=authorized_imports or []),
         ]
     return tools
 

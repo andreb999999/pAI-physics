@@ -30,22 +30,23 @@ def get_tools(
     model_id: str,
     authorized_imports: Optional[List[str]] = None,
 ) -> list:
+    from . import tool_registry as _reg
     tools = [
-        LaTeXGeneratorTool(model=model_id, working_dir=workspace_dir),
-        LaTeXCompilerTool(working_dir=workspace_dir, model=model_id),
-        LaTeXSyntaxCheckerTool(working_dir=workspace_dir),
-        LaTeXContentVerificationTool(working_dir=workspace_dir),
-        LaTeXReflectionTool(model=model_id, working_dir=workspace_dir),
-        VLMDocumentAnalysisTool(working_dir=workspace_dir, model=model_id),
-        SeeFile(working_dir=workspace_dir),
-        ModifyFile(working_dir=workspace_dir),
-        ListDir(working_dir=workspace_dir),
-        SearchKeyword(working_dir=workspace_dir),
-        CreateFileWithContent(working_dir=workspace_dir),
-        DeleteFileOrFolder(working_dir=workspace_dir),
+        _reg.get_or_create(LaTeXGeneratorTool, model=model_id, working_dir=workspace_dir),
+        _reg.get_or_create(LaTeXCompilerTool, working_dir=workspace_dir, model=model_id),
+        _reg.get_or_create(LaTeXSyntaxCheckerTool, working_dir=workspace_dir),
+        _reg.get_or_create(LaTeXContentVerificationTool, working_dir=workspace_dir),
+        _reg.get_or_create(LaTeXReflectionTool, model=model_id, working_dir=workspace_dir),
+        _reg.get_or_create(VLMDocumentAnalysisTool, working_dir=workspace_dir, model=model_id),
+        _reg.get_or_create(SeeFile, working_dir=workspace_dir),
+        _reg.get_or_create(ModifyFile, working_dir=workspace_dir),
+        _reg.get_or_create(ListDir, working_dir=workspace_dir),
+        _reg.get_or_create(SearchKeyword, working_dir=workspace_dir),
+        _reg.get_or_create(CreateFileWithContent, working_dir=workspace_dir),
+        _reg.get_or_create(DeleteFileOrFolder, working_dir=workspace_dir),
     ]
     if workspace_dir:
-        tools.append(PythonCodeExecutionTool(workspace_dir=workspace_dir, authorized_imports=authorized_imports or []))
+        tools.append(_reg.get_or_create(PythonCodeExecutionTool, workspace_dir=workspace_dir, authorized_imports=authorized_imports or []))
     return tools
 
 

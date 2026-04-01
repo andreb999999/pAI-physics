@@ -147,6 +147,26 @@ def get_response_from_vlm(
         content_response = response.choices[0].message.content
         new_msg_history = new_msg_history + [{"role": "assistant", "content": content_response}]
 
+        # Training data logging (best-effort)
+        try:
+            from .logging.training_data_logger import get_training_data_logger
+            tdl = get_training_data_logger()
+            if tdl and tdl.enabled:
+                usage = getattr(response, "usage", None)
+                tdl.log_completion(
+                    messages=messages,
+                    response_content=content_response,
+                    model_id=model,
+                    source="vlm_openai",
+                    agent_name="vlm",
+                    token_usage={
+                        "input_tokens": getattr(usage, "prompt_tokens", 0) or 0,
+                        "output_tokens": getattr(usage, "completion_tokens", 0) or 0,
+                    } if usage else None,
+                )
+        except Exception:
+            pass
+
     elif provider == "anthropic":
         anthropic_content: List[Dict] = [{"type": "text", "text": prompt}]
         for image_path in images:
@@ -174,6 +194,31 @@ def get_response_from_vlm(
         ]
         content_response = "\n".join(text_blocks).strip()
         new_msg_history = new_msg_history + [{"role": "assistant", "content": content_response}]
+
+        # Training data logging (best-effort)
+        try:
+            from .logging.training_data_logger import get_training_data_logger
+            tdl = get_training_data_logger()
+            if tdl and tdl.enabled:
+                # Reconstruct messages in OpenAI format (images → [IMAGE] placeholder)
+                log_messages: List[Dict] = []
+                if system_message:
+                    log_messages.append({"role": "system", "content": system_message})
+                log_messages.append({"role": "user", "content": prompt})
+                usage = getattr(response, "usage", None)
+                tdl.log_completion(
+                    messages=log_messages,
+                    response_content=content_response,
+                    model_id=model,
+                    source="vlm_anthropic",
+                    agent_name="vlm",
+                    token_usage={
+                        "input_tokens": getattr(usage, "input_tokens", 0) or 0,
+                        "output_tokens": getattr(usage, "output_tokens", 0) or 0,
+                    } if usage else None,
+                )
+        except Exception:
+            pass
 
     else:
         raise ValueError(

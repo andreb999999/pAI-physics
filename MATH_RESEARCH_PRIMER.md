@@ -367,11 +367,12 @@ results/consortium_YYYYMMDD_HHMMSS/
 
 ### Model Selection (`.llm_config.yaml`)
 
-Currently configured for `gpt-5.2` with high reasoning effort. For math-heavy
-work, this is the recommended default. Alternatives:
+The project default model is `claude-opus-4-6`. For math-heavy work, reasoning
+models are recommended. Good choices:
 
-- `claude-opus-4-20250514` -- strong at proofs, requires `ANTHROPIC_API_KEY`
+- `gpt-5.2` -- strong at mathematical formalization, requires `OPENAI_API_KEY`
 - `o3-pro-2025-06-10` -- OpenAI reasoning model, good for multi-step deduction
+- `claude-opus-4-6` -- strong at proofs, requires `ANTHROPIC_API_KEY`
 
 ### Budget (`.llm_config.yaml`)
 

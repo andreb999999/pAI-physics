@@ -7,8 +7,9 @@ by the tree manager for best-first expansion.
 
 from __future__ import annotations
 
+import hashlib
 import json
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 import litellm
 
@@ -25,6 +26,12 @@ W_EFFICIENCY = 0.15
 W_DEPTH = 0.10
 W_DIVERSITY = 0.10
 
+# ---------------------------------------------------------------------------
+# Caches — avoid redundant LLM calls and repeated BFS traversals.
+# ---------------------------------------------------------------------------
+_llm_score_cache: Dict[str, float] = {}
+_impact_dep_cache: Dict[int, Dict[str, set]] = {}  # id(claim_graph) -> dependents map
+
 
 # ---------------------------------------------------------------------------
 # Individual signal functions
@@ -37,8 +44,14 @@ def _llm_promise_score(
 ) -> float:
     """Ask an LLM to rate the mathematical promise of a proof strategy.
 
-    Returns a float in [0, 1].
+    Returns a float in [0, 1].  Results are cached by strategy + claim.
     """
+    # Cache key: hash of strategy description + claim_id + node_type
+    cache_raw = f"{node.strategy_description}|{node.claim_id or ''}|{node.node_type.value}"
+    cache_key = hashlib.sha256(cache_raw.encode()).hexdigest()
+    if cache_key in _llm_score_cache:
+        return _llm_score_cache[cache_key]
+
     system = (
         "You are a mathematical research evaluator. "
         "Given a proof strategy description, rate its likelihood of producing "
@@ -72,9 +85,25 @@ def _llm_promise_score(
             if raw.endswith("```"):
                 raw = raw[: raw.rfind("```")]
         data = json.loads(raw)
-        return max(0.0, min(1.0, float(data.get("score", 0.5))))
+        score = max(0.0, min(1.0, float(data.get("score", 0.5))))
+        _llm_score_cache[cache_key] = score
+        return score
     except Exception:
+        _llm_score_cache[cache_key] = 0.5
         return 0.5  # safe fallback
+
+
+def _get_dependents_map(claim_graph: dict[str, Any]) -> dict[str, set[str]]:
+    """Return cached reverse-adjacency map for claim_graph (computed once per graph object)."""
+    graph_id = id(claim_graph)
+    if graph_id in _impact_dep_cache:
+        return _impact_dep_cache[graph_id]
+    dependents: dict[str, set[str]] = {}
+    for c in claim_graph.get("claims", []):
+        for dep in c.get("depends_on", []):
+            dependents.setdefault(dep, set()).add(c["id"])
+    _impact_dep_cache[graph_id] = dependents
+    return dependents
 
 
 def _claim_graph_impact(
@@ -84,6 +113,7 @@ def _claim_graph_impact(
     """Fraction of total claims that are transitively downstream of *node.claim_id*.
 
     Higher impact = resolving this claim unblocks more downstream work.
+    Uses a cached dependency map to avoid rebuilding per node.
     """
     if not node.claim_id:
         return 0.0
@@ -93,12 +123,7 @@ def _claim_graph_impact(
         return 0.0
 
     total = len(claims)
-
-    # Build reverse adjacency: claim -> set of claims that depend on it
-    dependents: dict[str, set[str]] = {}
-    for c in claims:
-        for dep in c.get("depends_on", []):
-            dependents.setdefault(dep, set()).add(c["id"])
+    dependents = _get_dependents_map(claim_graph)
 
     # BFS from claim_id to count transitive dependents
     visited: set[str] = set()
@@ -110,7 +135,6 @@ def _claim_graph_impact(
         visited.add(cid)
         stack.extend(dependents.get(cid, set()))
 
-    # Exclude the claim itself from the count
     downstream_count = len(visited) - 1
     return downstream_count / max(total, 1)
 

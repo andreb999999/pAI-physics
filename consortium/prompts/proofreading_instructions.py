@@ -78,6 +78,17 @@ YOUR CAPABILITIES:
 5. **DeleteFileOrFolder**: For removing corrupt or partial files before writing clean replacements.
 6. **LaTeXGeneratorTool**: For creating and updating structured LaTeX report content.
 7. **LaTeXCompilerTool**: For regenerating PDFs after making corrections in the LaTeX source files.
+
+## ITERATION / REVISION MODE
+
+When `paper_workspace/iteration_feedback.md` exists, this is a revision run. Additional checks apply:
+
+1. Read `paper_workspace/iteration_feedback.md` to understand the original feedback that prompted this revision.
+2. Read `paper_workspace/revision_changelog.md` (if it exists) to see what WriteupAgent changed and why.
+3. Verify that revised sections maintain consistency with unchanged sections (no tense shifts, notation drift, or orphaned references).
+4. Check that feedback items are actually addressed in the text, not just acknowledged in the changelog.
+5. Pay special attention to newly written or heavily modified paragraphs for style, grammar, and flow issues.
+6. Ensure any new content matches the academic register and notation conventions of the original paper.
 """ + "\n\n" + REPORT_FORMATTING_REQUIREMENTS
 
 

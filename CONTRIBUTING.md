@@ -192,7 +192,7 @@ All agent system prompts live in `consortium/prompts/`:
 | File | Agent |
 |------|-------|
 | `literature_review_instructions.py` | LiteratureReviewAgent |
-| `persona_council_instructions.py` | PersonaCouncil |
+| `persona_instructions.py` | PersonaCouncil |
 | `brainstorm_instructions.py` | BrainstormAgent |
 | `formalize_goals_instructions.py` | FormalizeGoalsAgent |
 | `experimentation_instructions.py` | ExperimentationAgent |
@@ -217,31 +217,20 @@ All agent system prompts live in `consortium/prompts/`:
 
 ## Adding Model Support
 
-### Step 1: Add the model ID to `utils.py`
+### Step 1: Add the model to `models.py`
 
-In `consortium/utils.py`, add to the appropriate provider list in `AVAILABLE_MODELS`:
-
-```python
-AVAILABLE_MODELS = [
-    # OpenAI
-    "gpt-5", "my-new-gpt-model", ...
-    # Anthropic
-    "claude-opus-4-6", ...
-    # Google
-    "gemini-2.5-pro", ...
-]
-```
-
-### Step 2: Add context limit to `base_agent.py`
-
-In `consortium/agents/base_agent.py`:
+In `consortium/models.py`, add an entry to `MODEL_REGISTRY` (which auto-populates `AVAILABLE_MODELS`):
 
 ```python
-MODEL_CONTEXT_LIMITS = {
+MODEL_REGISTRY: dict[str, dict] = {
     ...
-    "my-new-model": 128_000,
+    "my-new-model": {"context_limit": 128_000, "provider": "openai"},
 }
 ```
+
+### Step 2: Verify context limit in `models.py`
+
+The context limit is already set in the `MODEL_REGISTRY` entry you added in Step 1 (the `context_limit` field). No separate constant is needed — `get_context_limit()` in `consortium/models.py` reads from the registry.
 
 ### Step 3: Add parameter filtering if needed
 

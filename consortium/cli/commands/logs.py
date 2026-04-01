@@ -16,19 +16,9 @@ _BLUE = "bold blue"
 _GRAY = "dim white"
 _WHITE = "white"
 
+from consortium.cli.core.paths import find_results_dir as _find_results_dir
+
 console = Console()
-
-
-def _find_results_dir() -> Path | None:
-    """Find the results directory by checking common locations."""
-    candidates = [
-        Path.cwd() / "results",
-        Path.cwd().parent / "results",
-    ]
-    for c in candidates:
-        if c.is_dir():
-            return c
-    return None
 
 
 def _find_most_recent_run(results_dir: Path) -> Path | None:

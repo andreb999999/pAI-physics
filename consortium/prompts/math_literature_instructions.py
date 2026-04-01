@@ -27,7 +27,7 @@ WORKFLOW
    If claim_graph.json is empty or absent (e.g., because math_proposer_agent has not run yet),
    read paper_workspace/research_goals.json and paper_workspace/track_decomposition.json
    to derive target theorem families from the stated theory goals directly.
-2) Search papers (Semantic Scholar, arXiv, web) for reusable lemmas and proof templates.
+2) Search papers using deep_literature_search (comprehensive academic search) and web_search for reusable lemmas and proof templates.
 3) Read key PDFs to verify exact assumptions and statement forms.
 4) For each reusable result, record:
    - canonical statement,

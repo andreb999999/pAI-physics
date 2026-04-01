@@ -19,6 +19,9 @@ def preset_to_argv(preset: Preset, task: str, **overrides: object) -> list[str]:
     model = str(overrides.pop("model", preset.model))
     argv.extend(["--model", model])
 
+    # Budget is set via .llm_config.yaml (written by run.py), not CLI flag.
+    overrides.pop("budget_usd", None)  # consume but don't emit
+
     # Output format (overridable)
     output_format = str(overrides.pop("output_format", preset.output_format))
     argv.extend(["--output-format", output_format])

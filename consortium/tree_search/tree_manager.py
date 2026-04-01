@@ -11,9 +11,11 @@ This module is stateless — all persistent data lives in :class:`TreeSearchStat
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import Any, Optional
 
+from consortium.tree_search.budget_allocator import TreeBudgetAllocator
 from consortium.tree_search.node_evaluator import rescore_all, score_node
 from consortium.tree_search.strategy_generator import (
     generate_proof_strategies,
@@ -30,6 +32,8 @@ from consortium.tree_search.tree_state import (
 )
 from consortium.tree_search.workspace_fork import fork_workspace
 
+logger = logging.getLogger(__name__)
+
 
 # ---------------------------------------------------------------------------
 # Claim-graph helpers
@@ -42,6 +46,72 @@ def _load_claim_graph(workspace_dir: str) -> dict[str, Any]:
         return {"claims": []}
     with open(path) as f:
         return json.load(f)
+
+
+def validate_claim_dag(claim_graph: dict[str, Any]) -> list[tuple[str, str]]:
+    """Detect cycles in the claim dependency graph using DFS.
+
+    Returns a list of back-edges (from_id, to_id) that form cycles.
+    If the graph is a valid DAG, returns an empty list.
+    """
+    claims = claim_graph.get("claims", [])
+    adj: dict[str, list[str]] = {}
+    for c in claims:
+        adj[c["id"]] = c.get("depends_on", [])
+
+    WHITE, GRAY, BLACK = 0, 1, 2
+    color: dict[str, int] = {cid: WHITE for cid in adj}
+    back_edges: list[tuple[str, str]] = []
+
+    def dfs(node: str) -> None:
+        color[node] = GRAY
+        for dep in adj.get(node, []):
+            if dep not in color:
+                continue  # dependency references unknown claim, skip
+            if color[dep] == GRAY:
+                back_edges.append((node, dep))
+            elif color[dep] == WHITE:
+                dfs(dep)
+        color[node] = BLACK
+
+    for cid in adj:
+        if color[cid] == WHITE:
+            dfs(cid)
+    return back_edges
+
+
+def break_cycles(claim_graph: dict[str, Any]) -> list[tuple[str, str]]:
+    """Detect and break cycles by removing back-edges from lowest-impact claims.
+
+    Modifies claim_graph in-place. Returns the list of removed edges.
+    """
+    back_edges = validate_claim_dag(claim_graph)
+    if not back_edges:
+        return []
+
+    removed: list[tuple[str, str]] = []
+    claims_by_id = {c["id"]: c for c in claim_graph.get("claims", [])}
+    for from_id, to_id in back_edges:
+        # Remove the back-edge from the lower-impact claim
+        impact_from = get_downstream_impact(from_id, claim_graph)
+        impact_to = get_downstream_impact(to_id, claim_graph)
+        if impact_from <= impact_to:
+            claim = claims_by_id.get(from_id)
+            if claim and to_id in claim.get("depends_on", []):
+                claim["depends_on"].remove(to_id)
+                removed.append((from_id, to_id))
+        else:
+            claim = claims_by_id.get(to_id)
+            if claim and from_id in claim.get("depends_on", []):
+                claim["depends_on"].remove(from_id)
+                removed.append((to_id, from_id))
+
+    if removed:
+        logger.warning(
+            "Claim graph had %d cycle(s). Removed back-edges: %s",
+            len(removed), removed,
+        )
+    return removed
 
 
 def get_frontier_claims(
@@ -286,6 +356,7 @@ def select_branches_for_execution(
     claim_graph: dict[str, Any],
     *,
     model: str = "claude-sonnet-4-6",
+    budget_allocator: Optional[TreeBudgetAllocator] = None,
 ) -> list[TreeNode]:
     """Select the top-K pending nodes for parallel execution.
 
@@ -297,8 +368,17 @@ def select_branches_for_execution(
     # Rescore (cheap — skips LLM by default)
     rescore_all(tree_state, claim_graph, model=model, skip_llm=True)
 
-    # Prune low scorers
-    tree_state.prune_below_threshold(config.pruning_threshold)
+    # Prune low scorers and reclaim budget from pruned branches
+    pruned_ids = tree_state.prune_below_threshold(config.pruning_threshold)
+    if pruned_ids and budget_allocator is not None:
+        total_reclaimed = 0.0
+        for pid in pruned_ids:
+            total_reclaimed += budget_allocator.reallocate_from_pruned(pid)
+        if total_reclaimed > 0:
+            logger.info(
+                "Reclaimed $%.4f from %d pruned branches",
+                total_reclaimed, len(pruned_ids),
+            )
 
     # Select top-K
     return tree_state.get_top_k(config.max_parallel)
@@ -317,6 +397,7 @@ def process_branch_result(
     *,
     failure_reason: str = "",
     model: str = "claude-sonnet-4-6",
+    budget_allocator: Optional[TreeBudgetAllocator] = None,
 ) -> None:
     """Process the result of a completed branch execution.
 
@@ -330,8 +411,8 @@ def process_branch_result(
         # Promote winning workspace
         from consortium.tree_search.workspace_fork import promote_branch
         promote_branch(node.workspace_path, workspace_dir)
-        # Prune sibling branches for the same claim
-        _prune_siblings(node, tree_state)
+        # Prune sibling branches for the same claim and reclaim budget
+        _prune_siblings(node, tree_state, budget_allocator=budget_allocator)
     else:
         node.mark_failed()
         node.metadata["failure_reason"] = failure_reason
@@ -343,7 +424,12 @@ def process_branch_result(
     save_tree_state(tree_state, workspace_dir)
 
 
-def _prune_siblings(node: TreeNode, tree_state: TreeSearchState) -> None:
+def _prune_siblings(
+    node: TreeNode,
+    tree_state: TreeSearchState,
+    *,
+    budget_allocator: Optional[TreeBudgetAllocator] = None,
+) -> None:
     """Prune all siblings of *node* that target the same claim.
 
     Once a proof strategy succeeds, there's no need to continue exploring
@@ -357,7 +443,10 @@ def _prune_siblings(node: TreeNode, tree_state: TreeSearchState) -> None:
             and n.claim_id == node.claim_id
             and not n.is_terminal
         ):
-            tree_state.prune_subtree(n.id)
+            pruned_ids = tree_state.prune_subtree(n.id)
+            if budget_allocator is not None:
+                for pid in pruned_ids:
+                    budget_allocator.reallocate_from_pruned(pid)
 
 
 # ---------------------------------------------------------------------------
@@ -369,16 +458,20 @@ def run_tree_search_step(
     workspace_dir: str,
     *,
     model: str = "claude-sonnet-4-6",
+    budget_allocator: Optional[TreeBudgetAllocator] = None,
 ) -> list[TreeNode]:
     """Execute one step of DAG-layered best-first search.
 
-    1. Load claim graph.
+    1. Load claim graph and validate it is a DAG (break cycles if needed).
     2. Identify frontier claims (dependencies resolved).
     3. For each frontier claim without active branches, create proof branches.
     4. Select top-K branches for execution.
     5. Return the selected nodes (caller is responsible for executing them).
     """
     claim_graph = _load_claim_graph(workspace_dir)
+
+    # Step 0: Validate DAG and break any cycles
+    break_cycles(claim_graph)
 
     # Step 1: Identify frontier claims
     frontier = get_frontier_claims(claim_graph, tree_state.completed_claims)
@@ -394,4 +487,6 @@ def run_tree_search_step(
         )
 
     # Step 3: Select best branches for execution
-    return select_branches_for_execution(tree_state, claim_graph, model=model)
+    return select_branches_for_execution(
+        tree_state, claim_graph, model=model, budget_allocator=budget_allocator,
+    )

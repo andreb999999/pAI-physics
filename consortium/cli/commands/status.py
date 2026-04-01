@@ -24,21 +24,11 @@ _GREEN = "bold green"
 _RED = "bold red"
 _YELLOW = "bold yellow"
 
+from consortium.cli.core.paths import find_results_dir as _find_results_dir
+
 console = Console()
 
 _ACTIVE_THRESHOLD_SECONDS = 30 * 60  # 30 minutes
-
-
-def _find_results_dir() -> Path | None:
-    """Find the results directory by checking common locations."""
-    candidates = [
-        Path.cwd() / "results",
-        Path.cwd().parent / "results",
-    ]
-    for c in candidates:
-        if c.is_dir():
-            return c
-    return None
 
 
 def _seconds_to_human(seconds: float) -> str:

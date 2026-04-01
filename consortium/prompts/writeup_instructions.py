@@ -294,7 +294,22 @@ All LaTeX tools must be used for successful completion:
 - Base content on actual experimental evidence from workspace
 - Include specific numerical results and metrics
 - Reference actual experimental implementations
-- Maintain publication-level technical rigor""" + "\n\n" + DOCUMENT_FORMATTING_REQUIREMENTS
+- Maintain publication-level technical rigor
+
+## ITERATION / REVISION MODE
+
+When your agent_task begins with "ITERATE MODE:", you are **revising** an existing paper, NOT writing from scratch.
+
+**Mandatory workflow for iteration:**
+1. **READ THE PRIOR PAPER FIRST**: Use SeeFile to read the prior paper from `paper_workspace/prior_paper/`. This is your starting point.
+2. **READ THE FEEDBACK**: Use SeeFile to read `paper_workspace/iteration_feedback.md` for all reviewer feedback.
+3. **READ THE REVISION PLAN**: If `paper_workspace/revision_plan.md` exists (from resource_preparation_agent), read it.
+4. **PRESERVE STRUCTURE**: Start from the prior paper's structure. Do not rewrite from scratch unless feedback demands a fundamental restructure.
+5. **ADDRESS EVERY FEEDBACK ITEM**: Cross-reference each feedback point and ensure it is addressed in the revision.
+6. **TRACK CHANGES**: Create `paper_workspace/revision_changelog.md` documenting what changed and why, organized by feedback item.
+7. **MAINTAIN QUALITY**: Do not degrade sections that received no negative feedback. Only modify what the feedback calls for.
+8. **FLAG UNRESOLVABLE**: If feedback is contradictory or impossible to address, document this in the changelog with your reasoning.
+9. **COMPILE**: After revisions, compile the updated `final_paper.tex` to PDF as usual.""" + "\n\n" + DOCUMENT_FORMATTING_REQUIREMENTS
 
 
 def get_writeup_system_prompt(tools, managed_agents=None):

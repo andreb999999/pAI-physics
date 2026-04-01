@@ -19,6 +19,8 @@ from typing import Any, Dict, Generator, Optional
 from .workflow_utils import safe_int as _safe_int
 
 _LOCK = threading.Lock()
+_PENDING_BUFFER: list[tuple[int, int, str, str | None]] = []  # (pt, ct, source, model_id)
+_FLUSH_INTERVAL = 10  # flush every N records
 
 ENV_TOKEN_FILE = "CONSORTIUM_RUN_TOKEN_FILE"
 ENV_RUN_ID = "CONSORTIUM_RUN_ID"
@@ -194,7 +196,8 @@ def record_token_usage(
     model_id: Optional[str] = None,
 ) -> None:
     """
-    Add token usage to current run totals.
+    Add token usage to current run totals.  Writes are batched: accumulated
+    in _PENDING_BUFFER and flushed every _FLUSH_INTERVAL calls to reduce I/O.
     """
     pt = _safe_int(prompt_tokens)
     ct = _safe_int(completion_tokens)
@@ -215,33 +218,37 @@ def record_token_usage(
         return
 
     with _LOCK:
-        state = _read_state(path)
-        if not state:
-            state = {
-                "run_id": run_id or "unknown_run",
-                "started_at": _now_iso(),
-                "updated_at": _now_iso(),
-                "input_tokens": 0,
-                "output_tokens": 0,
-                "total_tokens": 0,
-                "by_source": {},
-                "by_model": {},
-            }
+        _PENDING_BUFFER.append((pt, ct, source, model_id))
+        if len(_PENDING_BUFFER) >= _FLUSH_INTERVAL:
+            _flush_token_buffer(path, run_id)
 
-        state["run_id"] = run_id or state.get("run_id", "unknown_run")
+
+def _flush_token_buffer(path: str, run_id: Optional[str] = None) -> None:
+    """Flush all pending token records to disk in one batch. Must hold _LOCK."""
+    if not _PENDING_BUFFER:
+        return
+
+    state = _read_state(path)
+    if not state:
+        state = {
+            "run_id": run_id or "unknown_run",
+            "started_at": _now_iso(),
+            "updated_at": _now_iso(),
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "by_source": {},
+            "by_model": {},
+        }
+
+    for pt, ct, source, model_id in _PENDING_BUFFER:
         state["input_tokens"] = _safe_int(state.get("input_tokens")) + pt
         state["output_tokens"] = _safe_int(state.get("output_tokens")) + ct
-        state["total_tokens"] = state["input_tokens"] + state["output_tokens"]
-        state["updated_at"] = _now_iso()
-
         by_source = state.setdefault("by_source", {})
         by_source[source] = _safe_int(by_source.get(source)) + pt + ct
-
         if model_id:
             by_model = state.setdefault("by_model", {})
             by_model[model_id] = _safe_int(by_model.get(model_id)) + pt + ct
-
-        _write_state(path, state)
         _append_private_token_entry(
             prompt_tokens=pt,
             completion_tokens=ct,
@@ -250,6 +257,22 @@ def record_token_usage(
             run_id=run_id,
             tracker_path=path,
         )
+
+    state["run_id"] = run_id or state.get("run_id", "unknown_run")
+    state["total_tokens"] = state["input_tokens"] + state["output_tokens"]
+    state["updated_at"] = _now_iso()
+    _write_state(path, state)
+    _PENDING_BUFFER.clear()
+
+
+def flush_token_tracker() -> None:
+    """Public flush — call at pipeline end to persist any buffered records."""
+    path = os.getenv(ENV_TOKEN_FILE)
+    run_id = os.getenv(ENV_RUN_ID)
+    if not path:
+        return
+    with _LOCK:
+        _flush_token_buffer(path, run_id)
 
 
 def get_run_token_totals() -> Optional[Dict[str, int]]:

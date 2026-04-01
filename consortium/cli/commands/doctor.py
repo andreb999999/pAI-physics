@@ -107,6 +107,32 @@ def doctor(ctx: click.Context) -> None:
     else:
         table.add_row("SLURM", "[dim]SKIP[/]", "Not detected — HPC mode unavailable")
 
+    # .llm_config.yaml
+    from pathlib import Path
+    llm_cfg = Path(".llm_config.yaml")
+    if llm_cfg.exists():
+        try:
+            import yaml
+            with open(llm_cfg) as f:
+                cfg = yaml.safe_load(f)
+            if cfg and "main_agents" in cfg and "budget" in cfg:
+                table.add_row(".llm_config.yaml", "[blue]\u2713 OK[/]", "Valid")
+            else:
+                table.add_row(".llm_config.yaml", "[dim]WARN[/]", "Missing required sections (main_agents, budget)")
+        except Exception as exc:
+            table.add_row(".llm_config.yaml", "[bold white on red] FAIL [/]", f"Parse error: {exc}")
+    else:
+        table.add_row(".llm_config.yaml", "[dim]SKIP[/]", "Not found — msc run will auto-generate from tier")
+
+    # scripts/ directory (needed for campaign commands)
+    scripts_dir = Path("scripts")
+    if scripts_dir.is_dir() and (scripts_dir / "campaign_cli.py").exists():
+        table.add_row("scripts/", "[blue]\u2713 OK[/]", "Campaign scripts found")
+    elif scripts_dir.is_dir():
+        table.add_row("scripts/", "[dim]WARN[/]", "Directory exists but campaign_cli.py missing")
+    else:
+        table.add_row("scripts/", "[dim]SKIP[/]", "Not in project root — campaign commands unavailable")
+
     console.print(table)
 
     # Summary

@@ -25,6 +25,16 @@ from typing import Optional
 # Degradation profiles
 # ---------------------------------------------------------------------------
 
+# Maps price tiers to their starting rigor level.
+# Lower tiers start at lower rigor to avoid immediate degradation.
+TIER_TO_INITIAL_RIGOR: dict[str, str] = {
+    "budget": "minimal",
+    "light": "reduced",
+    "medium": "standard",
+    "pro": "high",
+    "max": "maximum",
+}
+
 DEGRADATION_PROFILES: dict[str, dict] = {
     "maximum": {
         "counsel_models": 4,         # all 4 frontier models

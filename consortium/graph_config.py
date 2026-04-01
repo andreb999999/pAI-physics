@@ -123,6 +123,7 @@ class ResearchGraphConfig:
     enable_math_agents: bool = False
     enable_milestone_gates: bool = False
     adversarial_verification: bool = False
+    iterate_mode: bool = False
 
     # -- validation / iteration limits -------------------------------------
     min_review_score: int = 8
@@ -163,6 +164,7 @@ class ResearchGraphConfig:
             "enable_math_agents": self.enable_math_agents,
             "enable_milestone_gates": self.enable_milestone_gates,
             "adversarial_verification": self.adversarial_verification,
+            "iterate_mode": self.iterate_mode,
             "min_review_score": self.min_review_score,
             "followup_max_iterations": self.followup_max_iterations,
             "manager_max_steps": self.manager_max_steps,
@@ -202,6 +204,7 @@ class ResearchGraphConfig:
             enable_math_agents=data.get("enable_math_agents", False),
             enable_milestone_gates=data.get("enable_milestone_gates", False),
             adversarial_verification=data.get("adversarial_verification", False),
+            iterate_mode=data.get("iterate_mode", False),
             min_review_score=data.get("min_review_score", 8),
             followup_max_iterations=data.get("followup_max_iterations", 3),
             manager_max_steps=data.get("manager_max_steps", 50),

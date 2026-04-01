@@ -21,7 +21,7 @@ This document describes the system architecture of consortium.
 │  • Creates workspace directory                              │
 │  • Writes experiment_metadata.json                          │
 │  • Initializes BudgetManager, TokenTracker                  │
-│  • Builds LangGraph (build_research_graph in utils.py)      │
+│  • Builds LangGraph (build_research_graph_v2 in graph.py)   │
 │  • Invokes graph, writes run_summary.json on completion     │
 └───────────────────────┬─────────────────────────────────────┘
                         │
@@ -48,10 +48,11 @@ This document describes the system architecture of consortium.
 
 ---
 
-## 14-Stage Base Pipeline
+## Base Pipeline
 
 The pipeline is a direct-wired linear graph organized into three stage groups.
 No manager hub — each stage feeds directly into the next.
+The diagram below shows the 14 core agent stages; the full V2 graph (`build_research_graph_v2` in `graph.py`) includes additional validation gates, milestones, and feedback loops (~24 total nodes).
 
 ```mermaid
 flowchart LR
@@ -166,7 +167,7 @@ consortium/
 │   ├── base_agent.py   create_specialist_agent() factory
 │   └── *_agent.py      Specialist agents (ideation, experiment, math, writeup, ...)
 │
-├── prompts/            24 system prompt instruction files
+├── prompts/            29 system prompt instruction files
 │
 ├── toolkits/           Tool implementations grouped by domain
 │   ├── search/         ArXiv, web search, text inspector
@@ -195,8 +196,7 @@ consortium/
 │   ├── callback_tools.py  TCP socket interrupt listener
 │   └── http_steering.py   HTTP interrupt API (port+1)
 │
-├── logging/            Structured logging
-└── interpreters/       Code execution sandboxes
+└── logging/            Structured logging
 ```
 
 ---
