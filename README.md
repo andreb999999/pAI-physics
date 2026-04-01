@@ -110,17 +110,20 @@ This runs a comprehensive environment check: Python version, installed packages,
 ### Step 4: Run Your First Research
 
 ```bash
-# Quick test (~$2-5, 30 min)
-msc run "What are the key differences between transformer and state-space models?"
+# Quick test (~$20-50, 30 min)
+msc run --tier budget "What are the key differences between transformer and state-space models?"
 
-# Standard (~$10-25, 2 hrs)
+# Validate setup without spending anything
+msc run --tier budget --dry-run "Test task"
+
+# Standard (~$100-300, 6 hrs, default tier)
 msc run "Survey the landscape of mechanistic interpretability methods"
 
-# Thorough with counsel (~$40-100, 6 hrs)
-msc run "Analyze the theoretical foundations of in-context learning" --enable-counsel
+# With counsel debate (~$300-500, 12 hrs)
+msc run --tier pro "Analyze the theoretical foundations of in-context learning"
 
-# Maximum quality with math agents (~$80-200, 12+ hrs)
-msc run "Comprehensive analysis of attention mechanisms" --enable-counsel --enable-math-agents --enable-tree-search
+# Maximum quality (~$500+, 24+ hrs)
+msc run --tier max "Comprehensive analysis of attention mechanisms"
 ```
 
 Each run creates a timestamped output directory containing all intermediate artifacts, the final manuscript, and a detailed execution log.
@@ -137,16 +140,27 @@ Output manuscripts are saved to the `results/` directory by default.
 
 ---
 
-## Recommended Configurations
+## Tiers
 
-These are typical cost/time profiles depending on the flags you enable. There is no `--preset` flag; combine flags manually to match your needs.
+MSc uses a tier system to control cost, quality, and which features are enabled. Select a tier with `--tier` (or `-t`). The default tier is `medium`.
 
-| Configuration | Approx. Cost | Time | Flags | Best For |
-|---|---|---|---|---|
-| Quick | $2 -- $5 | ~30 min | *(default)* | Testing, quick summaries, sanity checks |
-| Standard | $10 -- $25 | ~2 hrs | *(default)* | Most research questions, drafts |
-| Thorough | $40 -- $100 | ~6 hrs | `--enable-counsel` | Publication-quality drafts |
-| Maximum | $80 -- $200 | 12+ hrs | `--enable-counsel --enable-math-agents --enable-tree-search` | Rigorous manuscripts, comprehensive surveys |
+| Tier | Cost | Time | Model | Key Features |
+|------|------|------|-------|--------------|
+| `budget` | $20--50 | ~30 min | gpt-5-mini | Single model, markdown output |
+| `light` | $50--100 | ~2 hrs | gpt-5-mini | Planning enabled |
+| `medium` | $100--300 | ~6 hrs | claude-sonnet-4-6 | LaTeX output, math agents, per-agent model routing |
+| `pro` | $300--500 | ~12 hrs | claude-opus-4-6 | 2-round counsel debate, adversarial verification |
+| `max` | $500+ | ~24+ hrs | claude-opus-4-6 | 4-model counsel (3 rounds), tree search, full Opus pipeline |
+
+Individual features can be toggled independently of the tier:
+
+```bash
+# Use budget tier but enable counsel anyway
+msc run --tier budget --counsel "My question"
+
+# Use medium tier but disable math agents
+msc run --no-math "My question"
+```
 
 ---
 
@@ -270,6 +284,25 @@ For projects that span multiple related research questions, the campaign system 
 
 ## Advanced Usage
 
+### Run Options
+
+All `msc run` flags:
+
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--tier` | `-t` | Price tier: `budget`, `light`, `medium` (default), `pro`, `max` |
+| `--model` | `-m` | Override the LLM model (e.g., `claude-opus-4-6`) |
+| `--budget` | `-b` | Override budget cap in USD |
+| `--counsel` / `--no-counsel` | | Toggle multi-model debate |
+| `--math` / `--no-math` | | Toggle math agents |
+| `--tree-search` / `--no-tree-search` | | Toggle tree search exploration |
+| `--output-format` | `-o` | `markdown` or `latex` |
+| `--task-file` | `-f` | Read task from a file instead of the command line |
+| `--mode` | | `local`, `tinker`, or `hpc` |
+| `--dry-run` | | Validate setup without running (no cost) |
+| `--max-run-seconds` | | Hard timeout in seconds |
+| `--stream` / `--no-stream` | | Toggle streaming display (default: on) |
+
 ### Custom Task Files
 
 For complex research directives that exceed a single command, write a task file:
@@ -285,7 +318,9 @@ The task file can include structured instructions, scope constraints, specific r
 If a run is interrupted (network failure, budget pause, system restart), resume from the last checkpoint:
 
 ```bash
-msc resume
+msc resume                          # Resume most recent interrupted run
+msc resume <run_id>                 # Resume a specific run
+msc resume --start-from <stage>     # Resume from a specific pipeline stage
 ```
 
 MSc persists all intermediate artifacts and pipeline state, so resumption avoids re-executing completed stages.
@@ -317,21 +352,33 @@ Budget enforcement is hard-capped: the pipeline halts cleanly when the limit is 
 ## CLI Reference
 
 ```
-msc setup          First-time configuration wizard
-msc run            Start a research pipeline
-msc doctor         Environment and dependency check
-msc status         Check running pipelines
-msc logs           Tail pipeline output
-msc runs           List past runs
-msc resume         Resume an interrupted run
-msc campaign       Multi-stage campaign management
-msc config         View and edit configuration
-msc budget         View spending summary
-msc notify         Configure notifications
-msc openclaw       OpenClaw autonomous oversight
-msc install        Install optional extras
-msc --help         Show help for any command
-msc --version      Show version
+msc setup              First-time configuration wizard
+msc run                Start a research pipeline
+msc doctor             Environment and dependency check
+msc status             Check running pipelines
+msc logs               Tail pipeline output
+msc runs               List past runs
+msc resume             Resume an interrupted run
+msc campaign init      Create a new campaign
+msc campaign start     Launch a campaign
+msc campaign status    Check campaign progress
+msc campaign repair    Trigger repair on a failed stage
+msc campaign list      List campaign files
+msc config get         View a configuration value
+msc config set         Set a configuration value
+msc config list        Show all configuration values
+msc config edit        Open config in editor
+msc config path        Show config directory path
+msc budget             View spending summary
+msc notify setup       Configure notifications
+msc notify test        Test a notification channel
+msc openclaw setup     One-time OpenClaw setup
+msc openclaw start     Start oversight agent
+msc openclaw status    Check oversight status
+msc openclaw stop      Stop the OpenClaw gateway
+msc install <extra>    Install optional extras (web, experiment, docs, all, ...)
+msc --help             Show help for any command
+msc --version          Show version
 ```
 
 Use `msc <command> --help` for detailed usage of any subcommand.
