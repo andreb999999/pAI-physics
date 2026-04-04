@@ -20,12 +20,23 @@ MODEL_REGISTRY: dict[str, dict] = {
     "gpt-5-mini": {"context_limit": 256_000, "provider": "openai"},
     "gpt-5-nano": {"context_limit": 256_000, "provider": "openai"},
     "gpt-5.4": {"context_limit": 1_050_000, "provider": "openai"},
+    "gpt-5.4-pro": {"context_limit": 1_050_000, "provider": "openai"},
+    "gpt-5.4-mini": {"context_limit": 1_050_000, "provider": "openai"},
+    "gpt-5.4-nano": {"context_limit": 1_050_000, "provider": "openai"},
     "gpt-5.3-codex": {"context_limit": 200_000, "provider": "openai"},
+    "gpt-5.3-chat": {"context_limit": 200_000, "provider": "openai"},
     "gpt-5.2": {"context_limit": 256_000, "provider": "openai"},
+    "gpt-5.2-pro": {"context_limit": 256_000, "provider": "openai"},
     # OpenAI GPT-4 models
     "gpt-4o": {"context_limit": 128_000, "provider": "openai"},
     "gpt-4.1-mini-2025-04-14": {"context_limit": 128_000, "provider": "openai"},
     # OpenAI reasoning models
+    "o3": {"context_limit": 200_000, "provider": "openai"},
+    "o3-pro": {"context_limit": 200_000, "provider": "openai"},
+    "o4-mini": {"context_limit": 200_000, "provider": "openai"},
+    "o3-deep-research": {"context_limit": 400_000, "provider": "openai"},
+    "o4-mini-deep-research": {"context_limit": 200_000, "provider": "openai"},
+    # OpenAI reasoning (date-suffixed aliases for backward compat)
     "o3-2025-04-16": {"context_limit": 200_000, "provider": "openai"},
     "o3-pro-2025-06-10": {"context_limit": 200_000, "provider": "openai"},
     "o4-mini-2025-04-16": {"context_limit": 128_000, "provider": "openai"},
@@ -39,12 +50,17 @@ MODEL_REGISTRY: dict[str, dict] = {
     # DeepSeek models
     "deepseek-chat": {"context_limit": 64_000, "provider": "deepseek"},
     "deepseek-coder": {"context_limit": 64_000, "provider": "deepseek"},
+    "deepseek-v3.2": {"context_limit": 128_000, "provider": "deepseek"},
+    "deepseek-r1": {"context_limit": 128_000, "provider": "deepseek"},
     # xAI models
     "grok-4-0709": {"context_limit": 128_000, "provider": "xai"},
     # Google Gemini models
     "gemini-2.5-pro": {"context_limit": 1_000_000, "provider": "google"},
     "gemini-2.5-flash": {"context_limit": 1_000_000, "provider": "google"},
-    "gemini-3-pro-preview": {"context_limit": 2_000_000, "provider": "google"},
+    "gemini-3-pro-preview": {"context_limit": 1_000_000, "provider": "google"},
+    "gemini-3-flash-preview": {"context_limit": 1_000_000, "provider": "google"},
+    "gemini-3.1-pro-preview": {"context_limit": 1_048_576, "provider": "google"},
+    "gemini-3.1-flash-lite-preview": {"context_limit": 1_000_000, "provider": "google"},
 }
 
 AVAILABLE_MODELS = list(MODEL_REGISTRY.keys())

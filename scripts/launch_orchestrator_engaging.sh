@@ -14,7 +14,7 @@
 # =============================================================================
 
 #SBATCH --job-name=consortium_orch
-#SBATCH --partition=sched_mit_hill
+#SBATCH --partition=batch                 # Override via: sbatch --partition=YOUR_PARTITION
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=4

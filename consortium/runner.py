@@ -803,8 +803,17 @@ def main():
 
         persona_council_specs = pc_cfg.get("personas") or None
         persona_synthesis_model = pc_cfg.get("synthesis_model", "claude-opus-4-6")
+        persona_post_vote_retries = getattr(args, "persona_post_vote_retries", None)
+        if persona_post_vote_retries is None:
+            persona_post_vote_retries = int(pc_cfg.get("max_post_vote_retries", 1))
         duality_check_model = dc_cfg.get("model", "claude-opus-4-6")
         enable_duality_check = not getattr(args, "no_duality_check", False)
+
+        # Quality limits (new args, fallback to defaults)
+        theory_repair_max_attempts = getattr(args, "theory_repair_max_attempts", None) or 2
+        duality_max_attempts = getattr(args, "duality_max_attempts", None) or 2
+        max_validation_retries = getattr(args, "max_validation_retries", None) or 3
+        enable_ensemble_review = getattr(args, "enable_ensemble_review", False)
 
         # Extract budget manager if available
         budget_manager = None
@@ -840,10 +849,15 @@ def main():
             enable_milestone_gates=enable_milestone_gates,
             adversarial_verification=adversarial_verification,
             iterate_mode=bool(getattr(args, "iterate", None)),
+            theory_repair_max_attempts=theory_repair_max_attempts,
+            duality_max_attempts=duality_max_attempts,
+            max_validation_retries=max_validation_retries,
+            enable_ensemble_review=enable_ensemble_review,
             persona_council=PersonaCouncilConfig(
                 specs=persona_council_specs,
                 debate_rounds=persona_debate_rounds,
                 synthesis_model=persona_synthesis_model,
+                max_post_vote_retries=persona_post_vote_retries,
             ),
             duality_check=DualityCheckConfig(
                 enabled=enable_duality_check,

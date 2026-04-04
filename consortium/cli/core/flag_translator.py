@@ -46,6 +46,60 @@ def preset_to_argv(preset: Preset, task: str, **overrides: object) -> list[str]:
     if overrides.pop("autonomous_mode", preset.autonomous_mode):
         argv.append("--autonomous-mode")
 
+    # Ensemble review
+    if overrides.pop("enable_ensemble_review", preset.enable_ensemble_review):
+        argv.append("--enable-ensemble-review")
+
+    # Quality knobs from tier (only emit if set on the preset or overridden)
+    _quality_int_flags = [
+        ("followup_max_iterations", "--followup-max-iterations"),
+        ("max_rebuttal_iterations", "--max-rebuttal-iterations"),
+        ("min_review_score", "--min-review-score"),
+        ("manager_max_steps", "--manager-max-steps"),
+        ("theory_repair_max_attempts", "--theory-repair-max-attempts"),
+        ("duality_max_attempts", "--duality-max-attempts"),
+        ("persona_post_vote_retries", "--persona-post-vote-retries"),
+        ("max_validation_retries", "--max-validation-retries"),
+        ("tree_max_breadth", "--tree-max-breadth"),
+        ("tree_max_depth", "--tree-max-depth"),
+        ("tree_max_parallel", "--tree-max-parallel"),
+    ]
+    for attr, flag in _quality_int_flags:
+        val = overrides.pop(attr, getattr(preset, attr, None))
+        if val is not None:
+            argv.extend([flag, str(int(val))])
+
+    _quality_float_flags = [
+        ("tree_pruning_threshold", "--tree-pruning-threshold"),
+    ]
+    for attr, flag in _quality_float_flags:
+        val = overrides.pop(attr, getattr(preset, attr, None))
+        if val is not None:
+            argv.extend([flag, str(val)])
+
+    # Counsel debate rounds (from preset or override)
+    counsel_rounds = overrides.pop("counsel_debate_rounds", None)
+    if counsel_rounds is None and preset.counsel_debate_rounds:
+        counsel_rounds = preset.counsel_debate_rounds
+    if counsel_rounds:
+        argv.extend(["--counsel-max-debate-rounds", str(counsel_rounds)])
+
+    # Persona debate rounds (from preset or override)
+    persona_rounds = overrides.pop("persona_debate_rounds", None)
+    if persona_rounds is None and preset.counsel_debate_rounds:
+        # Use counsel debate rounds as persona default too for ultra tier
+        pass  # persona debate rounds set separately via --persona-debate-rounds
+    if persona_rounds:
+        argv.extend(["--persona-debate-rounds", str(persona_rounds)])
+
+    # Iterate mode
+    iterate_dir = overrides.pop("iterate", None)
+    if iterate_dir:
+        argv.extend(["--iterate", str(iterate_dir)])
+    iterate_start = overrides.pop("iterate_start_stage", None)
+    if iterate_start:
+        argv.extend(["--iterate-start-stage", str(iterate_start)])
+
     # Don't log to files — we handle output display
     argv.append("--no-log-to-files")
 

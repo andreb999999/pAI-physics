@@ -97,9 +97,9 @@ def submit_experiment_job(
     exp_config = cluster.get("experiment_gpu", {})
 
     # Resolve parameters from config or defaults
-    partition = partition or exp_config.get("partition", "pi_tpoggio")
-    time_limit = time_limit or exp_config.get("time", "7-00:00:00")
-    gpus = gpus or exp_config.get("gres", "gpu:a100:1")
+    partition = partition or exp_config.get("partition", "batch")
+    time_limit = time_limit or exp_config.get("time", "06:00:00")
+    gpus = gpus or exp_config.get("gres", "gpu:1")
     mem = mem or exp_config.get("mem", "64G")
     cpus = cpus or exp_config.get("cpus", 8)
 

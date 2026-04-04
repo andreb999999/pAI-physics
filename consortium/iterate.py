@@ -19,9 +19,12 @@ from typing import Optional
 # Names that signal "this is the paper, not feedback"
 _PAPER_BASENAMES = {"final_paper", "main", "paper", "manuscript", "draft"}
 
-_MAX_FEEDBACK_CHARS = 15_000
-_MAX_PAPER_CHARS = 50_000
-_MAX_TOTAL_FEEDBACK_CHARS = 50_000
+# No artificial truncation — frontier models have 200K-2M token contexts.
+# A typical 40-page paper is ~80K chars (~20K tokens), well within limits.
+# Set to None to read the entire file; set to a positive int to cap.
+_MAX_FEEDBACK_CHARS = None     # None = unlimited
+_MAX_PAPER_CHARS = None        # None = unlimited
+_MAX_TOTAL_FEEDBACK_CHARS = None  # None = unlimited
 
 
 def validate_iterate_dir(path: str) -> dict:
@@ -196,16 +199,17 @@ def structure_feedback(items: list[dict]) -> str:
 
     total_chars = 0
     for item in items:
-        if total_chars >= _MAX_TOTAL_FEEDBACK_CHARS:
+        if _MAX_TOTAL_FEEDBACK_CHARS is not None and total_chars >= _MAX_TOTAL_FEEDBACK_CHARS:
             parts.append(
                 "\n> **Note:** Remaining feedback truncated due to length.\n"
             )
             break
         header = f"\n---\n## Feedback from `{item['source']}` ({item['format']})\n\n"
         content = item["content"]
-        remaining = _MAX_TOTAL_FEEDBACK_CHARS - total_chars
-        if len(content) > remaining:
-            content = content[:remaining] + "\n\n[...truncated...]"
+        if _MAX_TOTAL_FEEDBACK_CHARS is not None:
+            remaining = _MAX_TOTAL_FEEDBACK_CHARS - total_chars
+            if len(content) > remaining:
+                content = content[:remaining] + "\n\n[...truncated...]"
         parts.append(header)
         parts.append(content)
         total_chars += len(content)
@@ -277,6 +281,6 @@ def build_iterate_state_seed(iterate_dir: str, workspace_dir: str) -> dict:
         "iterate_feedback_summary": feedback_summary,
         "formalized_results": (
             f"[Prior paper — revision mode]\n\n"
-            f"{paper_content[:5000]}"
+            f"{paper_content}"
         ),
     }

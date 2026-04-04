@@ -46,6 +46,11 @@ console = Console()
 @click.option("--tree-search/--no-tree-search", default=None, help="Enable/disable tree search.")
 @click.option("--max-run-seconds", type=int, default=None, help="Hard timeout in seconds.")
 @click.option("--stream/--no-stream", default=True, help="Enable/disable streaming display.")
+@click.option(
+    "--iterate", "-i", type=click.Path(exists=True), default=None,
+    help="Path to directory with prior paper (.tex/.pdf) + feedback (.md/.tex) for revision mode.",
+)
+@click.option("--iterate-start-stage", type=str, default=None, help="Override entry stage for iterate mode.")
 @click.pass_context
 def run(
     ctx: click.Context,
@@ -63,6 +68,8 @@ def run(
     tree_search: bool | None,
     max_run_seconds: int | None,
     stream: bool,
+    iterate: str | None,
+    iterate_start_stage: str | None,
 ) -> None:
     """Run a research pipeline on a question or topic.
 
@@ -78,8 +85,11 @@ def run(
         with open(task_file, "r") as f:
             task = f.read().strip()
     if not task:
-        console.print("[bold white on red] Error [/] Provide a research task as an argument or via --task-file.")
-        raise SystemExit(1)
+        if iterate:
+            task = "Revise and improve the paper based on reviewer feedback."
+        else:
+            console.print("[bold white on red] Error [/] Provide a research task as an argument or via --task-file.")
+            raise SystemExit(1)
 
     config_dir = ctx.obj.get("config_dir")
     quiet = ctx.obj.get("quiet", False)
@@ -158,6 +168,10 @@ def run(
         overrides["enable_tree_search"] = True
     elif tree_search is False:
         overrides["enable_tree_search"] = False
+    if iterate:
+        overrides["iterate"] = iterate
+    if iterate_start_stage:
+        overrides["iterate_start_stage"] = iterate_start_stage
 
     # Build argv
     argv = build_argv(task, tier_name, **overrides)

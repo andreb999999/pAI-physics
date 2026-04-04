@@ -230,6 +230,7 @@ class ResearchState(TypedDict):
     iterate_prior_paper_path: Optional[str]      # path to prior paper in workspace
     iterate_feedback_path: Optional[str]         # path to consolidated feedback markdown
     iterate_feedback_summary: Optional[str]      # short summary of key changes needed
+    iterate_route: Optional[str]                 # routing decision: writing_only, needs_research, needs_full_rethink
 
     # -----------------------------------------------------------------
     # Intermediate validation checkpoints

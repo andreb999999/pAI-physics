@@ -1,7 +1,7 @@
 # =============================================================================
 # HPC / SLURM Cluster Configuration for Consortium
 # =============================================================================
-# This file ships with defaults for the MIT Engaging cluster. If you are
+# This file ships with defaults for the Poggio Lab on MIT Engaging. If you are
 # deploying on a different SLURM cluster, customize the following fields:
 #
 #   cluster.conda_init_script  — path to your conda conda.sh init script
@@ -11,6 +11,10 @@
 #   experiment_gpu.partition   — GPU partition for experiment jobs
 #   paths.repo_root            — path to this repository on your cluster
 #   paths.slurm_output_dir    — where to write SLURM logs
+#
+# Paths use the maintainer's defaults. Replace with your own:
+#   - Replace 'mabdel03' with your $USER
+#   - Replace 'pi_tpoggio' with your cluster's partition if you don't have access
 #
 # All fields support env-var expansion: ${VAR:-default}
 # Set env vars (CONDA_INIT_SCRIPT, CONDA_ENV_PREFIX, REPO_ROOT, etc.)
@@ -24,8 +28,8 @@ cluster:
   # ---------------------------------------------------------------------------
   # Conda environment
   # ---------------------------------------------------------------------------
-  conda_init_script: ${CONDA_INIT_SCRIPT:-}   # e.g. /path/to/miniforge3/etc/profile.d/conda.sh
-  conda_env_prefix: ${CONDA_ENV_PREFIX:-}     # e.g. /path/to/conda_envs/consortium
+  conda_init_script: /orcd/data/lhtsai/001/om2/mabdel03/miniforge3/etc/profile.d/conda.sh
+  conda_env_prefix: /home/mabdel03/conda_envs/consortium
 
   # ---------------------------------------------------------------------------
   # Modules to load
@@ -40,7 +44,7 @@ cluster:
   # The orchestrator is CPU-only; it makes outbound HTTPS calls to LLM APIs.
   # ---------------------------------------------------------------------------
   orchestrator:
-    partition: pi_tpoggio           # 7-day wall-time, dedicated node
+    partition: pi_tpoggio              # Poggio Lab partition, 7-day wall-time
     time: "7-00:00:00"
     cpus: 4
     mem: "32G"
@@ -48,7 +52,6 @@ cluster:
   # ---------------------------------------------------------------------------
   # Experiment GPU jobs (Tier 2) — submitted by the orchestrator via sbatch
   # ---------------------------------------------------------------------------
-  # Default: pi_tpoggio — A100x8, 7-day limit, dedicated node
   experiment_gpu:
     partition: pi_tpoggio
     time: "7-00:00:00"
@@ -76,15 +79,15 @@ cluster:
   # Repair jobs use the orchestrator partition (CPU-only, outbound HTTPS)
   # ---------------------------------------------------------------------------
   repair:
-    partition: pi_tpoggio             # 7-day wall-time for long repair agents
+    partition: pi_tpoggio
     time: "01:00:00"
     cpus: 2
     mem: "8G"
-    claude_binary: auto               # auto-detect from ~/.cursor-server/
+    claude_binary: auto               # auto-detect from PATH
 
   # ---------------------------------------------------------------------------
-  # Paths
+  # Paths — replace 'mabdel03' with your $USER
   # ---------------------------------------------------------------------------
-  repo_root: ${REPO_ROOT:-}                   # e.g. /path/to/OpenPI
-  scratch_root: ${SCRATCH_ROOT:-}             # e.g. /path/to/scratch
-  slurm_output_dir: ${SLURM_OUTPUT_DIR:-}     # e.g. /path/to/OpenPI/slurm_outputs
+  repo_root: /orcd/scratch/orcd/012/mabdel03/AI_Researcher/MSc_Internal
+  scratch_root: /orcd/scratch/orcd/012/mabdel03
+  slurm_output_dir: /orcd/scratch/orcd/012/mabdel03/AI_Researcher/MSc_Internal/slurm_outputs

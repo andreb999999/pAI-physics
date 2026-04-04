@@ -26,7 +26,7 @@ The system goes beyond simple prompt chaining. MSc supports multi-model counsel 
 
 - **Python 3.10+** (3.11 recommended)
 - **Git**
-- **At least one LLM API key**: Anthropic, OpenAI, Google, or DeepSeek
+- **An OpenRouter API key** (https://openrouter.ai) -- all models are accessed through OpenRouter
 - (Optional) **LaTeX** for PDF output
 - (Optional) **SLURM** for HPC cluster execution
 
@@ -93,11 +93,10 @@ msc setup
 
 The setup wizard will:
 
-1. **Detect your platform** -- identifies OS, available GPUs, SLURM availability, and installed tools.
-2. **Configure API keys** -- prompts for your LLM provider keys and stores them securely in `~/.msc/.env`.
-3. **Select models** -- choose your primary model and optional counsel models for multi-model debate.
-4. **Set budget limits** -- configure a default spending cap per run.
-5. **Configure notifications** (optional) -- set up Telegram or Slack alerts for run completion.
+1. **Detect your platform** -- identifies OS, Python version, SLURM availability, and installed tools (LaTeX, etc.).
+2. **Configure API keys** -- prompts for your OpenRouter key and optional provider keys, stores them securely in `~/.msc/.env`.
+3. **Select price tier** -- choose a tier (budget/light/medium/pro/max) which sets your default model, budget cap, and counsel configuration.
+4. **Configure notifications** (optional) -- set up Telegram or Slack alerts for run completion.
 
 ### Step 3: Verify Installation
 
@@ -110,19 +109,19 @@ This runs a comprehensive environment check: Python version, installed packages,
 ### Step 4: Run Your First Research
 
 ```bash
-# Quick test (~$20-50, 30 min)
+# Quick test (budget tier, up to $35, ~30 min)
 msc run --tier budget "What are the key differences between transformer and state-space models?"
 
 # Validate setup without spending anything
 msc run --tier budget --dry-run "Test task"
 
-# Standard (~$100-300, 6 hrs, default tier)
+# Standard (up to $200, ~6 hrs, default tier)
 msc run "Survey the landscape of mechanistic interpretability methods"
 
-# With counsel debate (~$300-500, 12 hrs)
+# With counsel debate (up to $400, ~12 hrs)
 msc run --tier pro "Analyze the theoretical foundations of in-context learning"
 
-# Maximum quality (~$500+, 24+ hrs)
+# Maximum quality (up to $750, ~24+ hrs)
 msc run --tier max "Comprehensive analysis of attention mechanisms"
 ```
 
@@ -144,13 +143,14 @@ Output manuscripts are saved to the `results/` directory by default.
 
 MSc uses a tier system to control cost, quality, and which features are enabled. Select a tier with `--tier` (or `-t`). The default tier is `medium`.
 
-| Tier | Cost | Time | Model | Key Features |
-|------|------|------|-------|--------------|
-| `budget` | $20--50 | ~30 min | gpt-5-mini | Single model, markdown output |
-| `light` | $50--100 | ~2 hrs | gpt-5-mini | Planning enabled |
-| `medium` | $100--300 | ~6 hrs | claude-sonnet-4-6 | LaTeX output, math agents, per-agent model routing |
-| `pro` | $300--500 | ~12 hrs | claude-opus-4-6 | 2-round counsel debate, adversarial verification |
-| `max` | $500+ | ~24+ hrs | claude-opus-4-6 | 4-model counsel (3 rounds), tree search, full Opus pipeline |
+| Tier | Budget Cap | Time | Model | Key Features |
+|------|-----------|------|-------|--------------|
+| `budget` | $35 | ~30 min | gpt-5-mini | Single model, markdown output |
+| `light` | $75 | ~2 hrs | gpt-5-mini | Planning enabled |
+| `medium` | $200 | ~6 hrs | claude-sonnet-4-6 | LaTeX output, math agents, per-agent model routing |
+| `pro` | $400 | ~12 hrs | claude-opus-4-6 | 2-round counsel debate, adversarial verification |
+| `max` | $750 | ~24+ hrs | claude-opus-4-6 | 4-model counsel (3 rounds), tree search, full Opus pipeline |
+| `ultra` | $2000 | ~48+ hrs | claude-opus-4-6 | 4-model counsel (5 rounds), deep tree search, 5-reviewer ensemble, all-Opus agents |
 
 Individual features can be toggled independently of the tier:
 
@@ -244,22 +244,105 @@ OpenClaw is particularly useful for HPC deployments where runs span multiple SLU
 
 ## Supported Models
 
-| Provider | Models | Env Variable |
-|---|---|---|
-| Anthropic | `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-sonnet-4-5` | `ANTHROPIC_API_KEY` |
-| OpenAI | `gpt-5`, `gpt-5-mini`, `gpt-5-nano`, `gpt-5.4`, `gpt-5.2`, `gpt-4o` | `OPENAI_API_KEY` |
-| OpenAI (reasoning) | `o3-2025-04-16`, `o3-pro-2025-06-10`, `o4-mini-2025-04-16` | `OPENAI_API_KEY` |
-| Google | `gemini-3-pro-preview`, `gemini-2.5-pro`, `gemini-2.5-flash` | `GOOGLE_API_KEY` |
-| DeepSeek | `deepseek-chat`, `deepseek-coder` | `DEEPSEEK_API_KEY` |
-| xAI | `grok-4-0709` | `XAI_API_KEY` |
+| Provider | Models |
+|---|---|
+| Anthropic | `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-sonnet-4-5` |
+| OpenAI | `gpt-5`, `gpt-5-mini`, `gpt-5-nano`, `gpt-5.4`, `gpt-5.4-pro`, `gpt-5.3-codex`, `gpt-5.2` |
+| OpenAI (reasoning) | `o3`, `o3-pro`, `o4-mini`, `o3-deep-research`, `o4-mini-deep-research` |
+| Google | `gemini-3.1-pro-preview`, `gemini-3-pro-preview`, `gemini-3-flash-preview`, `gemini-2.5-pro`, `gemini-2.5-flash` |
+| DeepSeek | `deepseek-chat`, `deepseek-v3.2`, `deepseek-r1` |
+| xAI | `grok-4-0709` |
 
-You need at least one provider configured. For counsel mode (multi-model debate), configure two or more providers.
+All models are routed through [OpenRouter](https://openrouter.ai). You only need `OPENROUTER_API_KEY` set in your environment (configured during `msc setup`). For counsel mode (multi-model debate), no additional configuration is needed -- OpenRouter provides access to all providers.
 
 ---
 
 ## Architecture Overview
 
-MSc decomposes a research task into a directed graph of 22+ specialist agent nodes, executed via LangGraph:
+MSc decomposes a research task into a directed graph of 22+ specialist agent nodes, executed via LangGraph. The pipeline has four phases: discovery, parallel track execution (theory + experiments), synthesis, and paper production, with validation gates and feedback loops throughout.
+
+```mermaid
+flowchart TD
+    START((Start)) --> PC[Persona Council]
+
+    %% ── Discovery Phase ──
+    PC --> LR[Literature Review Agent]
+    LR --> LRG{Lit Review Gate}
+    LRG -->|insufficient| PC
+    LRG -->|pass| BS[Brainstorm Agent]
+    BS --> FGE[Formalize Goals Entry]
+    FGE --> FG[Formalize Goals Agent]
+    FG --> RPW[Research Plan Writeup Agent]
+    RPW --> TDG[Track Decomposition Gate]
+    TDG --> MG[Milestone: Goals]
+
+    %% ── Parallel Track Fan-Out ──
+    MG -->|theory questions| TT
+    MG -->|empirical questions| ET
+
+    %% ── Theory Track (subgraph) ──
+    subgraph TT [Theory Track]
+        direction TB
+        ML[Math Literature Agent] --> MP[Math Proposer Agent]
+        MP --> GTV{Goal Tag Validation}
+        GTV --> MPR[Math Prover Agent]
+        MPR --> MRV[Math Rigorous Verifier]
+        MRV --> HRG{Human Review Gate}
+        HRG --> MEV[Math Empirical Verifier]
+        MEV --> PT[Proof Transcription Agent]
+        PT --> TRG{Theory Repair Gate}
+        TRG -->|repair needed| MPR
+    end
+
+    %% ── Experiment Track (subgraph) ──
+    subgraph ET [Experiment Track]
+        direction TB
+        EL[Experiment Literature Agent] --> ED[Experiment Design Agent]
+        ED --> EX[Experimentation Agent]
+        EX --> EV[Experiment Verification Agent]
+        EV --> EXT[Experiment Transcription Agent]
+    end
+
+    %% ── Synthesis ──
+    TT --> TM[Track Merge]
+    ET --> TM
+    TM --> VC{Verify Completion}
+    VC -->|incomplete: theory| FG
+    VC -->|incomplete: brainstorm| BS
+    VC -->|complete| FR[Formalize Results Agent]
+
+    %% ── Duality Check (optional) ──
+    FR -.->|if enabled| DC[Duality Check]
+    DC -.-> DG{Duality Gate}
+    DG -.->|pass| RP
+    DG -.->|fail| FLR[Followup Lit Review]
+    FLR -.-> BS
+
+    %% ── Paper Production ──
+    FR -->|default path| RP[Resource Preparation Agent]
+    RP --> WU[Writeup Agent]
+    WU --> PE[Proofreading Entry]
+    PE --> PR[Proofreading Agent]
+    PR --> RV[Reviewer Agent]
+    RV --> MR[Milestone: Review]
+    MR --> VG{Validation Gate}
+    VG -->|accept| DONE((End))
+    VG -->|revise writing| WU
+    VG -->|more experiments| ET
+    VG -->|more theory| TT
+
+    %% ── Styling ──
+    classDef agent fill:#4a90d9,stroke:#2c5f8a,color:#fff
+    classDef gate fill:#f5a623,stroke:#c47d1a,color:#fff
+    classDef milestone fill:#7ed321,stroke:#5a9e18,color:#fff
+    classDef subgraphStyle fill:#f0f4f8,stroke:#b0bec5
+
+    class PC,LR,BS,FGE,FG,RPW,ML,MP,MPR,MRV,MEV,PT,EL,ED,EX,EV,EXT,FR,FLR,RP,WU,PE,PR,RV,DC agent
+    class LRG,GTV,HRG,TRG,VC,DG,VG gate
+    class MG,MR,TDG milestone
+```
+
+### Agent Roles
 
 - **Literature agents** -- search, retrieve, and synthesize relevant prior work.
 - **Theory agents** -- develop formal claims, theorems, and proofs grounded in the literature.

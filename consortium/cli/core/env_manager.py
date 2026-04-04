@@ -13,27 +13,35 @@ from consortium.cli.core.config_manager import get_config_dir
 # API key definitions: name, env var, provider, required level
 API_KEYS = [
     {
+        "name": "OpenRouter",
+        "env_var": "OPENROUTER_API_KEY",
+        "provider": "openrouter",
+        "level": "required",
+        "description": "All models via OpenRouter (single key for Claude, GPT, Gemini, etc.)",
+        "prefix": "sk-or-",
+    },
+    {
         "name": "Anthropic",
         "env_var": "ANTHROPIC_API_KEY",
         "provider": "anthropic",
-        "level": "required",
-        "description": "Claude models (Opus, Sonnet) — primary research models",
+        "level": "optional",
+        "description": "Claude models directly (alternative to OpenRouter)",
         "prefix": "sk-ant-",
     },
     {
         "name": "OpenAI",
         "env_var": "OPENAI_API_KEY",
         "provider": "openai",
-        "level": "required",
-        "description": "GPT-5 models — used in counsel mode debates",
+        "level": "optional",
+        "description": "GPT models directly (alternative to OpenRouter)",
         "prefix": "sk-",
     },
     {
         "name": "Google AI",
         "env_var": "GOOGLE_API_KEY",
         "provider": "google",
-        "level": "recommended",
-        "description": "Gemini models — recommended for counsel mode (3-model debate)",
+        "level": "optional",
+        "description": "Gemini models directly (alternative to OpenRouter)",
         "prefix": "",
     },
     {
@@ -179,10 +187,15 @@ def check_required_keys(config_dir_override: str | None = None) -> list[dict[str
 
 
 def has_any_llm_key(config_dir_override: str | None = None) -> bool:
-    """Check if at least one LLM API key is configured."""
+    """Check if at least one LLM API key is configured.
+
+    Returns True if OpenRouter key is set (sufficient for all models) or
+    if any direct provider key (Anthropic, OpenAI, Google) is set.
+    """
     results = check_required_keys(config_dir_override)
     return any(
         r["configured"]
         for r in results
-        if r["level"] in ("required", "recommended") and r["provider"] != "serper"
+        if r["provider"] not in ("serper",)
+        and r["env_var"].endswith("_API_KEY")
     )

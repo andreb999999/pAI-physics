@@ -129,6 +129,10 @@ class ResearchGraphConfig:
     min_review_score: int = 8
     followup_max_iterations: int = 3
     manager_max_steps: int = 50
+    theory_repair_max_attempts: int = 2
+    duality_max_attempts: int = 2
+    max_validation_retries: int = 3
+    enable_ensemble_review: bool = False
 
     # -- execution ---------------------------------------------------------
     authorized_imports: Optional[List[str]] = None
@@ -168,6 +172,10 @@ class ResearchGraphConfig:
             "min_review_score": self.min_review_score,
             "followup_max_iterations": self.followup_max_iterations,
             "manager_max_steps": self.manager_max_steps,
+            "theory_repair_max_attempts": self.theory_repair_max_attempts,
+            "duality_max_attempts": self.duality_max_attempts,
+            "max_validation_retries": self.max_validation_retries,
+            "enable_ensemble_review": self.enable_ensemble_review,
             "authorized_imports": self.authorized_imports,
             "summary_model_id": self.summary_model_id,
             "persona_council": self.persona_council.to_dict(),
@@ -208,6 +216,10 @@ class ResearchGraphConfig:
             min_review_score=data.get("min_review_score", 8),
             followup_max_iterations=data.get("followup_max_iterations", 3),
             manager_max_steps=data.get("manager_max_steps", 50),
+            theory_repair_max_attempts=data.get("theory_repair_max_attempts", 2),
+            duality_max_attempts=data.get("duality_max_attempts", 2),
+            max_validation_retries=data.get("max_validation_retries", 3),
+            enable_ensemble_review=data.get("enable_ensemble_review", False),
             authorized_imports=data.get("authorized_imports"),
             summary_model_id=data.get("summary_model_id", "claude-sonnet-4-6"),
             checkpointer=checkpointer,

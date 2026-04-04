@@ -89,7 +89,9 @@ def create_model(
         model_kwargs["verbosity"] = verbosity
 
     elif "gemini" in model_name:
-        if "gemini-3-pro" in model_name:
+        if "gemini-3.1-pro" in model_name:
+            model_kwargs["thinking_budget"] = 65536
+        elif "gemini-3-pro" in model_name:
             model_kwargs["thinking_budget"] = 65536
         elif "gemini-2.5-pro" in model_name:
             model_kwargs["thinking_budget"] = 32768

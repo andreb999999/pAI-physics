@@ -6,7 +6,7 @@
 # GPU experiments are submitted as separate SLURM jobs from within the pipeline.
 # =============================================================================
 #SBATCH --job-name=consortium_orch       # Job name
-#SBATCH --partition=sched_mit_hill       # CPU partition (12hr limit, MIT Engaging)
+#SBATCH --partition=batch                 # Override via: sbatch --partition=YOUR_PARTITION
 #SBATCH --nodes=1                        # Number of nodes
 #SBATCH --ntasks-per-node=1              # Tasks per node
 #SBATCH --cpus-per-task=4                # CPUs per task (API calls + local processing)

@@ -386,10 +386,46 @@ Examples:
     )
 
     parser.add_argument(
+        "--persona-post-vote-retries",
+        dest="persona_post_vote_retries",
+        type=int,
+        default=None,
+        help="Max post-vote retry rounds in persona council (default: 1).",
+    )
+
+    parser.add_argument(
         "--no-duality-check",
         action="store_true",
         default=False,
         help="Disable duality check gate (formalize results goes directly to paper production).",
+    )
+
+    parser.add_argument(
+        "--theory-repair-max-attempts",
+        dest="theory_repair_max_attempts",
+        type=int,
+        default=None,
+        help="Max theory track repair retries (default: 2).",
+    )
+    parser.add_argument(
+        "--duality-max-attempts",
+        dest="duality_max_attempts",
+        type=int,
+        default=None,
+        help="Max duality gate rework attempts (default: 2).",
+    )
+    parser.add_argument(
+        "--max-validation-retries",
+        dest="max_validation_retries",
+        type=int,
+        default=None,
+        help="Max validation gate retries before forced completion (default: 3).",
+    )
+    parser.add_argument(
+        "--enable-ensemble-review",
+        action="store_true",
+        default=False,
+        help="Enable 5-reviewer ensemble (parallel reviews with different biases).",
     )
 
     # -----------------------------------------------------------------

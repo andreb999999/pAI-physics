@@ -51,6 +51,14 @@ DEFAULT_PERSONA_MODEL_SPECS: List[Dict[str, Any]] = [
     {"persona": "narrative_architect",  "model": "gemini-3-pro-preview", "thinking_budget": 32768},
 ]
 
+# Extended persona list for ultra tier — includes empiricist for experimental grounding
+EXTENDED_PERSONA_MODEL_SPECS: List[Dict[str, Any]] = [
+    {"persona": "practical_compass",    "model": "claude-opus-4-6",           "reasoning_effort": "high"},
+    {"persona": "rigor_novelty",        "model": "gpt-5.4",                  "reasoning_effort": "high"},
+    {"persona": "narrative_architect",   "model": "gemini-3.1-pro-preview",   "thinking_budget": 65536},
+    {"persona": "empirical_grounding",   "model": "claude-opus-4-6",          "reasoning_effort": "high"},
+]
+
 DEFAULT_SYNTHESIS_MODEL = "claude-opus-4-6"
 DEFAULT_DUALITY_CHECK_MODEL = "claude-opus-4-6"
 
