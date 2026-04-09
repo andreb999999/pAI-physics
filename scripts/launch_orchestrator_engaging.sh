@@ -70,6 +70,10 @@ echo "Python:    $(which python) ($(python --version 2>&1))"
 export CONSORTIUM_SLURM_ENABLED=1
 export ENGAGING_CONFIG="$REPO_DIR/engaging_config.yaml"
 
+# Suppress Vertex AI / Google Cloud SDK ImportError noise in litellm
+# (all models route through OpenRouter; Vertex credentials are not needed)
+export LITELLM_LOG=ERROR
+
 # --- Task ---
 # RESEARCH_TASK can be set as an env var before sbatch, or passed via --task flag
 if [[ -z "${RESEARCH_TASK:-}" ]]; then

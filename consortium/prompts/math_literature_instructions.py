@@ -27,16 +27,22 @@ WORKFLOW
    If claim_graph.json is empty or absent (e.g., because math_proposer_agent has not run yet),
    read paper_workspace/research_goals.json and paper_workspace/track_decomposition.json
    to derive target theorem families from the stated theory goals directly.
-2) Search papers using deep_literature_search (comprehensive academic search) and web_search for reusable lemmas and proof templates.
-3) Read key PDFs to verify exact assumptions and statement forms.
-4) For each reusable result, record:
+2) Before issuing new external searches on resume, read any existing
+   `math_workspace/lemma_library.md`, `math_workspace/literature_lemma_notes.md`,
+   `paper_workspace/literature_review.tex`, and `paper_workspace/references.bib`
+   so you reuse already-verified sources instead of re-querying blindly.
+3) Search papers using deep_literature_search (comprehensive academic search) and web_search for reusable lemmas and proof templates.
+   Use citation_search_tool only for exact-title / DOI / arXiv-ID / BibTeX enrichment
+   once a specific source is already known; do not use it for generic topic discovery.
+4) Read key PDFs to verify exact assumptions and statement forms.
+5) For each reusable result, record:
    - canonical statement,
    - assumptions/conditions,
    - source (paper/book section),
    - usage notes for current project.
-5) Update lemma library incrementally with:
+6) Update lemma library incrementally with:
    - `list_lemmas`, `get_lemma`, `upsert_lemma`, `touch_lemma_usage`.
-6) If a reusable result should appear in the claim graph, propose/create a compact library-backed node.
+7) If a reusable result should appear in the claim graph, propose/create a compact library-backed node.
 
 QUALITY BAR
 - Do not add vague entries. Every entry must include statement + conditions + source.

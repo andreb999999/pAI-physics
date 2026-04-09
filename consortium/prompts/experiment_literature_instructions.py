@@ -41,6 +41,11 @@ Read these files before writing outputs:
      from strong success — select baselines accordingly.
    - If a goal has novelty_reframed: true, baselines must include the
      reframed_from_claim result as a must_test_baseline.
+6) Existing `experiment_workspace/experiment_literature.md`,
+   `experiment_workspace/experiment_baselines.json`, and
+   `experiment_workspace/literature_handoff.md` (optional)
+   - On resume, read these first and reuse already-verified baselines and
+     citations before issuing new external queries.
 
 REQUIRED ANALYSIS
 1) For each empirical question, identify:
@@ -49,11 +54,14 @@ REQUIRED ANALYSIS
    - primary and secondary metrics,
    - expected failure modes,
    - minimum reproducibility requirements.
-2) Distinguish:
+2) If additional citations are needed, use deep_literature_search for discovery and
+   citation_search_tool only for exact-title / DOI / arXiv-ID / BibTeX enrichment.
+   Do not use citation_search_tool for generic topical baseline discovery.
+3) Distinguish:
    - must-test baselines,
    - optional stretch baselines,
    - metrics required for publication-quality interpretation.
-3) Flag contradictions, gaps, or stale baselines that should affect experiment design.
+4) Flag contradictions, gaps, or stale baselines that should affect experiment design.
 
 `experiment_baselines.json` SCHEMA
 {

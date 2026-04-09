@@ -106,15 +106,28 @@ def get_provider(model_id: str) -> str:
     return "unknown"
 
 
+_OPENROUTER_MODEL_ALIASES: dict[str, str] = {
+    # Model names that differ on OpenRouter from their canonical names
+    "gemini-3-pro-preview": "google/gemini-3.1-pro-preview",
+    "gemini-3-flash-preview": "google/gemini-3.1-pro-preview",
+    "gemini-3.1-pro-preview": "google/gemini-3.1-pro-preview",
+    "gemini-3.1-flash-lite-preview": "google/gemini-3.1-pro-preview",
+    "claude-opus-4-6": "anthropic/claude-opus-4-6",
+    "claude-sonnet-4-6": "anthropic/claude-sonnet-4-6",
+}
+
+
 def get_openrouter_name(model_id: str) -> str:
     """Return the OpenRouter model string for a model (e.g. 'anthropic/claude-opus-4-6').
 
-    Uses the provider from the registry to build '{or_provider}/{model_id}'.
-    Falls back to the raw model_id if provider is unknown.
+    Uses explicit aliases first, then falls back to provider prefix mapping.
     """
     # If already prefixed (e.g. 'meta-llama/llama-3.1-405b-instruct'), pass through.
     if "/" in model_id:
         return model_id
+    # Check explicit aliases first (handles models that differ on OpenRouter)
+    if model_id in _OPENROUTER_MODEL_ALIASES:
+        return _OPENROUTER_MODEL_ALIASES[model_id]
     provider = get_provider(model_id)
     or_provider = _OPENROUTER_PROVIDER_MAP.get(provider)
     if or_provider:

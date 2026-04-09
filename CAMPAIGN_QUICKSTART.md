@@ -1,240 +1,131 @@
-# Campaign Quick-Start Guide
+# Campaign Quick Start
 
-How to go from a research idea to an autonomous campaign producing a conference-grade paper.
+This guide shows the supported way to go from a research idea to an autonomous MSc campaign.
 
 ## Prerequisites
 
-| Requirement | How to verify |
-|------------|---------------|
-| Python environment | `conda activate <your-env> && python -c "import consortium"` |
-| API keys set in `.env` | At minimum `ANTHROPIC_API_KEY` (or `OPENAI_API_KEY`) |
-| `pdflatex` on PATH | `which pdflatex` (install via `./scripts/bootstrap.sh <env> latex`) |
-| **Optional**: Telegram bot | `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in `.env` |
-| **Optional**: OpenClaw | `which openclaw` — only needed for Telegram-based monitoring |
-| **Optional**: Claude CLI | `which claude` — only needed for autonomous repair agent |
+- `python -m pip install -e ".[dev]"` completed in this checkout
+- `msc setup` completed successfully
+- `msc doctor` passes
+- OpenRouter configured through your shell, `--config-dir`, or `~/.msc/.env`
+- Optional: LaTeX, SLURM, OpenClaw, and notification credentials
 
-## Step 1: Write Your Research Proposal
+## Canonical Workflow: `msc campaign`
 
-Create a task file describing the research question. This is the seed for the entire campaign.
+`msc` is the public interface. Installed campaign commands work from outside the repo root once the package has been installed from this checkout.
 
-```bash
-cat > automation_tasks/my_discovery_task.txt << 'EOF'
-Investigate whether [your research question here].
-
-Key aspects to explore:
-1. ...
-2. ...
-3. ...
-
-Target venue: NeurIPS 2026
-EOF
-```
-
-See `examples/quickstart/task.txt` for a concrete example.
-
-## Step 2: Create the Campaign YAML
-
-Copy the template and customize:
+### 1. Generate a campaign
 
 ```bash
-cp campaign_template.yaml my_campaign.yaml
-```
-
-Edit `my_campaign.yaml` — the critical fields to change:
-
-```yaml
-name: "Your Campaign Name"
-workspace_root: "results/your_campaign_01"      # MUST be unique per campaign
-
-planning:
-  enabled: true
-  base_task_file: automation_tasks/my_discovery_task.txt   # your task from Step 1
-  max_stages: 6
-  max_parallel: 2
-  human_review: true          # set false for fully autonomous (auto-approve plan)
-
-stages: []                    # empty = dynamic planning generates stages automatically
-
-notification:
-  telegram_bot_token: "${TELEGRAM_BOT_TOKEN}"
-  telegram_chat_id: "${TELEGRAM_CHAT_ID}"
-  on_stage_complete: true
-  on_failure: true
-  on_heartbeat: true
-```
-
-### Campaign Independence Rules
-
-- **Every campaign MUST have a unique `workspace_root`** — never reuse a directory from a prior campaign.
-- **Never reference prior campaign results** in `context_from` or `--resume` flags.
-- All stage artifacts, logs, and status files live under `workspace_root/`.
-
-## Step 3: Initialize the Campaign
-
-```bash
-cd <your-clone-of-OpenPI>
-conda activate <your-env>
-
-python scripts/campaign_heartbeat.py --campaign my_campaign.yaml --init
+msc campaign init \
+  --name "my_project" \
+  --task "Investigate the role of normalization layers in transformer training dynamics" \
+  --budget 150
 ```
 
 This creates:
-- `results/your_campaign_01/campaign_status.json` (tracks stage states)
-- `results/your_campaign_01/campaign_status.lock` (concurrency lock)
 
-## Step 4: Launch the First Stage
+- `my_project_campaign.yaml`
+- `automation_tasks/generated/my_project_discovery_task.txt`
+- a campaign workspace rooted under `results/` in the directory where you launch stages
+
+### 2. Review the generated files
+
+Important fields:
+
+```yaml
+name: "My Project"
+workspace_root: "results/my_project"
+budget_usd: 150
+
+planning:
+  enabled: true
+  base_task_file: automation_tasks/generated/my_project_discovery_task.txt
+  max_stages: 6
+  human_review: false
+```
+
+Edit the task file or YAML before launch if needed.
+
+### 3. Start the campaign
 
 ```bash
-python scripts/campaign_cli.py --campaign my_campaign.yaml launch discovery_plan
+msc campaign start my_project_campaign.yaml
 ```
 
-The heartbeat will auto-advance subsequent stages as dependencies are satisfied.
+Each stage run writes normal MSc artifacts such as:
 
----
+- `effective_models.json`
+- `experiment_metadata.json`
+- `run_status.json`
+- `budget_state.json`
+- `logs/`
 
-## Running Campaigns Locally (No SLURM/OpenClaw)
-
-If you don't have SLURM or OpenClaw, you can run campaigns manually:
+### 4. Monitor it
 
 ```bash
-# Initialize
-python scripts/campaign_heartbeat.py --campaign my_campaign.yaml --init
-
-# Launch first stage
-python scripts/campaign_cli.py --campaign my_campaign.yaml launch discovery_plan
-
-# Run heartbeat ticks manually (or set up a system cron)
-python scripts/campaign_heartbeat.py --campaign my_campaign.yaml
-
-# Check status between ticks
-python scripts/campaign_cli.py --campaign my_campaign.yaml status
+msc campaign status my_project_campaign.yaml
+msc status
+msc logs -f
 ```
 
-To automate on Linux/macOS without OpenClaw, add a crontab entry:
-```bash
-# Run heartbeat every 15 minutes
-*/15 * * * * cd /path/to/OpenPI && /path/to/conda/envs/bin/python scripts/campaign_heartbeat.py --campaign my_campaign.yaml >> logs/heartbeat.log 2>&1
-```
+## Credential Resolution
 
----
+For normal installed CLI usage, credential precedence is:
 
-## HPC Only: OpenClaw Gateway + SLURM
+1. shell environment variables
+2. `--config-dir` or `~/.msc/.env`
+3. repo-root `.env` only when launched from the checkout root or when explicitly enabled
 
-> Skip this section if running locally.
-
-### Step 5: Start the OpenClaw Gateway
-
-If the gateway is not already running:
+If you suspect a repo-local `.env` is affecting behavior:
 
 ```bash
-sbatch scripts/launch_openclaw_gateway.sh
+CONSORTIUM_USE_REPO_ENV=0 msc doctor
 ```
 
-The gateway:
-- Runs on your configured SLURM partition (default: 12-hour wall time)
-- Self-resubmits before wall time expires
-- Hosts the OpenClaw agent on port 18789
-- Only one instance needed (shared across campaigns)
+## Supported Working Directories
 
-### Step 6: Set Up Cron Monitoring
+- Generated campaign YAML files can be started from whatever directory you created them in.
+- Installed `msc campaign ...` commands do not require the current working directory to be the repo root.
+- Campaign results are written under the current working directory unless the campaign YAML points elsewhere with `workspace_root`.
+- Curated example files under `examples/quickstart/` still require either repo-root cwd or absolute paths.
 
-Via OpenClaw CLI or Telegram, register the heartbeat cron:
+Maintained example files:
 
-```
-Campaign heartbeat: every 15 minutes
-  python scripts/campaign_heartbeat.py --campaign my_campaign.yaml
+- [campaign.yaml](/home/mabdel03/orcd/scratch/AI_Researcher/MSc_Internal_audit_20260409_134959/MSc_Internal/examples/quickstart/campaign.yaml)
+- [task.txt](/home/mabdel03/orcd/scratch/AI_Researcher/MSc_Internal_audit_20260409_134959/MSc_Internal/examples/quickstart/task.txt)
 
-Log monitor: every 5 minutes (lightweight liveness checks)
-```
+## Budgeting
 
-**Important**: OpenClaw cron has TWO timeouts that must both be set:
-- `--timeout <ms>` (gateway-level)
-- `--timeout-seconds <n>` (agent payload)
+- Campaign-wide budget lives in the top-level `budget_usd` field of the campaign YAML.
+- Per-run effective model policy comes from the selected run tier.
+- Each run records `effective_models.json` and `experiment_metadata.json`, so you can inspect what model surfaces were actually enabled.
+- `budget` campaigns stay on the budget-tier policy unless you explicitly override a model surface.
 
-Recommended: 900s for heartbeat, 180s for log monitor.
+## Advanced / Direct Scripts
 
----
-
-## Step 7: Monitor Progress
-
-### Via Telegram (if configured)
-- **Every 15 min**: Heartbeat status (stages in progress, budget spent, artifacts found)
-- **On stage complete**: Summary + artifacts
-- **On failure**: Error diagnosis + repair attempt status
-
-### Via CLI
+Use direct scripts only for advanced automation tied to this checkout:
 
 ```bash
-# Full status
-python scripts/campaign_cli.py --campaign my_campaign.yaml status
-
-# Stage logs (last 100 lines)
-python scripts/campaign_cli.py --campaign my_campaign.yaml stage-logs <stage_id> --tail 100
-
-# Budget summary
-python scripts/campaign_cli.py --campaign my_campaign.yaml budget
-
-# Check API credits before launch
-python scripts/campaign_cli.py --campaign my_campaign.yaml check-credits
-
-# Approve the dynamic plan (if human_review: true)
-python scripts/campaign_cli.py --campaign my_campaign.yaml approve-plan
-
-# List stages ready to launch
-python scripts/campaign_cli.py --campaign my_campaign.yaml launchable
-
-# Override a stage status (emergency)
-python scripts/campaign_cli.py --campaign my_campaign.yaml set-stage-status <stage_id> <status>
+python scripts/campaign_heartbeat.py --campaign my_project_campaign.yaml --validate
+python scripts/campaign_cli.py --campaign my_project_campaign.yaml status
 ```
 
-## Campaign Lifecycle
-
-```
-1. discovery_plan     — Literature review + research plan (auto-launched)
-2. planning_counsel   — 4-model debate generates stage DAG (auto-launched)
-   [HUMAN REVIEW]     — Approve/reject plan via CLI or Telegram
-3. theory1/theory2    — Parallel theory tracks (auto-launched after approval)
-4. experiment1        — Empirical validation (auto-launched when theory deps complete)
-5. paper1             — Publication-quality paper (auto-launched when experiments done)
-```
-
-Exit codes from heartbeat:
-- `0`: Campaign complete (all stages done)
-- `1`: In progress (normal tick)
-- `2`: Failed stage (human attention needed)
-- `3`: New stage just launched
-
-## Budget
-
-Default: `$25` for exploration (configurable in `.llm_config.yaml`). Increase `budget.usd_limit` for production campaigns.
-
-Monitor spend:
-```bash
-python scripts/campaign_cli.py --campaign my_campaign.yaml budget
-```
+Direct scripts are useful for cron, heartbeat loops, and scheduler wrappers. They are not the recommended first-time-user path.
 
 ## Troubleshooting
 
 | Problem | Fix |
-|---------|-----|
-| Heartbeat shows $0 budget | Normal during early ticks — budget updates on stage completion |
-| API rate limit hit | Add fallback models in `.llm_config.yaml` |
-| Stage died silently | Heartbeat detects + triggers repair agent (2 attempts max) |
-| Plan not approved | Run `campaign_cli.py approve-plan` or set `human_review: false` |
-| Hollow experiment artifacts | Agents lack GPU access — configure SLURM in `engaging_config.yaml` |
-| Telegram not receiving updates | Check `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in `.env` |
-| Gateway Telegram 409 conflict | Only one gateway instance should run — check with `squeue -u $USER` |
+|---|---|
+| `msc campaign start` cannot authenticate | Run `msc doctor` and verify OpenRouter is coming from the expected source |
+| Campaign spec will not load | Regenerate with `msc campaign init` or fix `planning.base_task_file` |
+| Campaign spend is too high | Lower `budget_usd`, choose a cheaper tier for constituent runs, or reduce planning/repair scope |
+| Expected paper artifacts are missing | Check `msc status`, then inspect `logs/`, `run_status.json`, and any partial files under `paper_workspace/` |
+| HPC stages never launch | Verify SLURM, `engaging_config.yaml`, and any scheduler wrappers |
 
-## Files Reference
+For strict paper campaigns, inspect failures in this order:
 
-| File | Purpose |
-|------|---------|
-| `campaign_template.yaml` | Campaign template to copy and customize |
-| `my_campaign.yaml` | Your campaign configuration |
-| `engaging_config.yaml` | HPC cluster settings (optional, SLURM only) |
-| `.llm_config.yaml` | Model configuration (main model, counsel models, budget) |
-| `.env` | API keys and notification credentials |
-| `scripts/campaign_heartbeat.py` | Heartbeat orchestrator (called by cron) |
-| `scripts/campaign_cli.py` | CLI for status, launch, repair, approve-plan |
-| `scripts/launch_openclaw_gateway.sh` | SLURM launcher for OpenClaw gateway (HPC only) |
-| `results/your_campaign_01/campaign_status.json` | Campaign state (auto-managed) |
+1. stage stderr logs
+2. canonical artifacts under `paper_workspace/`
+3. `effective_models.json` and `experiment_metadata.json`
+4. campaign status output

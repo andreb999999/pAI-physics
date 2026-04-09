@@ -30,6 +30,11 @@ INPUTS TO READ FIRST
   key empirical findings) from this document for Step 3b claim falsification.
 - `paper_workspace/research_objective.md` (optional): long-form objective context if present.
 - Existing `paper_workspace/references.bib` (optional): merge/normalize existing citation keys.
+- Existing `paper_workspace/literature_review.tex`,
+  `paper_workspace/literature_review_sources.json`,
+  `paper_workspace/literature_review_matrix.md`, and
+  `paper_workspace/novelty_flags.json` (all optional): on resume, read these first and
+  reuse already-verified evidence before launching new external searches.
 
 LATEX STRUCTURE TEMPLATE (REQUIRED SHAPE)
 Use this sectioning pattern unless task constraints require small deviations:
@@ -74,6 +79,8 @@ PER-PAPER DEPTH EXPECTATIONS
 
 REQUIRED WORKFLOW
 1) Parse the question set and create a review skeleton per question/theme.
+   Before any new web/API queries, read all existing literature artifacts in
+   `paper_workspace/` and extract reusable citations, URLs, and claim assessments.
 2) Search broadly using:
    - Deep literature search (`deep_literature_search`) — your PRIMARY discovery tool.
      This searches across arXiv, Semantic Scholar, Google Scholar, and other academic
@@ -81,7 +88,9 @@ REQUIRED WORKFLOW
    - arXiv PDF downloads (`fetch_arxiv_papers`) — use ONLY to download PDFs of papers
      you have already identified via deep_literature_search.
    - web deep search (`web_search`) for non-academic sources and context.
-   - citation search (`citation_search_tool`) for targeted BibTeX lookups by arXiv ID.
+   - citation search (`citation_search_tool`) ONLY for exact-title, DOI, arXiv-ID,
+     or BibTeX enrichment after you already know which paper you mean. Do NOT use it
+     for broad topical discovery or generic keyword search.
 3) Build candidate set, deduplicate, and rank by relevance + credibility.
 3b) CLAIM FALSIFICATION (MANDATORY — do not skip or abbreviate):
     Before reading any PDFs in depth, extract every core claim from

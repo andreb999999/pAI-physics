@@ -16,6 +16,14 @@ _REGISTRY: Dict[tuple, BaseTool] = {}
 _LOCK = threading.Lock()
 
 
+def _freeze(value: Any) -> Any:
+    if isinstance(value, dict):
+        return tuple(sorted((k, _freeze(v)) for k, v in value.items()))
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return tuple(_freeze(v) for v in value)
+    return value
+
+
 def get_or_create(
     tool_cls: Type[BaseTool],
     *,
@@ -34,7 +42,7 @@ def get_or_create(
     """
     dir_key = working_dir or workspace_dir or ""
     model_key = model or model_name or ""
-    key = (tool_cls, dir_key, model_key)
+    key = (tool_cls, dir_key, model_key, _freeze(extra_kwargs))
 
     with _LOCK:
         if key in _REGISTRY:

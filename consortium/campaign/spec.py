@@ -5,7 +5,9 @@ Campaign spec loader — parses and validates campaign.yaml.
 from __future__ import annotations
 
 import os
+import warnings
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Dict, List, Optional
 
 import yaml
@@ -16,6 +18,7 @@ class Stage:
     id: str
     task_file: str
     args: List[str] = field(default_factory=list)
+    env: Dict[str, str] = field(default_factory=dict)
     depends_on: List[str] = field(default_factory=list)
     context_from: List[str] = field(default_factory=list)
     memory_dirs: List[str] = field(default_factory=list)
@@ -31,6 +34,17 @@ class Stage:
         depends_on = d.get("depends_on", [])
         if isinstance(depends_on, str):
             depends_on = [depends_on]
+
+        env = d.get("env", {}) or {}
+        if not isinstance(env, dict):
+            raise ValueError(f"Stage '{d.get('id', '<unknown>')}' env must be a mapping.")
+        expanded_env = {}
+        for key, value in env.items():
+            if value is None:
+                continue
+            if not isinstance(value, str):
+                value = str(value)
+            expanded_env[str(key)] = _expand_env(value) or ""
 
         context_from = d.get("context_from", [])
         if isinstance(context_from, str):
@@ -50,6 +64,7 @@ class Stage:
             id=d["id"],
             task_file=d.get("task_file", ""),
             args=d.get("args", []),
+            env=expanded_env,
             depends_on=depends_on,
             context_from=context_from,
             memory_dirs=d.get("memory_dirs", []),
@@ -168,6 +183,7 @@ class PlanningConfig:
     """Configuration for dynamic campaign planning via multi-model counsel."""
     enabled: bool = False
     base_task_file: str = ""           # task file for the discovery stage
+    base_task: str = ""                # deprecated inline task string
     max_stages: int = 6                # hard cap on non-paper stages
     max_parallel: int = 2              # max simultaneously-running stages
     counsel_models: Optional[List[dict]] = None  # override default counsel models
@@ -181,6 +197,7 @@ class PlanningConfig:
         return cls(
             enabled=d.get("enabled", False),
             base_task_file=d.get("base_task_file", ""),
+            base_task=d.get("base_task", ""),
             max_stages=int(d.get("max_stages", 6)),
             max_parallel=int(d.get("max_parallel", 2)),
             counsel_models=d.get("counsel_models"),
@@ -233,6 +250,18 @@ def load_spec(path: str) -> CampaignSpec:
     # Parse planning config (if present)
     planning_raw = raw.get("planning", {})
     planning = PlanningConfig.from_dict(planning_raw) if planning_raw else None
+    if planning and planning.enabled and not planning.base_task_file and planning.base_task:
+        warnings.warn(
+            "planning.base_task is deprecated; use planning.base_task_file instead. "
+            "Materializing the inline task to a generated file for compatibility.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        generated_dir = Path(yaml_dir) / "automation_tasks" / "generated"
+        generated_dir.mkdir(parents=True, exist_ok=True)
+        generated_task = generated_dir / f"{Path(path).stem}_discovery_task.txt"
+        generated_task.write_text(planning.base_task.strip() + "\n")
+        planning.base_task_file = str(generated_task)
 
     stages_raw = raw.get("stages", [])
 
@@ -326,7 +355,7 @@ def load_spec(path: str) -> CampaignSpec:
         counsel_model_timeout_seconds=int(raw.get("counsel_model_timeout_seconds", 600)),
         planning=planning,
         spec_file=abs_path,
-        budget_usd=float(raw.get("budget_usd", 0)),
+        budget_usd=float(raw.get("budget_usd", (raw.get("budget") or {}).get("usd_limit", 0))),
     )
 
 

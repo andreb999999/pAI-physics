@@ -11,6 +11,7 @@
 
 name: "Quickstart — Batch Norm Spectral Regularization"
 workspace_root: "results/quickstart_campaign"
+budget_usd: 35
 
 heartbeat_interval_minutes: 15
 max_idle_ticks: 6

@@ -9,6 +9,7 @@ from langchain_community.chat_models import ChatLiteLLM
 import litellm as _litellm
 _litellm.num_retries = 3
 _litellm.request_timeout = 300  # 5 min timeout per request
+_litellm.drop_params = True  # Drop unsupported params (e.g., max_output_tokens for OpenAI via OpenRouter)
 
 from .models import AVAILABLE_MODELS  # noqa: F401 — re-exported for backward compat
 
@@ -74,10 +75,27 @@ def create_model(
     """
     model_kwargs: dict = {}
 
+    # --- Unified OpenRouter routing for all models ---
+    from .models import get_openrouter_name
+    # Strip existing openrouter/ prefix to avoid double-prefixing
+    bare_name = model_name.removeprefix("openrouter/")
+    or_model_name = f"openrouter/{get_openrouter_name(bare_name)}"
+    api_key = _require_env("OPENROUTER_API_KEY", model_name)
+
     # --- Provider-specific model_kwargs setup ---
+    # NOTE: This must come after or_model_name is resolved so we can clamp
+    # budget_tokens for providers with lower limits (e.g. OpenRouter/Anthropic
+    # caps reasoning.max_tokens at 31999).
     if "claude" in model_name:
         if budget_tokens is not None:
-            model_kwargs["thinking"] = {"type": "enabled", "budget_tokens": budget_tokens}
+            effective_budget = budget_tokens
+            if effective_budget > 31999:
+                logger.warning(
+                    "budget_tokens %d exceeds OpenRouter/Anthropic max (31999), clamping.",
+                    effective_budget,
+                )
+                effective_budget = 31999
+            model_kwargs["thinking"] = {"type": "enabled", "budget_tokens": effective_budget}
         if effort is not None and model_name in {"claude-opus-4-6", "claude-sonnet-4-6"}:
             model_kwargs["reasoning_effort"] = effort
 
@@ -96,15 +114,16 @@ def create_model(
         elif "gemini-2.5-pro" in model_name:
             model_kwargs["thinking_budget"] = 32768
 
-    # --- Unified OpenRouter routing for all models ---
-    from .models import get_openrouter_name
-    or_model_name = f"openrouter/{get_openrouter_name(model_name)}"
-    api_key = _require_env("OPENROUTER_API_KEY", model_name)
+    # Force drop_params to prevent litellm from sending unsupported params
+    # (e.g., max_output_tokens for OpenAI models via OpenRouter)
+    if model_kwargs is None:
+        model_kwargs = {}
+    model_kwargs["drop_params"] = True
 
     base_model = ChatLiteLLM(
         model=or_model_name,
         api_key=api_key,
-        model_kwargs=model_kwargs if model_kwargs else None,
+        model_kwargs=model_kwargs,
     )
 
     # Optional hard budget enforcement wrapper
@@ -217,3 +236,49 @@ def create_model_registry(
 def save_agent_memory(manager):
     """No-op after LangGraph migration — SqliteSaver checkpointer handles persistence."""
     pass
+
+
+def resolve_or_model(model_name: str) -> str:
+    """Resolve a model name — route everything through OpenRouter.
+    
+    All API calls go through OpenRouter using the OPENROUTER_API_KEY.
+    """
+    # Already has openrouter prefix
+    if model_name.startswith("openrouter/"):
+        return model_name
+    
+    # Strip any existing provider prefix before adding openrouter/
+    for prefix in ("anthropic/", "openai/", "google/", "gemini/", "vertex_ai/", "azure/", "bedrock/"):
+        if model_name.startswith(prefix):
+            model_name = model_name[len(prefix):]
+            break
+    
+    # Map model names to OpenRouter model IDs
+    OR_MAP = {
+        "claude-opus-4-6": "anthropic/claude-opus-4-6",
+        "claude-sonnet-4-6": "anthropic/claude-sonnet-4-6",
+        "claude-sonnet-4-5": "anthropic/claude-sonnet-4-5",
+        "gpt-5": "openai/gpt-5",
+        "gpt-5.4": "openai/gpt-5.4",
+        "gpt-5.4-pro": "openai/gpt-5.4-pro",
+        "gpt-5.4-mini": "openai/gpt-5.4-mini",
+        "gpt-5-mini": "openai/gpt-5-mini",
+        "gpt-4o": "openai/gpt-4o",
+        "o3": "openai/o3",
+        "o3-pro": "openai/o3-pro",
+        "o4-mini": "openai/o4-mini",
+        "gemini-3-pro-preview": "google/gemini-3.1-pro-preview",
+        "gemini-3-flash-preview": "google/gemini-3-flash-preview",
+        "gemini-3.1-pro-preview": "google/gemini-3.1-pro-preview",
+        "gemini-3.1-flash-lite-preview": "google/gemini-3.1-flash-lite-preview",
+        "gemini-2.5-pro": "google/gemini-2.5-pro",
+        "gemini-2.5-flash": "google/gemini-2.5-flash",
+        "deepseek-chat": "deepseek/deepseek-chat",
+        "deepseek-r1": "deepseek/deepseek-r1",
+    }
+    
+    or_name = OR_MAP.get(model_name, model_name)
+    # Ensure openrouter/ prefix
+    if not or_name.startswith("openrouter/"):
+        or_name = f"openrouter/{or_name}"
+    return or_name

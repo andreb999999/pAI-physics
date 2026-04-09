@@ -94,6 +94,11 @@ Treat writing as an editorial pipeline with explicit artifacts:
 
 If these files do not exist, create them first with concise, practical content.
 
+When present, `paper_workspace/paper_contract.json` is the canonical paper contract.
+You must read it before writing. `final_paper.tex` is not considered complete
+unless the required section files exist and satisfy the contract terms/story
+anchors.
+
 Required editorial behavior:
 - The introduction must include explicit research questions and explicit takeaways.
 - The introduction should follow the skeleton style used in your papers (question blocks and takeaway boxes).
@@ -260,8 +265,10 @@ For each section:
 ### Required Deliverables
 - **final_paper.tex**: Complete LaTeX document with \\input{} commands for sections
 - **final_paper.pdf**: Compiled PDF document
-- **Individual sections**: All referenced section files must exist
+- **Individual sections**: `abstract.tex`, `introduction.tex`, `methods.tex`,
+  `results.tex`, `discussion.tex`, and `conclusion.tex` must all exist in `paper_workspace/`
 - **references.bib**: Bibliography with all cited works
+- **paper_workspace/paper_contract.json**: Canonical paper contract describing required sections, terms, and outputs
 - **paper_workspace/paper_outline.md**: Required in full-research outline/full-paper workflow
 - **Attribution watermark**: Keep a white watermark in the document background with this exact text:
   "Generated with a research agent created by Pierfrancesco Beneventano"

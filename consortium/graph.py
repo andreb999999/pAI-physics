@@ -17,6 +17,7 @@ from typing import Any, Callable, List, Optional
 
 logger = logging.getLogger(__name__)
 
+from .utils import resolve_or_model
 from langgraph.graph import END, StateGraph
 from langgraph.types import Send
 
@@ -48,7 +49,19 @@ from .milestone_report import (
     generate_milestone_report,
     wait_for_human_response,
 )
+from .paper_contract import (
+    COPYEDIT_REPORT_PDF,
+    COPYEDIT_REPORT_TEX,
+    PAPER_CONTRACT_PATH,
+    REVIEW_REPORT_PDF,
+    REVIEW_REPORT_TEX,
+    REVIEW_VERDICT_JSON,
+    missing_writeup_artifacts,
+    validate_required_terms,
+    write_paper_contract,
+)
 from .pdf_summary import with_pdf_summary
+from .run_status import write_run_status
 from .state import ResearchState
 from .workflow_utils import (
     classify_review_fixes,
@@ -95,6 +108,21 @@ V2_POST_TRACK_STAGES = [
     "proofreading_agent",
     "reviewer_agent",
 ]
+
+_BRAINSTORM_REQUIRED_MD_SECTIONS = (
+    "Executive Summary",
+    "Per-Hypothesis Approach Menu",
+    "Recommended Priority Ordering",
+    "Open Questions and Decision Points",
+)
+
+_BRAINSTORM_REQUIRED_APPROACH_FIELDS = (
+    "id",
+    "title",
+    "type",
+    "hypothesis_ids",
+    "priority_rank",
+)
 
 
 def build_pipeline_stages_v2(enable_math_agents: bool) -> list[str]:
@@ -396,7 +424,7 @@ def build_formalize_goals_entry_node(workspace_dir: str) -> Any:
             os.path.join(paper_ws, "brainstorm.md")
         )
 
-        if brainstorm_json_exists:
+        if brainstorm_json_exists and brainstorm_md_exists:
             task = (
                 "BEGIN GOAL FORMALIZATION.\n\n"
                 "The brainstorm is complete. `brainstorm.json` and `brainstorm.md` "
@@ -405,28 +433,169 @@ def build_formalize_goals_entry_node(workspace_dir: str) -> Any:
                 "`research_goals.json` and `track_decomposition.json`. "
                 "Run all programmatic validations before returning."
             )
-        elif brainstorm_md_exists:
-            task = (
-                "BEGIN GOAL FORMALIZATION (DEGRADED MODE).\n\n"
-                "`brainstorm.json` is missing — only `brainstorm.md` is available. "
-                "Proceed in degraded mode: parse approaches from the markdown, "
-                "write `brainstorm_missing_warning.txt`, set "
-                "`brainstorm_data_quality: \"degraded\"` in `research_goals.json`, "
-                "and limit to 2 goals maximum."
-            )
         else:
-            task = (
-                "BEGIN GOAL FORMALIZATION (MINIMAL MODE).\n\n"
-                "Both `brainstorm.json` and `brainstorm.md` are missing. "
-                "Derive goals directly from `research_proposal.md` only. "
-                "Limit to 2 goals. Set `brainstorm_data_quality: \"minimal\"` "
-                "and write `brainstorm_missing_warning.txt` documenting this condition."
-            )
+            missing = []
+            if not brainstorm_json_exists:
+                missing.append("paper_workspace/brainstorm.json")
+            if not brainstorm_md_exists:
+                missing.append("paper_workspace/brainstorm.md")
+            return {
+                "critical_failure": (
+                    "formalize_goals_agent requires brainstorm artifacts in strict "
+                    f"pipeline mode, but they are missing: {', '.join(missing)}"
+                ),
+                "agent_task": None,
+            }
 
         return {"agent_task": task}
 
     formalize_goals_entry_node.__name__ = "formalize_goals_entry"
     return formalize_goals_entry_node
+
+
+def _validate_brainstorm_artifacts(workspace_dir: str) -> list[str]:
+    errors: list[str] = []
+    paper_ws = os.path.join(workspace_dir, "paper_workspace")
+    brainstorm_md_path = os.path.join(paper_ws, "brainstorm.md")
+    brainstorm_json_path = os.path.join(paper_ws, "brainstorm.json")
+
+    if not os.path.exists(brainstorm_md_path):
+        errors.append("paper_workspace/brainstorm.md")
+    else:
+        try:
+            brainstorm_md = open(brainstorm_md_path, "r", encoding="utf-8").read()
+        except Exception as exc:
+            brainstorm_md = ""
+            errors.append(f"paper_workspace/brainstorm.md unreadable: {exc}")
+        if not brainstorm_md.strip():
+            errors.append("paper_workspace/brainstorm.md is empty")
+        for section in _BRAINSTORM_REQUIRED_MD_SECTIONS:
+            if section not in brainstorm_md:
+                errors.append(
+                    "paper_workspace/brainstorm.md missing required section "
+                    f"'{section}'"
+                )
+
+    payload: Optional[dict] = None
+    if not os.path.exists(brainstorm_json_path):
+        errors.append("paper_workspace/brainstorm.json")
+    else:
+        try:
+            with open(brainstorm_json_path, "r", encoding="utf-8") as fh:
+                payload = json.load(fh)
+        except Exception as exc:
+            errors.append(f"paper_workspace/brainstorm.json is not valid JSON: {exc}")
+
+    if isinstance(payload, dict):
+        hypotheses = payload.get("hypotheses_addressed")
+        if not isinstance(hypotheses, list) or not any(
+            isinstance(item, str) and item.strip() for item in hypotheses
+        ):
+            errors.append(
+                "paper_workspace/brainstorm.json missing non-empty hypotheses_addressed list"
+            )
+
+        approaches = payload.get("approaches")
+        if not isinstance(approaches, list) or not approaches:
+            errors.append(
+                "paper_workspace/brainstorm.json missing non-empty approaches list"
+            )
+        else:
+            for idx, approach in enumerate(approaches, start=1):
+                if not isinstance(approach, dict):
+                    errors.append(
+                        "paper_workspace/brainstorm.json approach entry "
+                        f"#{idx} must be a JSON object"
+                    )
+                    continue
+                label = approach.get("id") or f"approach #{idx}"
+                for field in _BRAINSTORM_REQUIRED_APPROACH_FIELDS:
+                    value = approach.get(field)
+                    if field == "hypothesis_ids":
+                        if not isinstance(value, list) or not any(
+                            isinstance(item, str) and item.strip() for item in value
+                        ):
+                            errors.append(
+                                "paper_workspace/brainstorm.json "
+                                f"{label} missing non-empty '{field}'"
+                            )
+                    elif field == "priority_rank":
+                        if value is None or (isinstance(value, str) and not value.strip()):
+                            errors.append(
+                                "paper_workspace/brainstorm.json "
+                                f"{label} missing '{field}'"
+                            )
+                    elif not isinstance(value, str) or not value.strip():
+                        errors.append(
+                            "paper_workspace/brainstorm.json "
+                            f"{label} missing non-empty '{field}'"
+                        )
+
+    return errors
+
+
+def build_brainstorm_artifact_gate_node(
+    workspace_dir: str, max_retries: int = 2
+) -> Any:
+    def brainstorm_artifact_gate_node(state: dict) -> dict:
+        errors = _validate_brainstorm_artifacts(workspace_dir)
+        validation_results = {
+            **state.get("validation_results", {}),
+            "brainstorm_artifact_gate": {
+                "is_valid": len(errors) == 0,
+                "errors": errors,
+            },
+        }
+        retries = safe_int(state.get("brainstorm_artifact_retries", 0), 0)
+
+        if errors:
+            formatted = "\n".join(f"- {error}" for error in errors)
+            if retries >= max_retries:
+                return {
+                    "validation_results": validation_results,
+                    "brainstorm_artifact_retries": retries,
+                    "current_agent": None,
+                    "agent_task": None,
+                    "critical_failure": (
+                        "BRAINSTORM ARTIFACT GATE FAILURE.\n\n"
+                        "The brainstorm stage did not produce canonical brainstorm artifacts "
+                        f"after {max_retries} repair attempt(s).\n"
+                        "Stage summaries under `stage_summaries/` are non-canonical and do "
+                        "not satisfy brainstorm completion.\n"
+                        f"{formatted}"
+                    ),
+                }
+
+            return {
+                "validation_results": validation_results,
+                "brainstorm_artifact_retries": retries + 1,
+                "current_agent": "brainstorm_agent",
+                "agent_task": (
+                    "BRAINSTORM ARTIFACT GATE FAILURE.\n\n"
+                    "Repair only the canonical brainstorm artifacts in `paper_workspace/`.\n"
+                    "Do not restart the whole pipeline, do not hand off to formalization yet, "
+                    "and do not treat files under `stage_summaries/` as completion evidence.\n"
+                    "Before you finish, verify that:\n"
+                    "- `paper_workspace/brainstorm.md` exists and includes the required sections\n"
+                    "- `paper_workspace/brainstorm.json` exists and parses as valid JSON\n"
+                    "- the JSON has a non-empty `hypotheses_addressed` list and non-empty "
+                    "`approaches` list\n"
+                    "- every approach has `id`, `title`, `type`, `hypothesis_ids`, and "
+                    "`priority_rank`\n\n"
+                    f"Problems to fix (attempt {retries + 1}/{max_retries}):\n{formatted}"
+                ),
+            }
+
+        validation_results.pop("brainstorm_artifact_gate", None)
+        return {
+            "validation_results": validation_results,
+            "brainstorm_artifact_retries": 0,
+            "current_agent": "formalize_goals_entry",
+            "agent_task": None,
+        }
+
+    brainstorm_artifact_gate_node.__name__ = "brainstorm_artifact_gate"
+    return brainstorm_artifact_gate_node
 
 
 def build_proofreading_entry_node(workspace_dir: str) -> Any:
@@ -480,6 +649,203 @@ def build_proofreading_entry_node(workspace_dir: str) -> Any:
 
     proofreading_entry_node.__name__ = "proofreading_entry"
     return proofreading_entry_node
+
+
+def _read_existing_text(path: str) -> str:
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            return fh.read()
+    except Exception:
+        return ""
+
+
+def _paper_bundle_text(workspace_dir: str) -> str:
+    paper_ws = os.path.join(workspace_dir, "paper_workspace")
+    parts = [_read_existing_text(os.path.join(workspace_dir, PAPER_CONTRACT_PATH))]
+    for name in [
+        "abstract.tex",
+        "introduction.tex",
+        "methods.tex",
+        "results.tex",
+        "discussion.tex",
+        "conclusion.tex",
+        "final_paper.tex",
+    ]:
+        parts.append(_read_existing_text(os.path.join(paper_ws, name)))
+    return "\n\n".join(part for part in parts if part)
+
+
+def build_paper_contract_node(workspace_dir: str) -> Any:
+    def paper_contract_node(state: dict) -> dict:
+        path = write_paper_contract(workspace_dir, state)
+        logger.info("[paper_contract] Wrote canonical contract: %s", path)
+        return {
+            "artifacts": {
+                **state.get("artifacts", {}),
+                "paper_contract": path,
+            },
+        }
+
+    paper_contract_node.__name__ = "paper_contract_builder"
+    return paper_contract_node
+
+
+def build_writeup_artifact_gate_node(workspace_dir: str) -> Any:
+    def writeup_artifact_gate_node(state: dict) -> dict:
+        require_pdf = bool(state.get("require_pdf") or state.get("enforce_editorial_artifacts"))
+        errors = list(missing_writeup_artifacts(workspace_dir, require_pdf=require_pdf))
+
+        contract = None
+        contract_path = os.path.join(workspace_dir, PAPER_CONTRACT_PATH)
+        if os.path.exists(contract_path):
+            try:
+                with open(contract_path, "r", encoding="utf-8") as fh:
+                    contract = json.load(fh)
+            except Exception as exc:
+                errors.append(f"{PAPER_CONTRACT_PATH}: unreadable ({exc})")
+        else:
+            errors.append(PAPER_CONTRACT_PATH)
+
+        paper_text = _paper_bundle_text(workspace_dir)
+        missing_terms = validate_required_terms(paper_text, contract)
+        if missing_terms:
+            errors.append(
+                "paper contract terms missing from canonical paper sources: "
+                + ", ".join(missing_terms)
+            )
+
+        validation_results = {
+            **state.get("validation_results", {}),
+            "writeup_artifact_gate": {
+                "is_valid": len(errors) == 0,
+                "errors": errors,
+            },
+        }
+
+        if errors:
+            task = (
+                "WRITEUP ARTIFACT GATE FAILURE.\n\n"
+                "Do not proceed to proofreading until every canonical paper artifact exists.\n"
+                "Fix the following problems in paper_workspace/:\n"
+                + "\n".join(f"- {error}" for error in errors)
+            )
+            return {
+                "validation_results": validation_results,
+                "current_agent": "writeup_agent",
+                "agent_task": task,
+            }
+
+        validation_results.pop("writeup_artifact_gate", None)
+        return {
+            "validation_results": validation_results,
+            "current_agent": "proofreading_entry",
+            "agent_task": None,
+        }
+
+    writeup_artifact_gate_node.__name__ = "writeup_artifact_gate"
+    return writeup_artifact_gate_node
+
+
+def writeup_artifact_gate_router(state: ResearchState) -> str:
+    return state.get("current_agent") or "proofreading_entry"
+
+
+def build_proofread_gate_node(workspace_dir: str) -> Any:
+    def proofread_gate_node(state: dict) -> dict:
+        require_pdf = bool(state.get("require_pdf") or state.get("enforce_editorial_artifacts"))
+        missing_writeup = list(missing_writeup_artifacts(workspace_dir, require_pdf=require_pdf))
+        errors = list(missing_writeup)
+        for rel_path in (COPYEDIT_REPORT_TEX, COPYEDIT_REPORT_PDF):
+            if not os.path.exists(os.path.join(workspace_dir, rel_path)):
+                errors.append(rel_path)
+
+        validation_results = {
+            **state.get("validation_results", {}),
+            "proofread_gate": {
+                "is_valid": len(errors) == 0,
+                "errors": errors,
+            },
+        }
+
+        if errors:
+            next_agent = "writeup_agent" if missing_writeup else "proofreading_agent"
+            return {
+                "validation_results": validation_results,
+                "current_agent": next_agent,
+                "agent_task": (
+                    "PROOFREAD GATE FAILURE.\n\n"
+                    "You must preserve the canonical paper and produce the copy-edit artifacts "
+                    "before review.\n"
+                    + "\n".join(f"- {error}" for error in errors)
+                ),
+            }
+
+        validation_results.pop("proofread_gate", None)
+        return {
+            "validation_results": validation_results,
+            "current_agent": "reviewer_agent",
+            "agent_task": None,
+        }
+
+    proofread_gate_node.__name__ = "proofread_gate"
+    return proofread_gate_node
+
+
+def proofread_gate_router(state: ResearchState) -> str:
+    return state.get("current_agent") or "reviewer_agent"
+
+
+def build_review_gate_node(workspace_dir: str) -> Any:
+    def review_gate_node(state: dict) -> dict:
+        errors: list[str] = []
+        for rel_path in (REVIEW_REPORT_TEX, REVIEW_REPORT_PDF, REVIEW_VERDICT_JSON):
+            if not os.path.exists(os.path.join(workspace_dir, rel_path)):
+                errors.append(rel_path)
+
+        verdict_path = os.path.join(workspace_dir, REVIEW_VERDICT_JSON)
+        if os.path.exists(verdict_path):
+            try:
+                with open(verdict_path, "r", encoding="utf-8") as fh:
+                    verdict_payload = json.load(fh)
+                if not isinstance(verdict_payload, dict):
+                    errors.append("paper_workspace/review_verdict.json must be a JSON object")
+                elif "overall_score" not in verdict_payload:
+                    errors.append("paper_workspace/review_verdict.json missing overall_score")
+            except Exception as exc:
+                errors.append(f"failed to parse paper_workspace/review_verdict.json: {exc}")
+
+        validation_results = {
+            **state.get("validation_results", {}),
+            "review_gate": {
+                "is_valid": len(errors) == 0,
+                "errors": errors,
+            },
+        }
+
+        if errors:
+            return {
+                "validation_results": validation_results,
+                "current_agent": "reviewer_agent",
+                "agent_task": (
+                    "REVIEW GATE FAILURE.\n\n"
+                    "Produce the canonical reviewer artifacts before milestone review.\n"
+                    + "\n".join(f"- {error}" for error in errors)
+                ),
+            }
+
+        validation_results.pop("review_gate", None)
+        return {
+            "validation_results": validation_results,
+            "current_agent": "milestone_review",
+            "agent_task": None,
+        }
+
+    review_gate_node.__name__ = "review_gate"
+    return review_gate_node
+
+
+def review_gate_router(state: ResearchState) -> str:
+    return state.get("current_agent") or "milestone_review"
 
 
 def _formalize_results_state_mapper(inner_node: Callable) -> Callable:
@@ -1004,7 +1370,6 @@ def build_track_subgraph_node(
         result = {
             "agent_outputs": final_state.get("agent_outputs", {}),
             status_field: status_value,
-            "agent_task": None,
         }
         # Forward structured track summaries if available on disk
         if workspace_dir:
@@ -1025,7 +1390,6 @@ def build_noop_track_node(status_field: str) -> Any:
     def node(state: dict) -> dict:
         return {
             status_field: state.get(status_field),
-            "agent_task": None,
         }
 
     node.__name__ = status_field.removesuffix("_status")
@@ -1275,7 +1639,7 @@ def build_lit_review_gate_node(workspace_dir: str, max_attempts: int = 2) -> Any
         )
         try:
             resp = _litellm.completion(
-                model="claude-sonnet-4-6",
+                model=resolve_or_model("claude-sonnet-4-6"),
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=1024,
             )
@@ -1465,7 +1829,7 @@ def build_verify_completion_node(workspace_dir: str) -> Any:
 
         try:
             resp = _litellm.completion(
-                model="claude-sonnet-4-6",
+                model=resolve_or_model("claude-sonnet-4-6"),
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=4096,
             )
@@ -1697,6 +2061,12 @@ def lit_review_gate_router(state: ResearchState) -> str:
     return state.get("current_agent") or "brainstorm_agent"
 
 
+def brainstorm_artifact_gate_router(state: ResearchState) -> str:
+    if state.get("critical_failure"):
+        return END
+    return state.get("current_agent") or "formalize_goals_entry"
+
+
 def verify_completion_router(state: ResearchState) -> str:
     return state.get("current_agent") or "formalize_results_agent"
 
@@ -1706,6 +2076,30 @@ def duality_gate_router(state: ResearchState) -> str:
     if target in {"resource_preparation_agent", "followup_lit_review"}:
         return target
     return "resource_preparation_agent"
+
+
+def iterate_persona_exit_router(state: ResearchState) -> str:
+    override = state.get("iterate_start_stage_override")
+    if override:
+        return str(override)
+    return "iterate_router"
+
+
+def _critical_failure_check(next_node: str):
+    """Return a router function that checks for critical_failure before proceeding.
+
+    If ``state["critical_failure"]`` is set, route to END to halt the pipeline
+    instead of continuing with empty/broken state.
+    """
+    def _router(state: dict) -> str:
+        if state.get("critical_failure"):
+            logger.critical(
+                "Pipeline halted due to critical failure: %s",
+                state["critical_failure"],
+            )
+            return END
+        return next_node
+    return _router
 
 
 def build_followup_lit_review_node(
@@ -1809,8 +2203,36 @@ def build_research_graph_v2(config: "ResearchGraphConfig"):
             return model_registry.get(agent_name)
         return model
 
+    tracked_stage_order = build_pipeline_stages_v2(enable_math_agents)
+    tracked_stage_index = {
+        stage_name: idx + 1 for idx, stage_name in enumerate(tracked_stage_order)
+    }
+
     def _wrap(node, name):
         return with_pdf_summary(node, name, workspace_dir, summary_model_id)
+
+    def _track_stage_execution(node, name):
+        def wrapped(state: dict) -> dict:
+            if name in tracked_stage_index:
+                write_run_status(
+                    workspace_dir,
+                    status="running",
+                    current_stage=name,
+                    pid=os.getpid(),
+                )
+            result = node(state) or {}
+            if name not in tracked_stage_index:
+                return result
+            update = dict(result)
+            executed = list(update.get("executed_stages") or [])
+            executed.append(name)
+            update["executed_stages"] = executed
+            prior_index = safe_int(state.get("pipeline_stage_index", 0), 0)
+            update["pipeline_stage_index"] = max(prior_index, tracked_stage_index[name])
+            return update
+
+        wrapped.__name__ = getattr(node, "__name__", name)
+        return wrapped
 
     # Build track subgraphs (same as v1)
     theory_track_node = build_noop_track_node("theory_track_status")
@@ -1996,6 +2418,7 @@ def build_research_graph_v2(config: "ResearchGraphConfig"):
             build_brainstorm_node(_m("brainstorm_agent"), workspace_dir, authorized_imports, **counsel_kwargs),
             "brainstorm_agent",
         ),
+        "brainstorm_artifact_gate": build_brainstorm_artifact_gate_node(workspace_dir),
         "formalize_goals_entry": build_formalize_goals_entry_node(workspace_dir),
         "formalize_goals_agent": _wrap(
             build_formalize_goals_node(_m("formalize_goals_agent"), workspace_dir, authorized_imports, **counsel_kwargs),
@@ -2030,15 +2453,18 @@ def build_research_graph_v2(config: "ResearchGraphConfig"):
             build_resource_preparation_node(_m("resource_preparation_agent"), workspace_dir, authorized_imports, **counsel_kwargs),
             "resource_preparation_agent",
         ),
+        "paper_contract_builder": build_paper_contract_node(workspace_dir),
         "writeup_agent": _wrap(
             build_writeup_node(_m("writeup_agent"), workspace_dir, authorized_imports, **counsel_kwargs),
             "writeup_agent",
         ),
+        "writeup_artifact_gate": build_writeup_artifact_gate_node(workspace_dir),
         "proofreading_entry": build_proofreading_entry_node(workspace_dir),
         "proofreading_agent": _wrap(
             build_proofreading_node(_m("proofreading_agent"), workspace_dir, authorized_imports, **counsel_kwargs),
             "proofreading_agent",
         ),
+        "proofread_gate": build_proofread_gate_node(workspace_dir),
         "reviewer_agent": (
             build_ensemble_reviewer_node()
             if config.enable_ensemble_review
@@ -2047,6 +2473,7 @@ def build_research_graph_v2(config: "ResearchGraphConfig"):
                 "reviewer_agent",
             )
         ),
+        "review_gate": build_review_gate_node(workspace_dir),
         "validation_gate": build_validation_gate_node(),
         "milestone_review": build_milestone_gate_node("review", workspace_dir),
     }
@@ -2062,7 +2489,7 @@ def build_research_graph_v2(config: "ResearchGraphConfig"):
 
     graph = StateGraph(ResearchState)
     for name, node in nodes.items():
-        graph.add_node(name, node)
+        graph.add_node(name, _track_stage_execution(node, name))
 
     # --- Iterate-mode entry node (revision from prior paper + feedback) ---
     if iterate_mode:
@@ -2095,6 +2522,22 @@ def build_research_graph_v2(config: "ResearchGraphConfig"):
                 except Exception:
                     prior_paper_content = f"[Error reading paper at: {prior_path}]"
 
+            # Binding constraints from the PI (human_directive.md) — these are
+            # non-negotiable research decisions that personas must respect.
+            binding = state.get("iterate_binding_constraints", "")
+            binding_section = ""
+            if binding:
+                binding_section = (
+                    "## BINDING CONSTRAINTS (from Principal Investigator)\n\n"
+                    "The following constraints are set by the principal investigator and "
+                    "are **NOT subject to your evaluation**. You MUST design the revision "
+                    "plan to satisfy these constraints. You may note concerns or suggest "
+                    "Discussion-section caveats, but you must NOT reject the revision "
+                    "direction based on these decisions. Treat them as given.\n\n"
+                    f"{binding}\n\n"
+                    "---\n\n"
+                )
+
             task = (
                 "REVISION MODE — PERSONA COUNCIL DEBATE\n\n"
                 "You are reviewing an existing paper draft and feedback from reviewers. "
@@ -2107,6 +2550,7 @@ def build_research_graph_v2(config: "ResearchGraphConfig"):
                 "5. What should be preserved as-is (strengths to keep)\n\n"
                 "The downstream writing agents will use your revision plan to rewrite the paper.\n\n"
                 "---\n\n"
+                f"{binding_section}"
                 "## Prior Paper Draft (complete)\n\n"
                 f"{prior_paper_content}\n\n"
                 "---\n\n"
@@ -2114,7 +2558,8 @@ def build_research_graph_v2(config: "ResearchGraphConfig"):
                 f"{feedback_content}\n\n"
                 "---\n\n"
                 "Debate this revision thoroughly. Each persona should evaluate the paper "
-                "and feedback from their specific lens, then converge on a unified revision plan."
+                "and feedback from their specific lens, then converge on a unified revision plan. "
+                "Remember: the binding constraints above are non-negotiable — work within them."
             )
             return {"agent_task": task}
 
@@ -2154,7 +2599,7 @@ def build_research_graph_v2(config: "ResearchGraphConfig"):
 
             try:
                 resp = _litellm.completion(
-                    model=summary_model_id or "claude-sonnet-4-6",
+                    model=resolve_or_model(summary_model_id or "claude-sonnet-4-6"),
                     messages=[{"role": "user", "content": classification_prompt}],
                     max_tokens=50,
                 )
@@ -2229,7 +2674,23 @@ def build_research_graph_v2(config: "ResearchGraphConfig"):
     if iterate_mode:
         graph.set_entry_point("iterate_entry")
         graph.add_edge("iterate_entry", "persona_council")
-        graph.add_edge("persona_council", "iterate_router")
+        graph.add_conditional_edges(
+            "persona_council",
+            iterate_persona_exit_router,
+            {
+                "iterate_router": "iterate_router",
+                "literature_review_agent": "literature_review_agent",
+                "brainstorm_agent": "brainstorm_agent",
+                "formalize_goals_entry": "formalize_goals_entry",
+                "formalize_goals_agent": "formalize_goals_agent",
+                "research_plan_writeup_agent": "research_plan_writeup_agent",
+                "formalize_results_agent": "formalize_results_agent",
+                "resource_preparation_agent": "resource_preparation_agent",
+                "writeup_agent": "writeup_agent",
+                "proofreading_agent": "proofreading_agent",
+                "reviewer_agent": "reviewer_agent",
+            },
+        )
         graph.add_conditional_edges(
             "iterate_router",
             _iterate_route_selector,
@@ -2254,9 +2715,26 @@ def build_research_graph_v2(config: "ResearchGraphConfig"):
         },
     )
 
-    # Brainstorm → entry gate → formalize goals → writeup → milestone → track execution
-    graph.add_edge("brainstorm_agent", "formalize_goals_entry")
-    graph.add_edge("formalize_goals_entry", "formalize_goals_agent")
+    # Brainstorm → artifact gate → entry gate → formalize goals → writeup → milestone → track execution
+    graph.add_conditional_edges(
+        "brainstorm_agent",
+        _critical_failure_check("brainstorm_artifact_gate"),
+        {"brainstorm_artifact_gate": "brainstorm_artifact_gate", END: END},
+    )
+    graph.add_conditional_edges(
+        "brainstorm_artifact_gate",
+        brainstorm_artifact_gate_router,
+        {
+            "brainstorm_agent": "brainstorm_agent",
+            "formalize_goals_entry": "formalize_goals_entry",
+            END: END,
+        },
+    )
+    graph.add_conditional_edges(
+        "formalize_goals_entry",
+        _critical_failure_check("formalize_goals_agent"),
+        {"formalize_goals_agent": "formalize_goals_agent", END: END},
+    )
     graph.add_edge("formalize_goals_agent", "research_plan_writeup_agent")
     graph.add_edge("research_plan_writeup_agent", "track_decomposition_gate")
     graph.add_edge("track_decomposition_gate", "milestone_goals")
@@ -2297,11 +2775,36 @@ def build_research_graph_v2(config: "ResearchGraphConfig"):
         graph.add_edge("formalize_results_agent", "resource_preparation_agent")
 
     # Paper production chain (same as v1)
-    graph.add_edge("resource_preparation_agent", "writeup_agent")
-    graph.add_edge("writeup_agent", "proofreading_entry")
+    graph.add_edge("resource_preparation_agent", "paper_contract_builder")
+    graph.add_edge("paper_contract_builder", "writeup_agent")
+    graph.add_edge("writeup_agent", "writeup_artifact_gate")
+    graph.add_conditional_edges(
+        "writeup_artifact_gate",
+        writeup_artifact_gate_router,
+        {
+            "writeup_agent": "writeup_agent",
+            "proofreading_entry": "proofreading_entry",
+        },
+    )
     graph.add_edge("proofreading_entry", "proofreading_agent")
-    graph.add_edge("proofreading_agent", "reviewer_agent")
-    graph.add_edge("reviewer_agent", "milestone_review")
+    graph.add_edge("proofreading_agent", "proofread_gate")
+    graph.add_conditional_edges(
+        "proofread_gate",
+        proofread_gate_router,
+        {
+            "proofreading_agent": "proofreading_agent",
+            "reviewer_agent": "reviewer_agent",
+        },
+    )
+    graph.add_edge("reviewer_agent", "review_gate")
+    graph.add_conditional_edges(
+        "review_gate",
+        review_gate_router,
+        {
+            "reviewer_agent": "reviewer_agent",
+            "milestone_review": "milestone_review",
+        },
+    )
     graph.add_edge("milestone_review", "validation_gate")
     graph.add_conditional_edges(
         "validation_gate",
@@ -2329,6 +2832,13 @@ def get_default_checkpointer(workspace_dir: str):
         db_path = os.path.join(workspace_dir, "checkpoints.db")
         conn = sqlite3.connect(db_path, check_same_thread=False)
         return SqliteSaver(conn)
-    except (ImportError, Exception) as e:
+    except ImportError as e:
+        logger.warning(
+            "SQLite checkpoint support unavailable (%s). "
+            "Install 'langgraph-checkpoint-sqlite' to enable resumability.",
+            e,
+        )
+        return None
+    except Exception as e:
         logger.warning("Checkpointer unavailable (%s); resumability disabled.", e)
         return None

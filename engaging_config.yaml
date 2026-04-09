@@ -44,8 +44,8 @@ cluster:
   # The orchestrator is CPU-only; it makes outbound HTTPS calls to LLM APIs.
   # ---------------------------------------------------------------------------
   orchestrator:
-    partition: pi_tpoggio              # Poggio Lab partition, 7-day wall-time
-    time: "7-00:00:00"
+    partition: mit_preemptable              # Poggio Lab partition, 7-day wall-time
+    time: "2-00:00:00"
     cpus: 4
     mem: "32G"
 
@@ -53,8 +53,8 @@ cluster:
   # Experiment GPU jobs (Tier 2) — submitted by the orchestrator via sbatch
   # ---------------------------------------------------------------------------
   experiment_gpu:
-    partition: pi_tpoggio
-    time: "7-00:00:00"
+    partition: mit_preemptable
+    time: "2-00:00:00"
     cpus: 8
     mem: "64G"
     gres: "gpu:a100:1"
@@ -79,7 +79,7 @@ cluster:
   # Repair jobs use the orchestrator partition (CPU-only, outbound HTTPS)
   # ---------------------------------------------------------------------------
   repair:
-    partition: pi_tpoggio
+    partition: mit_preemptable
     time: "01:00:00"
     cpus: 2
     mem: "8G"

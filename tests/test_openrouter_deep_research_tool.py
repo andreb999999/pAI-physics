@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -214,3 +215,108 @@ class TestOpenRouterDeepResearchTool:
              "authors": ["A"], "year": 2024, "arxiv_id": "arXiv: 2301.12345"}
         ])
         assert papers[0]["arxiv_id"] == "2301.12345"
+
+    def test_fallback_search_prefers_arxiv_before_semantic_scholar(self, monkeypatch):
+        """Fallback searches arXiv first, then uses Semantic Scholar only for enrichment."""
+        import consortium.toolkits.writeup.citation_search_tool as citation_module
+
+        calls: list[str] = []
+
+        class FakeCitationSearchTool:
+            def _run(self, search_query, max_results, search_source):
+                calls.append(search_source)
+                if search_source == "arxiv":
+                    return json.dumps(
+                        {
+                            "search_query": search_query,
+                            "search_source": "arxiv",
+                            "total_results": 1,
+                            "citations": [
+                                {
+                                    "title": "ArXiv Paper",
+                                    "authors": ["Alice Example"],
+                                    "year": "2024",
+                                    "venue": "arXiv preprint",
+                                    "url": "https://arxiv.org/abs/2401.00001",
+                                    "arxiv_id": "2401.00001",
+                                }
+                            ],
+                            "bibtex_entries": [],
+                        }
+                    )
+                return json.dumps(
+                    {
+                        "search_query": search_query,
+                        "search_source": "semantic_scholar",
+                        "total_results": 1,
+                        "citations": [
+                            {
+                                "title": "Journal Paper",
+                                "authors": ["Bob Example"],
+                                "year": "2023",
+                                "venue": "JMLR",
+                                "url": "https://example.com/journal",
+                                "arxiv_id": "",
+                            }
+                        ],
+                        "bibtex_entries": [],
+                    }
+                )
+
+            def _deduplicate_citations(self, citations):
+                return citations
+
+            def _generate_bibtex(self, citation):
+                return f"@misc{{{citation['title'].replace(' ', '').lower()},"  # pragma: no cover - trivial
+
+        monkeypatch.setattr(citation_module, "CitationSearchTool", FakeCitationSearchTool)
+
+        tool = self._get_tool()
+        result = json.loads(tool._fallback_search("transformer depth scaling", 4))
+
+        assert calls == ["arxiv", "semantic_scholar"]
+        assert result["search_source"] == "arxiv+semantic_scholar_staged"
+        assert result["total_results"] == 2
+
+    def test_resolve_via_arxiv_honors_shared_cooldown(self, tmp_path, monkeypatch):
+        """arXiv resolution respects shared cooldown state across tool instances."""
+        from consortium.toolkits.search.provider_rate_limit import ProviderRateGate
+
+        monkeypatch.setenv("CONSORTIUM_LIT_RATE_STATE_DIR", str(tmp_path / "lit_state"))
+        monkeypatch.setenv("CONSORTIUM_LIT_MAX_WAIT_SEC", "0.30")
+        monkeypatch.setenv("CONSORTIUM_ARXIV_MIN_INTERVAL_SEC", "0")
+        monkeypatch.setenv("CONSORTIUM_ARXIV_COOLDOWN_SEC", "0.05")
+        monkeypatch.setenv("CONSORTIUM_ARXIV_COOLDOWN_MAX_SEC", "0.05")
+
+        with ProviderRateGate("arxiv").request("prime cooldown", max_wait_seconds=0.2) as lease:
+            lease.mark_saturated("HTTP 429", retry_after_seconds=0.05)
+
+        response = MagicMock()
+        response.status_code = 200
+        response.headers = {}
+        response.text = """
+        <feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">
+          <entry>
+            <title>Test Paper</title>
+            <author><name>Alice Example</name></author>
+            <published>2024-01-01T00:00:00Z</published>
+            <summary>Abstract text.</summary>
+            <id>http://arxiv.org/abs/2301.12345v1</id>
+            <arxiv:primary_category term="cs.LG" />
+          </entry>
+        </feed>
+        """
+        response.raise_for_status.return_value = None
+        monkeypatch.setattr(
+            "consortium.toolkits.search.deep_research.openrouter_deep_research_tool.requests.get",
+            lambda *args, **kwargs: response,
+        )
+
+        tool = self._get_tool()
+        start = time.time()
+        papers = tool._resolve_via_arxiv([{"arxiv_id": "2301.12345"}])
+        elapsed = time.time() - start
+
+        assert elapsed >= 0.04
+        assert papers is not None
+        assert papers[0]["arxiv_id"] == "2301.12345v1"

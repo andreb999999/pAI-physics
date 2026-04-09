@@ -100,9 +100,6 @@ def preset_to_argv(preset: Preset, task: str, **overrides: object) -> list[str]:
     if iterate_start:
         argv.extend(["--iterate-start-stage", str(iterate_start)])
 
-    # Don't log to files — we handle output display
-    argv.append("--no-log-to-files")
-
     # Dry run
     if overrides.pop("dry_run", False):
         argv.append("--dry-run")

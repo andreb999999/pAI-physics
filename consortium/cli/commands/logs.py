@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import time
 from pathlib import Path
@@ -63,6 +64,21 @@ def _find_log_files(run_dir: Path, stage: str | None = None) -> list[Path]:
             if stage and stage.lower() not in f.stem.lower():
                 continue
             log_files.append(f)
+
+    # Recorded log file paths in experiment metadata (supports legacy layouts)
+    meta_path = run_dir / "experiment_metadata.json"
+    if meta_path.exists():
+        try:
+            metadata = json.loads(meta_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            metadata = {}
+        for path_str in (metadata.get("log_files") or {}).values():
+            path = Path(path_str)
+            if not path.is_file() or path in log_files:
+                continue
+            if stage and stage.lower() not in path.stem.lower():
+                continue
+            log_files.append(path)
 
     return log_files
 

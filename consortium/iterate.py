@@ -274,11 +274,22 @@ def build_iterate_state_seed(iterate_dir: str, workspace_dir: str) -> dict:
         + "\n".join(summary_lines)
     )
 
+    # Extract binding constraints from human_directive.md if present.
+    # These are non-negotiable research decisions set by the PI that persona
+    # council members must respect (they may flag concerns but not REJECT
+    # based on these constraints).
+    binding_constraints = ""
+    directive_path = os.path.join(iterate_dir, "human_directive.md")
+    if os.path.isfile(directive_path):
+        with open(directive_path, "r", encoding="utf-8", errors="replace") as fh:
+            binding_constraints = fh.read()
+
     return {
         "iterate_mode": True,
         "iterate_prior_paper_path": prior_paper_ws,
         "iterate_feedback_path": feedback_path,
         "iterate_feedback_summary": feedback_summary,
+        "iterate_binding_constraints": binding_constraints,
         "formalized_results": (
             f"[Prior paper — revision mode]\n\n"
             f"{paper_content}"

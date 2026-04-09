@@ -23,7 +23,7 @@ from ..toolkits.filesystem.file_editing.file_editing_tools import (
 try:
     from ..toolkits.search.open_deep_search.ods_tool import OpenDeepSearchTool
 except (ImportError, ModuleNotFoundError):
-    print("[math_literature_agent] WARNING: OpenDeepSearchTool unavailable — falling back to PaperSearch + arXiv only.")
+    print("[math_literature_agent] INFO: OpenDeepSearchTool unavailable — using OpenRouterDeepResearchTool (Perplexity sonar-deep-research) as primary.")
     OpenDeepSearchTool = None
 
 

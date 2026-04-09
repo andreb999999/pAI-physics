@@ -23,6 +23,11 @@ from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field, ConfigDict
 
 from ...workflow_utils import safe_int_env as _safe_int_env, safe_float_env as _safe_float_env
+from ..search.provider_rate_limit import (
+    ProviderRateGate,
+    ProviderRateLimitTimeout,
+    parse_retry_after_seconds,
+)
 
 
 class CitationSearchToolInput(BaseModel):
@@ -188,6 +193,8 @@ class CitationSearchTool(BaseTool):
             return result_json
 
         except Exception as e:
+            if isinstance(e, ProviderRateLimitTimeout):
+                raise
             error_result = {
                 "error": f"Citation search failed: {str(e)}",
                 "search_query": search_query,
@@ -199,41 +206,68 @@ class CitationSearchTool(BaseTool):
 
     def _search_arxiv(self, query: str, max_results: int) -> List[Dict[str, Any]]:
         """Search arXiv for papers."""
+        gate = ProviderRateGate("arxiv")
+        deadline = time.time() + gate.config.max_wait_seconds
+        arxiv_id = self._extract_arxiv_id(query)
+        if arxiv_id:
+            url = f"{self.arxiv_base_url}id_list={arxiv_id}"
+        else:
+            url = (
+                f"{self.arxiv_base_url}search_query=all:{query}"
+                f"&start=0&max_results={max_results}"
+                "&sortBy=submittedDate&sortOrder=descending"
+            )
+
+        headers = {
+            "User-Agent": "Academic-Citation-Tool/1.0 (research-tool)"
+        }
+
         try:
-            # Add small delay to be respectful to arXiv API
-            time.sleep(1)
-            arxiv_id = self._extract_arxiv_id(query)
-            if arxiv_id:
-                url = f"{self.arxiv_base_url}id_list={arxiv_id}"
-            else:
-                url = (
-                    f"{self.arxiv_base_url}search_query=all:{query}"
-                    f"&start=0&max_results={max_results}"
-                    "&sortBy=submittedDate&sortOrder=descending"
-                )
+            while True:
+                remaining = max(deadline - time.time(), 0.0)
+                with gate.request(
+                    action=f"arXiv search for '{query[:80]}'",
+                    max_wait_seconds=remaining,
+                ) as lease:
+                    try:
+                        response = requests.get(url, headers=headers, timeout=30)
+                    except requests.exceptions.Timeout as exc:
+                        lease.mark_saturated(f"arXiv request timed out: {exc}")
+                        continue
+                    except Exception as exc:
+                        lease.mark_failure(f"arXiv request failed: {exc}")
+                        print(f"Warning: arXiv search failed: {exc}")
+                        return []
 
-            headers = {
-                "User-Agent": "Academic-Citation-Tool/1.0 (research-tool)"
-            }
+                    if response.status_code == 200:
+                        lease.mark_success()
+                        return self._parse_arxiv_response(response.text)
 
-            response = requests.get(url, headers=headers, timeout=30)
-            response.raise_for_status()
+                    if response.status_code in {429, 500, 502, 503, 504}:
+                        lease.mark_saturated(
+                            f"arXiv returned HTTP {response.status_code}",
+                            retry_after_seconds=parse_retry_after_seconds(
+                                response.headers.get("Retry-After")
+                            ),
+                        )
+                        continue
 
-            return self._parse_arxiv_response(response.text)
+                    lease.mark_failure(f"arXiv returned HTTP {response.status_code}")
+                    response.raise_for_status()
+                    return []
 
         except Exception as e:
+            if isinstance(e, ProviderRateLimitTimeout):
+                raise
             print(f"Warning: arXiv search failed: {e}")
             return []
 
     def _search_semantic_scholar(self, query: str, max_results: int) -> List[Dict[str, Any]]:
-        """Search Semantic Scholar for papers with capped retries and cooldown."""
+        """Search Semantic Scholar with shared cooldown coordination."""
+        gate = ProviderRateGate("semantic_scholar")
+        deadline = time.time() + gate.config.max_wait_seconds
+        transient_failures = 0
         try:
-            now = time.time()
-            if now < self._semantic_scholar_cooldown_until:
-                remaining = int(self._semantic_scholar_cooldown_until - now)
-                print(f"Warning: Semantic Scholar in cooldown, skipping request ({remaining}s remaining).")
-                return []
-
             params = {
                 "query": query,
                 "limit": max_results,
@@ -244,53 +278,72 @@ class CitationSearchTool(BaseTool):
                 "User-Agent": "Academic-Citation-Tool/1.0 (research-tool; contact@example.com)"
             }
 
-            # Add small delay between requests to reduce burstiness.
-            time.sleep(self.semantic_scholar_base_delay)
+            while True:
+                remaining = max(deadline - time.time(), 0.0)
+                with gate.request(
+                    action=f"Semantic Scholar search for '{query[:80]}'",
+                    max_wait_seconds=remaining,
+                ) as lease:
+                    try:
+                        response = requests.get(
+                            self.semantic_scholar_base_url,
+                            params=params,
+                            headers=headers,
+                            timeout=self.semantic_scholar_timeout,
+                        )
+                    except requests.exceptions.Timeout as exc:
+                        lease.mark_saturated(f"Semantic Scholar request timed out: {exc}")
+                        continue
+                    except Exception as exc:
+                        lease.mark_failure(f"Semantic Scholar request failed: {exc}")
+                        print(f"Warning: Semantic Scholar search failed: {exc}")
+                        return []
 
-            for attempt in range(self.semantic_scholar_max_retries + 1):
-                response = requests.get(
-                    self.semantic_scholar_base_url,
-                    params=params,
-                    headers=headers,
-                    timeout=self.semantic_scholar_timeout
-                )
-                if response.status_code == 200:
-                    data = response.json()
-                    return self._parse_semantic_scholar_response(data)
+                    if response.status_code == 200:
+                        lease.mark_success()
+                        data = response.json()
+                        self._semantic_scholar_cooldown_until = 0.0
+                        return self._parse_semantic_scholar_response(data)
 
-                retryable = response.status_code in {429, 500, 502, 503, 504}
-                if retryable and attempt < self.semantic_scholar_max_retries:
-                    wait_seconds = self.semantic_scholar_base_delay * (2 ** attempt)
-                    print(
-                        "Warning: Semantic Scholar request failed "
-                        f"(status {response.status_code}), retrying in {wait_seconds:.1f}s "
-                        f"[attempt {attempt + 1}/{self.semantic_scholar_max_retries}]"
-                    )
-                    time.sleep(wait_seconds)
-                    continue
+                    if response.status_code == 429:
+                        retry_after = parse_retry_after_seconds(response.headers.get("Retry-After"))
+                        self._semantic_scholar_cooldown_until = time.time() + (
+                            retry_after or self.semantic_scholar_cooldown
+                        )
+                        lease.mark_saturated(
+                            "Semantic Scholar rate limit exceeded (HTTP 429)",
+                            retry_after_seconds=retry_after,
+                        )
+                        continue
 
-                if response.status_code == 429:
-                    self._semantic_scholar_cooldown_until = time.time() + self.semantic_scholar_cooldown
-                    print(
-                        "Warning: Semantic Scholar rate limit exceeded. "
-                        f"Entering cooldown for {int(self.semantic_scholar_cooldown)}s."
-                    )
+                    if response.status_code in {500, 502, 503, 504}:
+                        transient_failures += 1
+                        retry_after = parse_retry_after_seconds(response.headers.get("Retry-After"))
+                        lease.mark_saturated(
+                            f"Semantic Scholar returned HTTP {response.status_code}",
+                            retry_after_seconds=retry_after,
+                        )
+                        if transient_failures > self.semantic_scholar_max_retries:
+                            raise requests.exceptions.HTTPError(
+                                f"Semantic Scholar HTTP {response.status_code}",
+                                response=response,
+                            )
+                        continue
+
+                    lease.mark_failure(f"Semantic Scholar returned HTTP {response.status_code}")
+                    response.raise_for_status()
                     return []
-
-                response.raise_for_status()
-                return []
-
-            return []
 
         except requests.exceptions.HTTPError as e:
             if e.response is not None and e.response.status_code == 429:
-                self._semantic_scholar_cooldown_until = time.time() + self.semantic_scholar_cooldown
-                print(f"Warning: Semantic Scholar rate limit exceeded. Try again later.")
-                return []
-            else:
-                print(f"Warning: Semantic Scholar HTTP error: {e}")
-                return []
+                raise ProviderRateLimitTimeout(
+                    "literature provider saturation: provider=semantic_scholar exhausted retries after HTTP 429"
+                ) from e
+            print(f"Warning: Semantic Scholar HTTP error: {e}")
+            return []
         except Exception as e:
+            if isinstance(e, ProviderRateLimitTimeout):
+                raise
             print(f"Warning: Semantic Scholar search failed: {e}")
             return []
 

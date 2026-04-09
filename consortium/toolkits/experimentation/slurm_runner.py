@@ -97,11 +97,39 @@ def submit_experiment_job(
     exp_config = cluster.get("experiment_gpu", {})
 
     # Resolve parameters from config or defaults
-    partition = partition or exp_config.get("partition", "batch")
+    default_partition = exp_config.get("partition", "batch")
     time_limit = time_limit or exp_config.get("time", "06:00:00")
     gpus = gpus or exp_config.get("gres", "gpu:1")
     mem = mem or exp_config.get("mem", "64G")
     cpus = cpus or exp_config.get("cpus", 8)
+
+    # Partition selection: try primary, then fallbacks if primary queue is full
+    if partition:
+        pass  # Explicit override
+    else:
+        _FALLBACK_PARTITIONS = [
+            (default_partition, exp_config.get("time", "06:00:00"), exp_config.get("gres", "gpu:1")),
+            (cluster.get("experiment_gpu_shared", {}).get("partition"), cluster.get("experiment_gpu_shared", {}).get("time", "06:00:00"), cluster.get("experiment_gpu_shared", {}).get("gres", "gpu:1")),
+            (cluster.get("experiment_gpu_long", {}).get("partition"), cluster.get("experiment_gpu_long", {}).get("time", "2-00:00:00"), cluster.get("experiment_gpu_long", {}).get("gres", "gpu:1")),
+        ]
+        partition = default_partition
+        for _part, _time, _gres in _FALLBACK_PARTITIONS:
+            if not _part:
+                continue
+            try:
+                result = subprocess.run(
+                    ["squeue", "-u", os.environ.get("USER", ""), "-p", _part, "-h", "-o", "%i"],
+                    capture_output=True, text=True, timeout=10,
+                )
+                n_queued = len([l for l in result.stdout.strip().split("\n") if l.strip()])
+                if n_queued < 3:  # Prefer partitions with fewer queued jobs
+                    partition = _part
+                    time_limit = _time
+                    gpus = _gres
+                    print(f"[slurm] Selected partition {_part} ({n_queued} jobs queued)")
+                    break
+            except Exception:
+                continue
 
     # Conda settings — prefer config, fall back to env vars
     conda_init = cluster.get("conda_init_script") or os.environ.get("CONDA_INIT_SCRIPT", "")
@@ -240,7 +268,9 @@ def poll_job_completion(
             continue
 
         # The first non-empty state is the overall job state
-        state = states[0].rstrip("+")  # "CANCELLED+" → "CANCELLED"
+        # sacct may return "CANCELLED by <uid>" — extract just the state token
+        raw_state = states[0].rstrip("+")
+        state = raw_state.split()[0].rstrip("+")  # "CANCELLED by 225593" → "CANCELLED"
         last_state = state
 
         # Check for terminal state

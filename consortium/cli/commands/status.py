@@ -6,8 +6,6 @@ import json
 import os
 import shutil
 import subprocess
-import time
-from datetime import datetime, timezone
 from pathlib import Path
 
 import click
@@ -15,6 +13,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
+
+from consortium.cli.core.run_inspector import inspect_run
 
 # ── Theme: blue, gray, white ────────────────────────────────────────
 _BLUE = "bold blue"
@@ -28,134 +28,24 @@ from consortium.cli.core.paths import find_results_dir as _find_results_dir
 
 console = Console()
 
-_ACTIVE_THRESHOLD_SECONDS = 30 * 60  # 30 minutes
-
-
-def _seconds_to_human(seconds: float) -> str:
-    """Convert seconds to a human-readable elapsed string."""
-    if seconds < 60:
-        return f"{int(seconds)}s"
-    if seconds < 3600:
-        return f"{int(seconds // 60)}m {int(seconds % 60)}s"
-    hours = int(seconds // 3600)
-    minutes = int((seconds % 3600) // 60)
-    return f"{hours}h {minutes}m"
-
-
-def _is_pid_running(pid: int) -> bool:
-    """Check if a process with the given PID is running."""
-    try:
-        os.kill(pid, 0)
-        return True
-    except (OSError, ProcessLookupError):
-        return False
-
-
 def _detect_run_status(run_dir: Path) -> dict:
     """Detect the status of a single run directory.
 
     Returns a dict with keys: status, stage, elapsed, budget.
     """
-    now = time.time()
-    info: dict[str, str] = {
-        "status": "unknown",
-        "stage": "-",
-        "elapsed": "-",
-        "budget": "-",
+    info = inspect_run(run_dir)
+    budget = "-"
+    if info["budget_usd"] is not None:
+        budget = f"${info['budget_usd']:.2f}"
+    elapsed = info["elapsed"]
+    if elapsed != "-" and info["status"] not in {"active", "stalled"}:
+        elapsed = f"{elapsed} ago"
+    return {
+        "status": info["status"],
+        "stage": info["current_stage"] or "-",
+        "elapsed": elapsed,
+        "budget": budget,
     }
-
-    # --- Check for active indicators ---
-
-    # 1. Progress heartbeat file
-    heartbeat = run_dir / ".progress_heartbeat"
-    if heartbeat.exists():
-        age = now - heartbeat.stat().st_mtime
-        if age < _ACTIVE_THRESHOLD_SECONDS:
-            info["status"] = "active"
-            info["elapsed"] = _seconds_to_human(age)
-            # Try to read stage from heartbeat
-            try:
-                hb_data = json.loads(heartbeat.read_text())
-                info["stage"] = hb_data.get("stage", "-")
-            except (json.JSONDecodeError, OSError):
-                pass
-
-    # 2. PID files
-    for pid_file in run_dir.glob("*.pid"):
-        try:
-            pid = int(pid_file.read_text().strip())
-            if _is_pid_running(pid):
-                info["status"] = "active"
-                break
-        except (ValueError, OSError):
-            continue
-
-    # 3. Recent consortium_*.out files
-    for out_file in run_dir.glob("consortium_*.out"):
-        try:
-            age = now - out_file.stat().st_mtime
-            if age < _ACTIVE_THRESHOLD_SECONDS:
-                info["status"] = "active"
-                break
-        except OSError:
-            continue
-
-    # --- Check completion / failure ---
-    if info["status"] != "active":
-        # Check for final paper
-        has_paper = any(
-            (run_dir / f"final_paper{ext}").exists()
-            for ext in (".pdf", ".md", ".tex")
-        )
-        if has_paper:
-            info["status"] = "completed"
-        else:
-            # Check run_summary.json
-            summary_path = run_dir / "run_summary.json"
-            if summary_path.exists():
-                try:
-                    summary = json.loads(summary_path.read_text())
-                    if summary.get("completed"):
-                        info["status"] = "completed"
-                    elif summary.get("error") or summary.get("failed"):
-                        info["status"] = "failed"
-                    else:
-                        info["status"] = "partial"
-                except (json.JSONDecodeError, OSError):
-                    pass
-
-    # --- Elapsed time from directory mtime ---
-    if info["elapsed"] == "-":
-        try:
-            dir_age = now - run_dir.stat().st_mtime
-            info["elapsed"] = _seconds_to_human(dir_age) + " ago"
-        except OSError:
-            pass
-
-    # --- Budget from summary or budget_state ---
-    for budget_file_name in ("run_summary.json", "budget_state.json"):
-        budget_path = run_dir / budget_file_name
-        if budget_path.exists():
-            try:
-                data = json.loads(budget_path.read_text())
-                cost = data.get("total_cost_usd")
-                if cost is not None:
-                    info["budget"] = f"${cost:.2f}"
-                    break
-            except (json.JSONDecodeError, OSError):
-                continue
-
-    # --- Stage from run_summary if not already set ---
-    if info["stage"] == "-":
-        summary_path = run_dir / "run_summary.json"
-        if summary_path.exists():
-            try:
-                summary = json.loads(summary_path.read_text())
-                info["stage"] = summary.get("current_stage", summary.get("stage", "-"))
-            except (json.JSONDecodeError, OSError):
-                pass
-
-    return info
 
 
 def _get_slurm_jobs() -> list[dict]:
@@ -226,6 +116,7 @@ def _style_status(status: str) -> Text:
     """Return a styled Text object for the given status string."""
     mapping = {
         "active": (_GREEN, "active"),
+        "stalled": (_YELLOW, "stalled"),
         "completed": ("green", "completed"),
         "failed": (_RED, "failed"),
         "partial": (_YELLOW, "partial"),

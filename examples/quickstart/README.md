@@ -1,93 +1,104 @@
 # Quickstart Example: Batch Normalization & Spectral Regularization
 
-This is the recommended first run for new users. It demonstrates the full consortium pipeline on a focused, well-scoped research question in mathematical ML theory.
+This is the recommended first real run for a new user. It exercises the installed `msc` CLI on a focused task that stays inside the supported `budget` tier contract.
 
-## What This Example Does
+## What This Example Covers
 
-The task asks consortium to:
-1. Search ArXiv for literature on batch normalization and spectral norms
-2. Synthesize a literature review
-3. Plan a research investigation
-4. Propose a minimal experiment design
-5. Write a 4-page paper draft in Markdown
+The task asks MSc to:
 
-It is designed to be **cheap, fast, and self-contained** — no LaTeX installation, no GPU, no web crawl needed.
+1. gather literature on batch normalization and spectral regularization
+2. synthesize the relevant background
+3. sketch a small research plan
+4. propose a minimal experiment design
+5. draft a Markdown paper
+
+The goal is a cheap, self-contained validation run. It does not require LaTeX, GPUs, or an HPC setup.
 
 ## Prerequisites
 
-- Python environment set up (`./scripts/bootstrap.sh researchlab minimal`)
-- At least one API key in `.env` (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `GOOGLE_API_KEY`)
+- `python -m pip install -e ".[dev]"` completed in this checkout
+- `msc setup` completed successfully
+- `msc doctor` passes
+- `OPENROUTER_API_KEY` available from your shell, `--config-dir`, or `~/.msc/.env`
 
 ## Running It
 
 From the repo root:
 
 ```bash
-# Validate your setup first (free)
-python launch_multiagent.py --task "test" --dry-run
+# Free validation first
+msc run --tier budget --dry-run "test"
 
-# Run the quickstart
-python launch_multiagent.py \
-  --task "$(cat examples/quickstart/task.txt)" \
-  --output-format markdown \
-  --no-counsel \
-  --no-log-to-files
+# Real quickstart run
+msc run --tier budget --task-file examples/quickstart/task.txt
 ```
 
-## Expected Cost & Time
+From outside the repo root, use an absolute path to the task file:
 
-| Model | Estimated Cost | Estimated Time |
-|---|---|---|
-| claude-opus-4-6 (default) | $3–8 | 20–35 min |
-| gpt-5 | $4–10 | 25–45 min |
-| claude-sonnet-4-6 | $1–4 | 15–25 min |
+```bash
+msc run --tier budget --task-file /absolute/path/to/examples/quickstart/task.txt
+```
+
+Results are written to the current working directory's `results/`.
+
+## Budget-Tier Runtime Contract
+
+This quickstart is intended to stay inside the `budget` tier policy:
+
+- primary model surface: `gpt-5-mini`
+- persona council and helper surfaces: `gpt-5-mini`
+- no counsel by default
+- Markdown-first outputs
+
+Inspect `effective_models.json` after startup to confirm the resolved model surfaces for the run.
+
+## Expected Cost and Time
+
+Typical behavior for this quickstart:
+
+- cost: within the `budget` tier cap, with many runs finishing well below that ceiling
+- time: usually tens of minutes, depending on model latency and tool activity
+
+The important contract is tier fidelity, not an exact wall-clock promise. For a first validation run, start with `--dry-run`, then launch the full task once the config looks right.
 
 ## Expected Outputs
 
-After the run, look in `results/consortium_<timestamp>/`:
+After launch, inspect the new run under `results/consortium_<timestamp>/`.
 
-```
-results/consortium_<timestamp>/
-├── final_paper.md              ← Main output: the generated paper draft
-├── paper_workspace/
-│   ├── literature_review.pdf   ← Synthesized literature review
-│   ├── research_plan.pdf       ← Research plan
-│   └── references.bib          ← ArXiv citations
-├── run_summary.json            ← Cost/token summary
-└── budget_state.json           ← Detailed cost breakdown
-```
+Common artifacts include:
 
-The `final_paper.md` should contain:
-- Abstract with clear hypothesis
-- Introduction with motivation
-- Related work section citing ~5–15 relevant ArXiv papers
-- Theoretical background on batch normalization and spectral norms
-- Proposed experiment outline
-- Conclusion and future directions
+- `experiment_metadata.json`
+- `effective_models.json`
+- `run_status.json`
+- `budget_state.json`
+- `budget_ledger.jsonl`
+- `logs/`
+- `paper_workspace/`
+- a final paper artifact such as `final_paper.md` when the run completes
 
-## Reference Outputs
+For this budget-tier example, `effective_models.json` should resolve to `gpt-5-mini` surfaces rather than premium frontier models.
 
-The `expected_outputs/` directory contains annotated samples showing what typical outputs look like. Your outputs will differ (different papers, different phrasing) but should have the same structure.
+## Reading the Results
 
-## Interpreting the Results
+Good signs:
 
-**Good signs:**
-- `final_paper.md` is 1,500–4,000 words
-- Literature review cites real ArXiv papers (check the DOIs/URLs)
-- Research plan mentions concrete experimental steps
-- `budget_state.json` shows cost below $15
+- `run_status.json` shows ongoing progress or a clean terminal state
+- `budget_state.json` and `budget_ledger.jsonl` show spend increasing in a controlled way
+- `logs/` contains stage-level output
+- the final paper artifact contains a coherent literature-grounded draft with references and a concrete proposed experiment
 
-**Signs something went wrong:**
-- `final_paper.md` is very short (<500 words) → the pipeline may have hit the budget cap or stalled
-- No citations → ArXiv search may have failed (check the log for errors)
-- `STATUS.txt` says `INCOMPLETE` → run `python launch_multiagent.py --resume results/consortium_<timestamp>/` to continue
+Common issues:
+
+- no progress for a long time: check `msc status` and `msc logs -f`
+- incomplete paper artifact: inspect `paper_workspace/`, then resume if appropriate with `msc resume results/consortium_<timestamp>/`
+- unexpected model choice: inspect `effective_models.json` and `experiment_metadata.json`
 
 ## Next Steps
 
-Once you're comfortable with the quickstart:
+Once this quickstart looks healthy:
 
-1. **Try your own research question**: Replace `task.txt` content with your topic
-2. **Enable LaTeX output**: Drop `--output-format markdown` after installing `./scripts/bootstrap.sh researchlab latex`
-3. **Enable math agents**: Add `--enable-math-agents` for theorem formalization
-4. **Run a multi-stage campaign**: See `OpenClaw_Use_Guide.md`
-5. **Browse past runs**: `python launch_multiagent.py --list-runs`
+1. Run your own task with `msc run --tier budget "..."`
+2. Move to `msc run --tier medium ...` if you want LaTeX and stronger default reasoning
+3. Use `msc campaign ...` for multi-stage projects
+4. Use `docs/engaging_setup.md` for HPC/SLURM setups
+5. Use `OpenClaw_Use_Guide.md` only if you need cron, gateway, or automation-native campaign control

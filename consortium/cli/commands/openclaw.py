@@ -9,6 +9,8 @@ from pathlib import Path
 import click
 from rich.console import Console
 
+from consortium.cli.core.paths import find_script_path
+
 console = Console()
 
 
@@ -161,11 +163,4 @@ def openclaw_status() -> None:
 
 def _find_launch_script() -> Path | None:
     """Find the OpenClaw gateway launch script."""
-    candidates = [
-        Path.cwd() / "scripts" / "launch_openclaw_gateway.sh",
-        Path.cwd().parent / "scripts" / "launch_openclaw_gateway.sh",
-    ]
-    for c in candidates:
-        if c.exists():
-            return c
-    return None
+    return find_script_path("launch_openclaw_gateway.sh")

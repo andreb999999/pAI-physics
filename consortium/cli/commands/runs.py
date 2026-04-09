@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import click
@@ -10,6 +9,7 @@ from rich.console import Console
 from rich.table import Table
 
 from consortium.cli.core.paths import find_results_dir as _find_results_dir
+from consortium.cli.core.run_inspector import inspect_run
 
 console = Console()
 
@@ -50,44 +50,23 @@ def runs(limit: int, results_dir: str | None) -> None:
     table.add_column("Task")
 
     for d in run_dirs:
-        run_id = d.name
-        status = "[dim]unknown[/]"
-        cost = "-"
-        model = "-"
-        task = "-"
-
-        # Try to read run_summary.json
-        summary_path = d / "run_summary.json"
-        if summary_path.exists():
-            try:
-                with open(summary_path, "r") as f:
-                    summary = json.load(f)
-                status = "[blue]complete[/]" if summary.get("completed") else "[yellow]partial[/]"
-                cost = f"${summary.get('total_cost_usd', 0):.2f}" if "total_cost_usd" in summary else "-"
-                model = summary.get("model", "-")
-                task = (summary.get("task", "-") or "-")[:50]
-            except (json.JSONDecodeError, OSError):
-                pass
-
-        # Check for final paper
-        if (d / "final_paper.pdf").exists():
-            status = "[blue]complete (PDF)[/]"
-        elif (d / "final_paper.md").exists():
-            status = "[blue]complete (MD)[/]"
-        elif (d / "final_paper.tex").exists():
-            status = "[blue]complete (TeX)[/]"
-
-        # Fallback: check budget state
-        if cost == "-":
-            budget_path = d / "budget_state.json"
-            if budget_path.exists():
-                try:
-                    with open(budget_path, "r") as f:
-                        bs = json.load(f)
-                    cost = f"${bs.get('total_cost_usd', 0):.2f}"
-                except (json.JSONDecodeError, OSError):
-                    pass
-
-        table.add_row(run_id, status, cost, model, task)
+        info = inspect_run(d)
+        status_map = {
+            "active": "[green]active[/]",
+            "stalled": "[yellow]stalled[/]",
+            "completed": "[blue]completed[/]",
+            "failed": "[red]failed[/]",
+            "partial": "[yellow]partial[/]",
+            "unknown": "[dim]unknown[/]",
+        }
+        cost = f"${info['budget_usd']:.2f}" if info["budget_usd"] is not None else "-"
+        task = (info["task"] or "-")[:50]
+        table.add_row(
+            info["run_id"],
+            status_map.get(info["status"], f"[dim]{info['status']}[/]"),
+            cost,
+            info["model"],
+            task,
+        )
 
     console.print(table)

@@ -16,6 +16,12 @@ from urllib.parse import urlparse
 import hashlib
 import re
 
+from ..provider_rate_limit import (
+    ProviderRateGate,
+    ProviderRateLimitTimeout,
+    parse_retry_after_seconds,
+)
+
 # ---------------------------------------------------------------------------
 # Module-level cache for arXiv API responses (metadata only, not PDFs).
 # Keyed by (query, max_results). TTL = 30 min.
@@ -107,10 +113,46 @@ class FetchArxivPapersTool(BaseTool):
 
         return hash_func.hexdigest()
 
+    def _request_arxiv(self, url: str, *, stream: bool, action: str, timeout: int = 30):
+        gate = ProviderRateGate("arxiv")
+        deadline = time.time() + gate.config.max_wait_seconds
+        while True:
+            remaining = max(deadline - time.time(), 0.0)
+            with gate.request(action=action, max_wait_seconds=remaining) as lease:
+                try:
+                    response = requests.get(url, stream=stream, timeout=timeout)
+                except requests.exceptions.Timeout as exc:
+                    lease.mark_saturated(f"arXiv request timed out: {exc}")
+                    continue
+                except Exception as exc:
+                    lease.mark_failure(f"arXiv request failed: {exc}")
+                    raise
+
+                if response.status_code == 200:
+                    lease.mark_success()
+                    return response
+
+                if response.status_code in {429, 500, 502, 503, 504}:
+                    lease.mark_saturated(
+                        f"arXiv returned HTTP {response.status_code}",
+                        retry_after_seconds=parse_retry_after_seconds(
+                            response.headers.get("Retry-After")
+                        ),
+                    )
+                    continue
+
+                lease.mark_failure(f"arXiv returned HTTP {response.status_code}")
+                response.raise_for_status()
+
     def fetch_arxiv_papers(self, search_query, max_results=5):
         """Fetches metadata of papers from arXiv using the API."""
         url = f"{BASE_URL}search_query=all:{search_query}&start=0&max_results={max_results}"
-        response = requests.get(url)
+        response = self._request_arxiv(
+            url,
+            stream=False,
+            timeout=30,
+            action=f"arXiv metadata search for '{search_query[:80]}'",
+        )
         response.raise_for_status()
         return response.text
 
@@ -137,7 +179,12 @@ class FetchArxivPapersTool(BaseTool):
         # Create a safe filename
         safe_title = self.sanitize_filename(title)
         filename = os.path.join(output_folder, f"{safe_title}.pdf")
-        response = requests.get(pdf_link, stream=True)
+        response = self._request_arxiv(
+            pdf_link,
+            stream=True,
+            timeout=60,
+            action=f"arXiv PDF download for '{title[:80]}'",
+        )
         response.raise_for_status()
 
         # Write the PDF to the specified folder
@@ -173,11 +220,11 @@ class FetchArxivPapersTool(BaseTool):
                     continue
                 self.download_paper(title, pdf_link, self.output_folder)
                 downloaded_papers.append(filename)
-                time.sleep(2)  # Pause to avoid hitting rate limits
             except Exception as e:
+                if isinstance(e, ProviderRateLimitTimeout):
+                    raise
                 print(f"Failed to download '{title}': {e}")
 
         result = f"Download complete! Saved {len(downloaded_papers)} papers to the '{self.output_folder}' directory: {downloaded_papers}"
         _arxiv_cache_put(ck, result)
         return result
-

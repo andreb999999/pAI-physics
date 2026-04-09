@@ -7,29 +7,42 @@ from __future__ import annotations
 from typing import Any, Callable, List, Optional
 
 from ..agents.base_agent import create_specialist_agent
+from ..agents.stage_write_tools import (
+    RestrictedCreateFileWithContent,
+    RestrictedModifyFile,
+)
 from ..prompts.reviewer_instructions import get_reviewer_system_prompt
 from ..toolkits.filesystem.file_editing.file_editing_tools import (
-    CreateFileWithContent, DeleteFileOrFolder, ListDir, ModifyFile, SearchKeyword, SeeFile,
+    ListDir, SearchKeyword, SeeFile,
 )
 from ..toolkits.search.deep_research.openrouter_deep_research_tool import OpenRouterDeepResearchTool
 from ..toolkits.writeup.latex_compiler_tool import LaTeXCompilerTool
-from ..toolkits.writeup.latex_generator_tool import LaTeXGeneratorTool
 from ..toolkits.writeup.vlm_document_analysis_tool import VLMDocumentAnalysisTool
 
 
 def get_tools(workspace_dir: Optional[str], model_id: str) -> list:
     from . import tool_registry as _reg
+    allowed_write_paths = [
+        "paper_workspace/review_report.tex",
+        "paper_workspace/review_verdict.json",
+    ]
     tools = [
         _reg.get_or_create(VLMDocumentAnalysisTool, model=model_id, working_dir=workspace_dir),
         _reg.get_or_create(OpenRouterDeepResearchTool),
-        _reg.get_or_create(LaTeXGeneratorTool, model=model_id, working_dir=workspace_dir),
         _reg.get_or_create(LaTeXCompilerTool, working_dir=workspace_dir, model=model_id),
         _reg.get_or_create(SeeFile, working_dir=workspace_dir),
-        _reg.get_or_create(CreateFileWithContent, working_dir=workspace_dir),
-        _reg.get_or_create(ModifyFile, working_dir=workspace_dir),
+        _reg.get_or_create(
+            RestrictedCreateFileWithContent,
+            working_dir=workspace_dir,
+            allowed_write_prefixes=allowed_write_paths,
+        ),
+        _reg.get_or_create(
+            RestrictedModifyFile,
+            working_dir=workspace_dir,
+            allowed_write_prefixes=allowed_write_paths,
+        ),
         _reg.get_or_create(ListDir, working_dir=workspace_dir),
         _reg.get_or_create(SearchKeyword, working_dir=workspace_dir),
-        _reg.get_or_create(DeleteFileOrFolder, working_dir=workspace_dir),
     ]
     return tools
 

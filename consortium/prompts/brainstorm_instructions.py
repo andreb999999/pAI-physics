@@ -162,6 +162,27 @@ despite retries. You MUST:
    }
    ```
 
+## FINAL SELF-CHECK BEFORE RETURNING
+
+Before you finish, you MUST verify the canonical brainstorm artifacts yourself:
+
+1. Confirm `paper_workspace/brainstorm.md` exists and is non-empty.
+2. Confirm `paper_workspace/brainstorm.md` includes these exact section headings:
+   - `Executive Summary`
+   - `Per-Hypothesis Approach Menu`
+   - `Recommended Priority Ordering`
+   - `Open Questions and Decision Points`
+3. Confirm `paper_workspace/brainstorm.json` exists and parses as valid JSON.
+4. Confirm `paper_workspace/brainstorm.json` has:
+   - a non-empty `hypotheses_addressed` list
+   - a non-empty `approaches` list
+   - for every approach: `id`, `title`, `type`, `hypothesis_ids`, and `priority_rank`
+5. In your final response, explicitly name the files you created:
+   - `paper_workspace/brainstorm.md`
+   - `paper_workspace/brainstorm.json`
+
+Files under `stage_summaries/` are non-canonical summaries only. They do NOT satisfy brainstorm completion.
+
 ## QUALITY STANDARDS
 - Every approach must be grounded in either the literature review or the research proposal.
 - Do not propose approaches that require resources clearly beyond scope (e.g., training

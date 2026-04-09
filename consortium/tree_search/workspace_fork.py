@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 # Budget files are excluded to prevent parent budget state from bleeding into branches.
 SKIP_PATTERNS = (
     "counsel_sandboxes", "tree_branches",
-    "*.db", "*.lock",
+    "*.db", "*.db-*", "*.lock",
     "budget_state.json", "budget_state.json.tmp", "budget_ledger.jsonl",
 )
 

@@ -20,6 +20,16 @@ from .supervision import (
     validate_review_verdict,
     save_cross_track_report,
 )
+from .paper_contract import (
+    COPYEDIT_REPORT_PDF,
+    COPYEDIT_REPORT_TEX,
+    FINAL_PAPER_PDF,
+    FINAL_PAPER_TEX,
+    PAPER_CONTRACT_PATH,
+    PERSONA_VERDICTS_JSON,
+    REVIEW_VERDICT_JSON,
+    canonical_section_paths,
+)
 
 
 _ENV_DEFAULT_RE = re.compile(r"\$\{([A-Za-z_]\w*)(?::-(.*?))?\}")
@@ -135,7 +145,7 @@ def followup_decision_requires_loop(workspace_dir: str) -> tuple[bool, str]:
 
 def build_required_artifacts(state: dict) -> list[str]:
     pipeline_mode = str(state.get("pipeline_mode", "default")).strip().lower()
-    required = ["final_paper.tex"]
+    required = [PAPER_CONTRACT_PATH, FINAL_PAPER_TEX, *canonical_section_paths()]
     if pipeline_mode == "full_research":
         required.extend([
             "paper_workspace/track_decomposition.json",
@@ -149,12 +159,12 @@ def build_required_artifacts(state: dict) -> list[str]:
     pipeline_mode_lower = str(state.get("pipeline_mode", "default")).strip().lower()
     _should_enforce = enforce_paper or (pipeline_mode_lower == "full_research")
     if state.get("enforce_editorial_artifacts", False) or _should_enforce:
-        if "paper_workspace/review_verdict.json" not in required:
-            required.append("paper_workspace/review_verdict.json")
+        if REVIEW_VERDICT_JSON not in required:
+            required.append(REVIEW_VERDICT_JSON)
     if state.get("require_experiment_plan", False):
         required.append("experiments_to_run_later.md")
-    if state.get("require_pdf", False):
-        required.append("final_paper.pdf")
+    if state.get("require_pdf", False) or state.get("enforce_editorial_artifacts", False):
+        required.append(FINAL_PAPER_PDF)
     if state.get("enforce_editorial_artifacts", False):
         required.extend([
             "paper_workspace/author_style_guide.md",
@@ -164,9 +174,12 @@ def build_required_artifacts(state: dict) -> list[str]:
             "paper_workspace/editorial_contract.md",
             "paper_workspace/theorem_map.json",
             "paper_workspace/revision_log.md",
-            "paper_workspace/copyedit_report.tex",
+            COPYEDIT_REPORT_TEX,
+            COPYEDIT_REPORT_PDF,
             "paper_workspace/review_report.tex",
-            "paper_workspace/review_verdict.json",
+            "paper_workspace/review_report.pdf",
+            REVIEW_VERDICT_JSON,
+            PERSONA_VERDICTS_JSON,
         ])
         if state.get("math_enabled", False):
             required.append("paper_workspace/claim_traceability.json")
@@ -235,7 +248,11 @@ def run_validation_gates(state: dict) -> dict:
 
     # Paper quality: run when enforce_editorial_artifacts OR full_research mode
     if state.get("enforce_editorial_artifacts", False) or should_enforce:
-        quality = validate_paper_quality(workspace_dir=workspace)
+        quality = validate_paper_quality(
+            workspace_dir=workspace,
+            require_pdf=bool(state.get("require_pdf") or state.get("enforce_editorial_artifacts")),
+            enforce_contract=should_enforce,
+        )
         ok = quality.get("is_valid", True)
         results["paper_quality"] = {
             "is_valid": ok,

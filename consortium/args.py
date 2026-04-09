@@ -12,11 +12,11 @@ def parse_arguments():
         epilog="""
 Examples:
   # Create new workspace (model from .llm_config.yaml)
-  python launch_multiagent.py --task "Research transformer attention mechanisms"
+  python -m consortium.runner --task "Research transformer attention mechanisms"
 
   # Resume from existing workspace
-  python launch_multiagent.py --resume results/consortium_20250929_143022/ --model claude-sonnet-4-6
-  python launch_multiagent.py --resume results/consortium_20250929_143022/ --task "Continue writing the conclusion section"
+  python -m consortium.runner --resume results/consortium_20250929_143022/ --model claude-sonnet-4-6
+  python -m consortium.runner --resume results/consortium_20250929_143022/ --task "Continue writing the conclusion section"
         """
     )
 
@@ -160,8 +160,9 @@ Examples:
     parser.add_argument(
         "--iterate-start-stage",
         type=str,
-        default="resource_preparation_agent",
-        help="Override the entry stage for iterate mode (default: resource_preparation_agent). "
+        default=None,
+        help="Hard override for iterate-mode entry stage. When set, iterate routing "
+             "is bypassed and the pipeline enters the requested canonical stage directly. "
              "Use 'writeup_agent' to skip resource preparation if paper_workspace is ready.",
     )
 

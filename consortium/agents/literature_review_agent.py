@@ -46,7 +46,7 @@ def get_tools(workspace_dir: Optional[str], model_id: str) -> list:
     if OpenDeepSearchTool is not None:
         tools.insert(2, _reg.get_or_create(OpenDeepSearchTool, model_name=model_id))
     else:
-        print("⚠️ OpenDeepSearchTool disabled for LiteratureReviewAgent.")
+        print("[literature_review_agent] INFO: OpenDeepSearchTool disabled — using OpenRouterDeepResearchTool (Perplexity sonar-deep-research) as primary.")
     if DeepResearchNoveltyScanTool is not None:
         tools.insert(3, _reg.get_or_create(DeepResearchNoveltyScanTool, model_name=model_id))
     else:

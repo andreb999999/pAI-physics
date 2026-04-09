@@ -11,6 +11,9 @@ campaign_status.json schema:
       "workspace": str | null,
       "pid": int | null,
       "slurm_job_id": int | null,
+      "attempt_id": int | null,
+      "stdout_log": str | null,
+      "stderr_log": str | null,
       "started_at": ISO str | null,
       "completed_at": ISO str | null,
       "missing_artifacts": [str],
@@ -104,6 +107,16 @@ class CampaignStatus:
         jid = self._d["stages"].get(stage_id, {}).get("slurm_job_id")
         return int(jid) if jid is not None else None
 
+    def stage_attempt_id(self, stage_id: str) -> Optional[int]:
+        attempt_id = self._d["stages"].get(stage_id, {}).get("attempt_id")
+        return int(attempt_id) if attempt_id is not None else None
+
+    def stage_stdout_log(self, stage_id: str) -> Optional[str]:
+        return self._d["stages"].get(stage_id, {}).get("stdout_log")
+
+    def stage_stderr_log(self, stage_id: str) -> Optional[str]:
+        return self._d["stages"].get(stage_id, {}).get("stderr_log")
+
     def is_complete(self, stage_id: str) -> bool:
         return self.stage_status(stage_id) == COMPLETED
 
@@ -126,6 +139,9 @@ class CampaignStatus:
     def mark_in_progress(
         self, stage_id: str, workspace: str, pid: int,
         slurm_job_id: Optional[int] = None,
+        attempt_id: Optional[int] = None,
+        stdout_log: Optional[str] = None,
+        stderr_log: Optional[str] = None,
     ) -> "CampaignStatus":
         self._d["stages"].setdefault(stage_id, {})
         self._d["stages"][stage_id].update({
@@ -133,6 +149,9 @@ class CampaignStatus:
             "workspace": workspace,
             "pid": pid,
             "slurm_job_id": slurm_job_id,
+            "attempt_id": attempt_id,
+            "stdout_log": stdout_log,
+            "stderr_log": stderr_log,
             "started_at": _now(),
             "completed_at": None,
             "missing_artifacts": [],
@@ -174,6 +193,8 @@ class CampaignStatus:
             "status": PENDING,
             "pid": None,
             "slurm_job_id": None,
+            "stdout_log": None,
+            "stderr_log": None,
             "completed_at": None,
             "missing_artifacts": [],
             "fail_reason": None,
@@ -276,6 +297,9 @@ def init_status(campaign_dir: str, spec: "CampaignSpec", spec_file: str) -> Camp
                 "workspace": None,
                 "pid": None,
                 "slurm_job_id": None,
+                "attempt_id": None,
+                "stdout_log": None,
+                "stderr_log": None,
                 "started_at": None,
                 "completed_at": None,
                 "missing_artifacts": [],

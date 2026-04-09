@@ -1,210 +1,115 @@
 # Architecture Overview
 
-This document describes the system architecture of consortium.
+This document describes the current PoggioAI/MSc runtime architecture.
 
----
+## Entry Points
 
-## High-Level Architecture
+Preferred user-facing entrypoints:
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                        ENTRY POINT                          │
-│              python launch_multiagent.py --task "..."       │
-└───────────────────────┬─────────────────────────────────────┘
-                        │
-                        ▼
-┌─────────────────────────────────────────────────────────────┐
-│                      RUNNER (runner.py)                     │
-│  • Parses CLI args (args.py)                                │
-│  • Loads config (.llm_config.yaml via config.py)            │
-│  • Validates API keys, LaTeX prereqs                        │
-│  • Creates workspace directory                              │
-│  • Writes experiment_metadata.json                          │
-│  • Initializes BudgetManager, TokenTracker                  │
-│  • Builds LangGraph (build_research_graph_v2 in graph.py)   │
-│  • Invokes graph, writes run_summary.json on completion     │
-└───────────────────────┬─────────────────────────────────────┘
-                        │
-                        ▼
-┌─────────────────────────────────────────────────────────────┐
-│                   LANGGRAPH PIPELINE (graph.py)             │
-│                                                             │
-│  ResearchState (TypedDict, state.py)                        │
-│  ┌────────────────────────────────────────────────────┐     │
-│  │  messages (add_messages) │ task │ workspace_dir    │     │
-│  │  pipeline_stage_index    │ artifacts │ agent_outputs│     │
-│  │  validation_results      │ finished │ ...          │     │
-│  └────────────────────────────────────────────────────┘     │
-│                                                             │
-│  Nodes (each node = one specialist agent invocation):       │
-│  Direct-wired linear pipeline: Discovery → Experiment →     │
-│  Post-Track (no manager hub — stages are wired directly)    │
-│                                                             │
-│  Checkpointing: SQLite (checkpoints.db) via LangGraph       │
-└───────────────────────┬─────────────────────────────────────┘
-                        │
-                        ▼
-```
+- `msc run ...` for a single research run
+- `msc campaign ...` for campaign orchestration
+- `msc doctor`, `msc config`, `msc notify`, and related operational commands
 
----
+Supported direct-script entrypoints remain available for automation and HPC:
 
-## Base Pipeline
+- `python launch_multiagent.py ...`
+- `python scripts/campaign_heartbeat.py --campaign ...`
+- `python scripts/campaign_cli.py --campaign ... <subcommand>`
 
-The pipeline is a direct-wired linear graph organized into three stage groups.
-No manager hub — each stage feeds directly into the next.
-The diagram below shows the 14 core agent stages; the full V2 graph (`build_research_graph_v2` in `graph.py`) includes additional validation gates, milestones, and feedback loops (~24 total nodes).
+Runtime configuration is resolved from three layers:
 
-```mermaid
-flowchart LR
-    subgraph Discovery
-        A[ideation_agent] --> B[literature_review_agent]
-        B --> C[research_planner_agent]
-    end
-    subgraph Experiment Track
-        D[experiment_literature_agent] --> E[experiment_design_agent]
-        E --> F[experimentation_agent]
-        F --> G[experiment_verification_agent]
-        G --> H[experiment_transcription_agent]
-    end
-    subgraph Post-Track
-        I[synthesis_literature_review_agent] --> J[results_analysis_agent]
-        J --> K[resource_preparation_agent]
-        K --> L[writeup_agent]
-        L --> M[proofreading_agent]
-        M --> N[reviewer_agent]
-    end
-    C --> D
-    H --> I
-    N --> O((FINISH))
-```
+1. Existing shell environment variables
+2. `~/.msc/.env`
+3. Repo-root `.env`
 
-Validation gates run after the reviewer stage via `supervision/` (artifact checks, review score, paper quality).
-A followup loop can send the pipeline back to replanning if the review score is below the threshold.
+Model/runtime settings are read from the project-root `.llm_config.yaml`, which `msc run` auto-generates from the selected tier unless `custom_llm_config: true` is set in `~/.msc/config.yaml`.
 
----
+## Pipeline Shape
 
-## Math Pipeline Extension (--enable-math-agents)
+The LangGraph workflow is built in [`consortium/graph.py`](/home/mabdel03/orcd/scratch/AI_Researcher/MSc_Internal/consortium/graph.py).
 
-Math stages are inserted after discovery (research_planner_agent) and before the experiment track:
+Base pipeline: 16 stages
 
-```
-research_planner_agent
-    → math_literature_agent     (searches math literature)
-    → math_proposer_agent       (builds claim graph)
-    → math_prover_agent         (writes proof drafts)
-    → math_rigorous_verifier_agent  (symbolic verification)
-    → math_empirical_verifier_agent (numerical counterexample search)
-    → proof_transcription_agent (formats proofs for paper)
-    → experiment_literature_agent
-    → ...
-```
+1. `persona_council`
+2. `literature_review_agent`
+3. `brainstorm_agent`
+4. `formalize_goals_entry`
+5. `formalize_goals_agent`
+6. `research_plan_writeup_agent`
+7. `experiment_literature_agent`
+8. `experiment_design_agent`
+9. `experimentation_agent`
+10. `experiment_verification_agent`
+11. `experiment_transcription_agent`
+12. `formalize_results_agent`
+13. `resource_preparation_agent`
+14. `writeup_agent`
+15. `proofreading_agent`
+16. `reviewer_agent`
 
-This extends the pipeline from 14 to 20 stages.
+Math-enabled pipeline: 22 stages
 
-Math artifacts live in `math_workspace/`:
-- `claim_graph.json` — DAG of theorems, lemmas, definitions
-- `proofs/<id>.md` — proof drafts per claim
-- `checks/<id>.jsonl` — symbolic/numerical verification logs
-- `lemma_library.md` — reusable standard results
+The six math stages are inserted between `research_plan_writeup_agent` and `experiment_literature_agent`:
 
----
+1. `math_literature_agent`
+2. `math_proposer_agent`
+3. `math_prover_agent`
+4. `math_rigorous_verifier_agent`
+5. `math_empirical_verifier_agent`
+6. `proof_transcription_agent`
 
-## Counsel Mode (--enable-counsel)
+## Routing and Validation
 
-When counsel is enabled, each specialist stage runs as a parallel debate:
+The stage roster above is only part of the full graph. The runtime also includes routers and gates that are not counted as user-facing pipeline stages:
 
-```
-                    ┌── model_0 (claude-opus-4-6) ──┐
-                    ├── model_1 (claude-sonnet-4-6) ─┤
-task ──→ stage  ──→│── model_2 (gpt-5.4)           ─├──→ synthesis ──→ workspace merge
-                    └── model_3 (gemini-3.0-pro)    ─┘
-                           ↑ ThreadPoolExecutor ↑
-                         (parallel execution)
-```
+- Track decomposition validation before execution fans out
+- `track_router` fan-out into theory and empirical work
+- `track_merge` fan-in before synthesis and writeup
+- Intermediate artifact validation and strict review gates
+- Follow-up loops when review or validation requires additional work
 
-- Each model runs in an isolated sandbox copy of the workspace
-- After all models complete, a debate round synthesizes the best output
-- The synthesized artifacts are merged back to the main workspace
-- Implemented in `counsel.py` via `ThreadPoolExecutor`
+This is why the implementation includes more graph nodes than the 16/22 visible pipeline stages.
 
----
+## Core Modules
 
-## Campaign Orchestration (OpenClaw / cron)
+- [`consortium/runner.py`](/home/mabdel03/orcd/scratch/AI_Researcher/MSc_Internal/consortium/runner.py): CLI/direct-script execution, workspace setup, env/bootstrap, resume logic
+- [`consortium/config.py`](/home/mabdel03/orcd/scratch/AI_Researcher/MSc_Internal/consortium/config.py): `.llm_config.yaml` loading and model-param filtering
+- [`consortium/graph.py`](/home/mabdel03/orcd/scratch/AI_Researcher/MSc_Internal/consortium/graph.py): Stage roster, routing, and graph construction
+- [`consortium/state.py`](/home/mabdel03/orcd/scratch/AI_Researcher/MSc_Internal/consortium/state.py): `ResearchState` schema
+- [`consortium/counsel.py`](/home/mabdel03/orcd/scratch/AI_Researcher/MSc_Internal/consortium/counsel.py): Multi-model debate/synthesis
+- [`consortium/supervision/`](/home/mabdel03/orcd/scratch/AI_Researcher/MSc_Internal/consortium/supervision): Artifact, review, paper-quality, and traceability validators
+- [`consortium/campaign/`](/home/mabdel03/orcd/scratch/AI_Researcher/MSc_Internal/consortium/campaign): Campaign spec loading, heartbeat state machine, repair flow, budget aggregation, notifications
 
-For multi-stage autonomous research:
+## Campaign Architecture
 
-```
-campaign.yaml ──→ campaign_heartbeat.py ──→ launch_multiagent.py (subprocess)
-     │                    │
-     │            checks campaign_status.json (file-locked)
-     │            advances stages when artifacts complete
-     │
-     └──→ stage 1 (theory) ──→ stage 2 (experiments) ──→ stage 3 (paper)
-                   ↑ artifacts passed forward via memory distillation ↑
-```
+Campaigns are defined by YAML specs such as [`campaign_template.yaml`](/home/mabdel03/orcd/scratch/AI_Researcher/MSc_Internal/campaign_template.yaml) or [`examples/quickstart/campaign.yaml`](/home/mabdel03/orcd/scratch/AI_Researcher/MSc_Internal/examples/quickstart/campaign.yaml).
 
-See `OpenClaw_Use_Guide.md` for full configuration.
+High-level flow:
 
----
+1. `msc campaign init` generates a campaign YAML plus a real `planning.base_task_file`
+2. `msc campaign start` shells out to `scripts/campaign_heartbeat.py --init`
+3. The heartbeat script validates state, launches stages, and advances the DAG
+4. Each stage runs the main pipeline or a specialized launcher script
+5. Stage outputs are distilled into campaign memory and notifications are emitted
 
-## Layer Map
+Direct-script campaign automation remains supported. Those scripts now honor both repo-root `.env` and `~/.msc/.env`, matching the `msc` CLI behavior.
 
-```
-consortium/
-├── runner.py           Entry point logic, workspace setup, CLI wiring
-├── args.py             CLI argument definitions (30+ flags)
-├── config.py           YAML config loading, model parameter filtering
-├── graph.py            LangGraph StateGraph construction and stage order
-├── state.py            ResearchState TypedDict schema
-├── utils.py            Model factory, graph builder, helpers
-├── budget.py           USD budget tracking and enforcement
-├── counsel.py          Multi-model debate and synthesis
-├── llm.py              LLM client wrapper (ChatLiteLLM)
-├── context_compaction.py  Memory distillation between stages
-├── prereqs.py          LaTeX/system prereq validation
-│
-├── agents/             22 specialist agent implementations
-│   ├── base_agent.py   create_specialist_agent() factory
-│   └── *_agent.py      Specialist agents (ideation, experiment, math, writeup, ...)
-│
-├── prompts/            29 system prompt instruction files
-│
-├── toolkits/           Tool implementations grouped by domain
-│   ├── search/         ArXiv, web search, text inspector
-│   ├── ideation/       Idea generation, novelty check
-│   ├── experimentation/  RunExperimentTool, standardization
-│   ├── math/           ClaimGraph, ProofWorkspace, rigor/numerical checkers
-│   ├── writeup/        LaTeX generator/compiler, citations, figures
-│   └── filesystem/     File I/O, KB indexing
-│
-├── supervision/        Validation gates
-│   ├── supervision_manager.py  Orchestrates validators
-│   ├── result_validation.py    Artifact existence checks
-│   ├── math_acceptance_validation.py  Math claim acceptance
-│   ├── paper_quality_validation.py    Paper content checks
-│   ├── paper_traceability_validation.py  Claim-to-source linking
-│   └── review_verdict_validation.py   Reviewer score gates
-│
-├── campaign/           Multi-stage campaign engine
-│   ├── spec.py         campaign.yaml schema and loader
-│   ├── status.py       campaign_status.json R/W with file locking
-│   ├── runner.py       Stage subprocess launcher
-│   ├── memory.py       Cross-stage memory distillation
-│   └── notify.py       Slack/Telegram notifications
-│
-├── interaction/        Live steering APIs
-│   ├── callback_tools.py  TCP socket interrupt listener
-│   └── http_steering.py   HTTP interrupt API (port+1)
-│
-└── logging/            Structured logging
-```
+## Workspace and Outputs
 
----
+Single runs write into `results/consortium_<timestamp>/` and include:
 
-## Key Invariants
+- `run_summary.json`
+- `experiment_metadata.json`
+- `budget_state.json`
+- `paper_workspace/` and other stage artifacts
+- checkpoint/state data for resume support
 
-1. **State is append-only**: `messages` uses `add_messages` reducer — agents append, never overwrite
-2. **Pipeline order is deterministic**: `pipeline_stages` list is fixed at run start; graph edges are wired directly
-3. **Workspace is isolated**: Each run gets its own `results/consortium_<timestamp>/` directory
-4. **Budget is hard-enforced**: `BudgetExceededError` stops the pipeline when `usd_limit` is reached
-5. **Checkpointing is automatic**: LangGraph writes SQLite checkpoints after every node — resumable from any stage
+Campaigns write `campaign_status.json` and per-stage workspaces under the campaign `workspace_root`.
+
+## Invariants
+
+- OpenRouter is the required LLM backend for the main engine
+- The selected tier is the baseline profile, but persisted config overrides can change model, budget, output format, mode, and feature toggles
+- `messages` in `ResearchState` remain append-only through LangGraph reducers
+- Budget enforcement is fail-closed when pricing data is available
+- Project-root `.llm_config.yaml` is the runner-consumed model/budget config file

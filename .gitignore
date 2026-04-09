@@ -62,6 +62,7 @@ archive/*/manifest.json
 
 # User-local LLM config (copy from .llm_config.yaml.example)
 .llm_config.yaml
+.llm_config.yaml.bak*
 
 # Local ad-hoc project workspaces (never commit)
 /project*/

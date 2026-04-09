@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import shutil
+from pathlib import Path
 
 import click
 from rich.console import Console
 from rich.table import Table
 
-from consortium.cli.core.env_manager import check_required_keys, has_any_llm_key
+from consortium.cli.core.env_manager import check_required_keys, has_required_llm_key
+from consortium.cli.core.paths import find_project_root, find_script_path
 from consortium.cli.core.platform_detect import detect, detect_consortium
 
 console = Console()
@@ -24,6 +26,9 @@ def doctor(ctx: click.Context) -> None:
     """
     config_dir = ctx.obj.get("config_dir")
     all_ok = True
+    project_root = find_project_root()
+    campaign_cli_path = find_script_path("campaign_cli.py")
+    campaign_heartbeat_path = find_script_path("campaign_heartbeat.py")
 
     console.print("[bold blue]PoggioAI/MSc Doctor[/]\n")
 
@@ -56,11 +61,11 @@ def doctor(ctx: click.Context) -> None:
         )
         all_ok = False
 
-    # Consortium CLI command
-    if shutil.which("consortium"):
-        table.add_row("consortium command", "[blue]\u2713 OK[/]", shutil.which("consortium") or "")
+    # Runner entrypoint
+    if has_consortium:
+        table.add_row("Runner module", "[blue]\u2713 OK[/]", "python -m consortium.runner")
     else:
-        table.add_row("consortium command", "[bold white on red] MISSING [/]", "Not on PATH")
+        table.add_row("Runner module", "[bold white on red] MISSING [/]", "consortium package not importable")
         all_ok = False
 
     # Git
@@ -70,23 +75,27 @@ def doctor(ctx: click.Context) -> None:
         table.add_row("Git", "[dim]WARN[/]", "Not found — needed for experiment tracking")
 
     # API Keys
-    key_results = check_required_keys(config_dir)
-    any_key = has_any_llm_key(config_dir)
+    key_results = check_required_keys(config_dir, repo_root=project_root)
+    has_openrouter = has_required_llm_key(config_dir, repo_root=project_root)
     for kr in key_results:
         level = kr["level"]
         configured = kr["configured"]
         name = kr["name"]
+        source = kr.get("source")
+        detail = kr["env_var"]
+        if source:
+            detail = f"{detail} via {source}"
 
         if configured:
-            table.add_row(f"API Key: {name}", "[blue]\u2713 OK[/]", kr["env_var"])
+            table.add_row(f"API Key: {name}", "[blue]\u2713 OK[/]", detail)
         elif level == "required":
-            table.add_row(f"API Key: {name}", "[dim]MISSING[/]", f"{kr['env_var']} ({level})")
+            table.add_row(f"API Key: {name}", "[dim]MISSING[/]", f"{detail} ({level})")
         elif level == "recommended":
-            table.add_row(f"API Key: {name}", "[dim]SKIP[/]", f"{kr['env_var']} ({level})")
+            table.add_row(f"API Key: {name}", "[dim]SKIP[/]", f"{detail} ({level})")
         else:
-            table.add_row(f"API Key: {name}", "[dim]SKIP[/]", f"{kr['env_var']} ({level})")
+            table.add_row(f"API Key: {name}", "[dim]SKIP[/]", f"{detail} ({level})")
 
-    if not any_key:
+    if not has_openrouter:
         all_ok = False
 
     # LaTeX
@@ -108,7 +117,6 @@ def doctor(ctx: click.Context) -> None:
         table.add_row("SLURM", "[dim]SKIP[/]", "Not detected — HPC mode unavailable")
 
     # .llm_config.yaml
-    from pathlib import Path
     llm_cfg = Path(".llm_config.yaml")
     if llm_cfg.exists():
         try:
@@ -124,14 +132,13 @@ def doctor(ctx: click.Context) -> None:
     else:
         table.add_row(".llm_config.yaml", "[dim]SKIP[/]", "Not found — msc run will auto-generate from tier")
 
-    # scripts/ directory (needed for campaign commands)
-    scripts_dir = Path("scripts")
-    if scripts_dir.is_dir() and (scripts_dir / "campaign_cli.py").exists():
-        table.add_row("scripts/", "[blue]\u2713 OK[/]", "Campaign scripts found")
-    elif scripts_dir.is_dir():
-        table.add_row("scripts/", "[dim]WARN[/]", "Directory exists but campaign_cli.py missing")
+    # Campaign runtime
+    if campaign_cli_path and campaign_heartbeat_path and project_root:
+        table.add_row("Campaign runtime", "[blue]\u2713 OK[/]", str(project_root / "scripts"))
+    elif project_root:
+        table.add_row("Campaign runtime", "[dim]WARN[/]", f"Incomplete scripts under {project_root / 'scripts'}")
     else:
-        table.add_row("scripts/", "[dim]SKIP[/]", "Not in project root — campaign commands unavailable")
+        table.add_row("Campaign runtime", "[dim]SKIP[/]", "Source checkout not discoverable — campaign commands unavailable")
 
     console.print(table)
 
@@ -139,8 +146,11 @@ def doctor(ctx: click.Context) -> None:
     console.print()
     if all_ok:
         console.print("[bold blue]\u2713 All checks passed![/] You're ready to run MSc.")
-    elif not any_key:
-        console.print("[bold white on red] No LLM API keys configured. [/] Run [bold white]msc setup[/] to add them.")
+    elif not has_openrouter:
+        console.print(
+            "[bold white on red] OPENROUTER_API_KEY is not configured. [/] "
+            "Run [bold white]msc setup[/] or add it to your environment."
+        )
         raise SystemExit(1)
     else:
         console.print("[dim]Some checks have warnings.[/] See details above.")

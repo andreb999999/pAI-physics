@@ -77,6 +77,10 @@ echo "Python path: $(which python)"
 export CONSORTIUM_SLURM_ENABLED=1
 export ENGAGING_CONFIG="$REPO_DIR/engaging_config.yaml"
 
+# Suppress Vertex AI / Google Cloud SDK ImportError noise in litellm
+# (all models route through OpenRouter; Vertex credentials are not needed)
+export LITELLM_LOG=ERROR
+
 # =============================================================================
 # RESEARCH TASK DEFINITION
 # =============================================================================

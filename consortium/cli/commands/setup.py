@@ -60,8 +60,10 @@ def _test_api_connectivity(env_vars: dict) -> None:
     import urllib.request
 
     console.print("\n  [bold blue]Testing API connectivity...[/]\n")
+    console.print("  [dim]OpenRouter is the required runtime path; provider probes below are optional extras.[/]\n")
 
     endpoints = {
+        "OPENROUTER_API_KEY": ("OpenRouter", "https://openrouter.ai/api/v1/models"),
         "ANTHROPIC_API_KEY": ("Anthropic", "https://api.anthropic.com/v1/messages"),
         "OPENAI_API_KEY": ("OpenAI", "https://api.openai.com/v1/models"),
         "GOOGLE_API_KEY": ("Google AI", "https://generativelanguage.googleapis.com/v1beta/models"),
@@ -74,6 +76,8 @@ def _test_api_connectivity(env_vars: dict) -> None:
             continue
         try:
             req = urllib.request.Request(url, method="GET")
+            if "openrouter" in url:
+                req.add_header("Authorization", f"Bearer {key}")
             if "anthropic" in url:
                 req.add_header("x-api-key", key)
                 req.add_header("anthropic-version", "2023-06-01")
@@ -187,7 +191,7 @@ def setup(ctx: click.Context, non_interactive: bool, migrate: bool) -> None:
 
     # ── Step 2: API Keys ────────────────────────────────────────────
     console.print("\n[bold blue]Step 2:[/] [white]Configure API keys[/]\n")
-    console.print("  [dim]MSc needs at least one LLM API key. Counsel mode requires 3 providers.[/]\n")
+    console.print("  [dim]OpenRouter is required for MSc runs. Direct provider keys are optional extras for debugging or provider-specific tooling.[/]\n")
 
     existing = load_env_vars(config_dir_override)
     env_vars = dict(existing)
@@ -227,8 +231,6 @@ def setup(ctx: click.Context, non_interactive: bool, migrate: bool) -> None:
             raise SystemExit(1)
         selected_tier = TIERS[tier_name]
 
-    default_model = selected_tier.model
-
     # ── Step 4: Notifications (optional) ────────────────────────────
     console.print("\n[bold blue]Step 4:[/] [white]Notifications (optional)[/]\n")
 
@@ -250,11 +252,8 @@ def setup(ctx: click.Context, non_interactive: bool, migrate: bool) -> None:
 
     # Save config.yaml
     config_data = {
-        "model": default_model,
         "tier": selected_tier.name,
         "preset": selected_tier.name,  # backward compat
-        "output_format": selected_tier.output_format,
-        "budget_usd": selected_tier.budget_usd,
         "autonomous_mode": True,
         "notifications": {
             "telegram": {
@@ -267,11 +266,9 @@ def setup(ctx: click.Context, non_interactive: bool, migrate: bool) -> None:
     }
     cfg_path = save_config(config_data, config_dir_override)
     console.print(f"  [blue]\u2713[/] Config saved to [bold white]{cfg_path}[/]")
-
-    # Generate .llm_config.yaml template in config dir (reference copy)
-    llm_cfg_path = write_llm_config(selected_tier, str(config_dir / "llm_config.yaml"))
-    console.print(f"  [blue]\u2713[/] LLM config reference saved to [bold white]{llm_cfg_path}[/]")
-    console.print("  [dim]Note: msc run auto-generates .llm_config.yaml in your project directory from the selected tier.[/]")
+    console.print(
+        "  [dim]Note: msc stores the selected tier and derives model/budget/runtime defaults from it on each run.[/]"
+    )
 
     # ── Done ────────────────────────────────────────────────────────
     console.print(Panel(
@@ -322,7 +319,7 @@ def _prompt_api_key(key_info: dict, env_vars: dict) -> None:
     if value and value.strip():
         env_vars[env_var] = value.strip()
     elif level == "required":
-        console.print(f"  [dim]Skipped — you'll need at least one LLM key to run.[/]")
+        console.print(f"  [dim]Skipped — OPENROUTER_API_KEY is required for MSc runs.[/]")
 
 
 def _prompt_env_var(key_info: dict, env_vars: dict) -> None:

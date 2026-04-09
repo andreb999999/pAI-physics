@@ -88,3 +88,7 @@ def _register_commands() -> None:
 
 
 _register_commands()
+
+
+if __name__ == "__main__":
+    cli()

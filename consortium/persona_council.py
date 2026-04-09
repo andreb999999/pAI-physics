@@ -30,6 +30,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import litellm
 
+from .utils import resolve_or_model
 from .prompts.persona_instructions import (
     PERSONA_POST_SYNTHESIS_VOTE_PROMPT,
     PERSONA_SYSTEM_PROMPTS,
@@ -195,7 +196,7 @@ def run_persona_council(
     def _evaluate(idx: int) -> Tuple[int, str]:
         spec = specs[idx]
         persona_name = spec["persona"]
-        model_id = spec["model"]
+        model_id = resolve_or_model(spec["model"])
         extra_params = {k: v for k, v in spec.items() if k not in ("persona", "model")}
 
         system_prompt = PERSONA_SYSTEM_PROMPTS.get(persona_name, "")
@@ -275,7 +276,7 @@ def run_persona_council(
         def _one_critique(i: int) -> Tuple[int, str]:
             spec = specs[i]
             persona_name = spec["persona"]
-            model_id = spec["model"]
+            model_id = resolve_or_model(spec["model"])
             extra_params = {k: v for k, v in spec.items() if k not in ("persona", "model")}
             system_prompt = PERSONA_SYSTEM_PROMPTS.get(persona_name, "")
             try:
@@ -347,10 +348,11 @@ def run_persona_council(
         f"Debate ({len(debate_history)} rounds):\n" + "\n---\n".join(debate_history)
     )
 
+    _routed_synthesis = resolve_or_model(synthesis_model)
     _synthesis_extra = {"reasoning_effort": "high"} if any(p in synthesis_model for p in ("claude", "gpt")) else {}
     try:
         resp = litellm.completion(
-            model=synthesis_model,
+            model=_routed_synthesis,
             messages=[
                 {"role": "system", "content": PERSONA_SYNTHESIS_PROMPT},
                 {"role": "user", "content": synthesis_input},
@@ -372,7 +374,7 @@ def run_persona_council(
         """Ask one persona to vote ACCEPT/REJECT on the synthesized proposal."""
         spec = specs[idx]
         persona_name = spec["persona"]
-        model_id = spec["model"]
+        model_id = resolve_or_model(spec["model"])
         extra_params = {k: v for k, v in spec.items() if k not in ("persona", "model")}
 
         system_prompt = PERSONA_SYSTEM_PROMPTS.get(persona_name, "")
@@ -450,7 +452,7 @@ def run_persona_council(
         )
         try:
             resp = litellm.completion(
-                model=synthesis_model,
+                model=_routed_synthesis,
                 messages=[
                     {"role": "system", "content": PERSONA_SYNTHESIS_PROMPT},
                     {"role": "user", "content": synthesis_input_retry},
@@ -530,6 +532,21 @@ def run_duality_check(
         ),
     }
 
+    # In iterate mode, include prior paper artifacts so the duality check can
+    # evaluate existing proofs, experiments, and results from the prior draft
+    # (not just the newly generated proposal).
+    prior_paper_dir = os.path.join(workspace_dir, "paper_workspace", "prior_paper")
+    if os.path.isdir(prior_paper_dir):
+        for fname in sorted(os.listdir(prior_paper_dir)):
+            fpath = os.path.join(prior_paper_dir, fname)
+            if fname.endswith((".tex", ".md")) and os.path.isfile(fpath):
+                context_files[f"prior_paper/{fname}"] = fpath
+
+    # Also include the consolidated iteration feedback if present
+    feedback_path = os.path.join(workspace_dir, "paper_workspace", "iteration_feedback.md")
+    if os.path.isfile(feedback_path):
+        context_files["iteration_feedback.md"] = feedback_path
+
     context_parts: List[str] = []
     for label, path in context_files.items():
         content = _read_file_truncated(path, _DUALITY_FILE_TRUNCATE)
@@ -543,13 +560,14 @@ def run_duality_check(
     # ------------------------------------------------------------------
     default_fail = {"passed": False, "reasoning": "Check did not complete.", "score": 0, "suggestions": []}
 
+    _routed_check = resolve_or_model(check_model)
     _check_extra = {"reasoning_effort": "high"} if any(p in check_model for p in ("claude", "gpt")) else {}
 
     def _run_check(prompt_template: str, check_label: str) -> Tuple[str, dict]:
         user_content = f"{prompt_template}\n\n--- WORKSPACE ARTIFACTS ---\n\n{workspace_context}"
         try:
             resp = litellm.completion(
-                model=check_model,
+                model=_routed_check,
                 messages=[{"role": "user", "content": user_content}],
                 max_tokens=4096,
                 **_check_extra,

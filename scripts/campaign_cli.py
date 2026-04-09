@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(_HERE))
 
+from consortium.cli.core.env_manager import inject_runtime_env
 from consortium.campaign.spec import load_spec
 from consortium.campaign.status import (
     COMPLETED, FAILED, IN_PROGRESS, PENDING, REPAIRING,
@@ -34,6 +35,7 @@ from consortium.campaign.status import (
 
 
 REPO_ROOT = os.path.dirname(_HERE)
+inject_runtime_env(repo_root=REPO_ROOT)
 
 
 def _json_out(obj: dict, exit_code: int = 0) -> int:
@@ -199,37 +201,49 @@ def _check_stage_liveness(status, stage_id: str, campaign_dir: str) -> dict:
     if pid:
         result["pid_alive"] = is_pid_alive(pid)
 
-    # 3. Log file recency
+    # 3. Attempt-specific log recency
+    log_candidates = []
+    for path in (status.stage_stdout_log(stage_id), status.stage_stderr_log(stage_id)):
+        if path:
+            full = path if os.path.isabs(path) else os.path.join(campaign_dir, path)
+            log_candidates.append(full)
+
     logs_dir = os.path.join(campaign_dir, "logs")
-    if os.path.isdir(logs_dir):
+    if not log_candidates and os.path.isdir(logs_dir):
         for fname in os.listdir(logs_dir):
             if stage_id in fname:
-                log_path = os.path.join(logs_dir, fname)
-                try:
-                    mtime = os.path.getmtime(log_path)
-                    age_seconds = time.time() - mtime
-                    if age_seconds < 600:  # modified in last 10 minutes
-                        result["log_active"] = True
-                        break
-                except OSError:
-                    pass
-        if result["log_active"] is None:
-            result["log_active"] = False
+                log_candidates.append(os.path.join(logs_dir, fname))
 
-    # 4. Workspace activity (any file modified in last 10 min)
+    if log_candidates:
+        result["log_active"] = False
+        for log_path in log_candidates:
+            try:
+                mtime = os.path.getmtime(log_path)
+                age_seconds = time.time() - mtime
+                if age_seconds < 600:
+                    result["log_active"] = True
+                    break
+            except OSError:
+                continue
+
+    # 4. Workspace activity (heartbeat, budget ledger, or any recent write)
     if workspace and os.path.isdir(workspace):
         try:
-            newest = 0
+            newest = 0.0
+            signal_hits: list[str] = []
             for root, dirs, files in os.walk(workspace):
-                for f in files[:50]:  # sample, don't walk everything
+                for f in files:
+                    if f in {".progress_heartbeat", "budget_ledger.jsonl"} or f.endswith(".progress_heartbeat"):
+                        signal_hits.append(os.path.join(root, f))
                     try:
                         mt = os.path.getmtime(os.path.join(root, f))
                         newest = max(newest, mt)
                     except OSError:
                         pass
-                break  # only top-level + first subdirectory
             if newest > 0:
                 result["workspace_active"] = (time.time() - newest) < 600
+            if signal_hits:
+                result["workspace_signals"] = signal_hits[:10]
         except OSError:
             pass
 
@@ -281,6 +295,9 @@ def cmd_status(args, spec, status, campaign_dir: str) -> int:
             "workspace": workspace,
             "pid": pid,
             "slurm_job_id": status.stage_slurm_job_id(sid),
+            "attempt_id": status.stage_attempt_id(sid),
+            "stdout_log": status.stage_stdout_log(sid),
+            "stderr_log": status.stage_stderr_log(sid),
             "alive": liveness["overall"] if liveness else None,
             "liveness_detail": liveness,
             "artifacts_complete": all_present,
@@ -314,10 +331,15 @@ def cmd_stage_logs(args, spec, status, campaign_dir: str) -> int:
 
     result = {"stage_id": stage_id, "stdout": None, "stderr": None}
 
-    for suffix, key in [("_stdout.log", "stdout"), ("_stderr.log", "stderr"), (".log", "stdout")]:
-        path = os.path.join(logs_dir, f"{stage_id}{suffix}")
-        if os.path.exists(path):
-            with open(path) as f:
+    for path, key in [
+        (status.stage_stdout_log(stage_id), "stdout"),
+        (status.stage_stderr_log(stage_id), "stderr"),
+    ]:
+        if not path:
+            continue
+        full = path if os.path.isabs(path) else os.path.join(campaign_dir, path)
+        if os.path.exists(full):
+            with open(full) as f:
                 lines = f.readlines()
             result[key] = "".join(lines[-tail_n:])
 
@@ -377,8 +399,15 @@ def cmd_launch(args, spec, status, campaign_dir: str) -> int:
     from consortium.campaign.runner import launch_stage, build_stage_workspace
 
     proc = launch_stage(stage, spec, status, campaign_dir)
-    workspace = build_stage_workspace(stage, spec, status)
-    status.mark_in_progress(stage_id, workspace, proc.pid)
+    workspace = getattr(proc, "stage_workspace", build_stage_workspace(stage, spec, status))
+    status.mark_in_progress(
+        stage_id,
+        workspace,
+        proc.pid,
+        attempt_id=getattr(proc, "attempt_id", None),
+        stdout_log=getattr(proc, "stdout_log_path", None),
+        stderr_log=getattr(proc, "stderr_log_path", None),
+    )
     write_status(campaign_dir, status)
 
     return _json_out({
@@ -522,7 +551,10 @@ def cmd_set_stage_status(args, spec, status, campaign_dir: str) -> int:
     elif new_status == COMPLETED:
         status.mark_completed(stage_id)
     elif new_status == FAILED:
-        status.mark_failed(stage_id, "Manually set to failed", [])
+        stage_data = status.raw()["stages"].get(stage_id, {})
+        reason = args.reason or stage_data.get("fail_reason") or "Manually set to failed"
+        missing = list(stage_data.get("missing_artifacts", []))
+        status.mark_failed(stage_id, reason, missing)
 
     write_status(campaign_dir, status)
 
@@ -530,6 +562,7 @@ def cmd_set_stage_status(args, spec, status, campaign_dir: str) -> int:
         "stage_id": stage_id,
         "old_status": old_status,
         "new_status": new_status,
+        "fail_reason": status.raw()["stages"].get(stage_id, {}).get("fail_reason"),
     })
 
 
@@ -609,16 +642,19 @@ def cmd_check_credits(args, spec, status, campaign_dir: str) -> int:
 
     try:
         import litellm
+        from consortium.utils import normalize_model_for_litellm
+        probe_model = os.environ.get("CONSORTIUM_OPENROUTER_PROBE_MODEL", "claude-opus-4-6")
+        resolved_model = normalize_model_for_litellm(probe_model)
         # Minimal API call to verify access via OpenRouter
         resp = litellm.completion(
-            model="openrouter/anthropic/claude-haiku-4-5-20251001",
+            model=resolved_model,
             messages=[{"role": "user", "content": "ping"}],
             max_tokens=5,
             api_key=api_key,
         )
         return _json_out({
             "api_accessible": True,
-            "model_used": "openrouter/anthropic/claude-haiku-4-5-20251001",
+            "model_used": resolved_model,
             "message": "OpenRouter API access verified.",
         })
     except Exception as e:
@@ -1087,6 +1123,10 @@ def main() -> int:
     p_set = subs.add_parser("set-stage-status", help="Override stage status")
     p_set.add_argument("stage_id")
     p_set.add_argument("new_status", choices=["pending", "in_progress", "completed", "failed"])
+    p_set.add_argument(
+        "--reason",
+        help="Optional replacement fail reason when setting a stage to failed.",
+    )
 
     p_distill = subs.add_parser("distill", help="Run memory distillation")
     p_distill.add_argument("stage_id")
