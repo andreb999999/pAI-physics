@@ -19,8 +19,15 @@ import time
 from typing import Any, Dict, List, Optional, Type
 
 import litellm
+import requests
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, ConfigDict, Field
+
+from ..provider_rate_limit import (
+    ProviderRateGate,
+    ProviderRateLimitTimeout,
+    parse_retry_after_seconds,
+)
 
 # ---------------------------------------------------------------------------
 # Module-level LRU response cache for deep research queries.
@@ -89,34 +96,23 @@ You are an expert academic literature search assistant. Your job is to find
 real, published academic papers relevant to the given research query.
 
 CRITICAL RULES:
-1. Only return papers that ACTUALLY EXIST. Never invent titles, authors, or venues.
-2. Include arXiv IDs (e.g., 2301.12345) and DOIs when available.
+1. Only cite papers that ACTUALLY EXIST. Never invent titles, authors, or venues.
+2. For EVERY paper, include its arXiv ID (e.g., arXiv:2301.12345) if it is on arXiv.
+   This is essential — the arXiv ID will be used to retrieve the full paper.
 3. Prioritize high-quality venues: ICML, NeurIPS, ICLR, JMLR, AISTATS, COLT,
    Annals of Mathematics, JAMS, Ann. Statist., PTRF, Nature, Science, PNAS.
-4. For each paper, provide a substantive summary (not just the abstract).
+4. For each paper, provide a substantive summary of its contributions and relevance.
 5. Include the most recent and most cited papers on the topic.
 
-You MUST respond with a JSON object (no markdown fencing) with this exact structure:
-{
-  "papers": [
-    {
-      "title": "Full paper title",
-      "authors": ["First Author", "Second Author"],
-      "year": 2024,
-      "venue": "Conference or Journal name",
-      "abstract": "Brief abstract or summary of the paper",
-      "arxiv_id": "2301.12345 or empty string if not on arXiv",
-      "doi": "10.xxxx/... or empty string if unknown",
-      "url": "Direct URL to paper page",
-      "citation_count": 0,
-      "relevance_summary": "2-3 sentences on why this paper is relevant to the query"
-    }
-  ],
-  "search_summary": "Brief summary of what was found and any notable gaps"
-}
+Write a research summary that discusses up to {max_papers} relevant papers.
+For each paper, clearly state:
+- The full title (in quotes)
+- Authors
+- Year and venue
+- The arXiv ID if available (formatted as arXiv:XXXX.XXXXX)
+- Why it is relevant to the query
 
-Return up to {max_papers} papers, ordered by relevance. If fewer relevant papers
-exist, return fewer. Quality over quantity.
+You may also include a DOI (formatted as doi:10.xxxx/...) when available.
 """
 
 
@@ -179,6 +175,7 @@ class OpenRouterDeepResearchTool(BaseTool):
             "{max_papers}", str(max_papers)
         )
 
+        # --- Stage 1: Perplexity discovery ---
         try:
             resp = litellm.completion(
                 model=model_id,
@@ -196,30 +193,42 @@ class OpenRouterDeepResearchTool(BaseTool):
             )
             return self._fallback_search(query, max_papers)
 
-        # Parse the response
+        # --- Try JSON parse first (works if model returns structured output) ---
         papers = self._parse_response(raw_content)
-        if papers is None:
-            # Parsing failed entirely — try fallback
+        if papers is not None:
+            papers = self._deduplicate(papers)[:max_papers]
+            return self._format_result(query, papers, raw_content)
+
+        # --- Stage 2: Extract paper refs from prose ---
+        refs = self._extract_paper_refs(raw_content)
+        if refs:
             print(
-                "[OpenRouterDeepResearchTool] Failed to parse response, "
-                "falling back to CitationSearchTool."
+                f"[OpenRouterDeepResearchTool] Extracted {len(refs)} arXiv IDs "
+                f"from prose. Resolving via arXiv API..."
             )
-            return self._fallback_search(query, max_papers)
+            # --- Stage 3: Resolve via arXiv API ---
+            papers = self._resolve_via_arxiv(refs, search_summary=raw_content)
+            if papers:
+                papers = self._deduplicate(papers)[:max_papers]
+                return self._format_result(query, papers, raw_content)
 
-        # Deduplicate
-        papers = self._deduplicate(papers)
+        # --- Last resort: fallback to CitationSearchTool ---
+        print(
+            "[OpenRouterDeepResearchTool] No arXiv IDs found in prose, "
+            "falling back to CitationSearchTool."
+        )
+        return self._fallback_search(query, max_papers)
 
-        # Limit to max_papers
-        papers = papers[:max_papers]
-
-        # Generate BibTeX entries
+    def _format_result(
+        self, query: str, papers: List[Dict[str, Any]], raw_content: str,
+    ) -> str:
+        """Build the final JSON result string and cache it."""
         bibtex_entries = []
         for paper in papers:
             bibtex = self._generate_bibtex(paper)
             if bibtex:
                 bibtex_entries.append(bibtex)
 
-        # Extract search summary
         search_summary = self._extract_search_summary(raw_content)
 
         result = json.dumps(
@@ -232,6 +241,7 @@ class OpenRouterDeepResearchTool(BaseTool):
             },
             indent=2,
         )
+        ck = _cache_key(query, len(papers), "")
         _cache_put(ck, result)
         return result
 
@@ -331,6 +341,177 @@ class OpenRouterDeepResearchTool(BaseTool):
                 pass
         return ""
 
+    # ------------------------------------------------------------------
+    # Stage 2+3: Extract paper refs from prose → resolve via arXiv API
+    # ------------------------------------------------------------------
+
+    def _extract_paper_refs(self, prose: str) -> List[Dict[str, str]]:
+        """Extract paper references (arXiv IDs, DOIs, titles) from prose.
+
+        Returns a list of dicts with optional keys: arxiv_id, doi, title.
+        """
+        refs: List[Dict[str, str]] = []
+        seen_ids: set = set()
+
+        # Extract arXiv IDs — e.g. arXiv:2301.12345, arXiv: 2301.12345v2, or bare 2301.12345
+        for match in re.finditer(
+            r'(?:arXiv:?\s*)(\d{4}\.\d{4,5}(?:v\d+)?)', prose, re.IGNORECASE
+        ):
+            aid = match.group(1).rstrip(".")
+            # Strip version suffix for dedup key
+            base_id = re.sub(r'v\d+$', '', aid)
+            if base_id not in seen_ids:
+                seen_ids.add(base_id)
+                refs.append({"arxiv_id": aid})
+
+        # Also catch bare IDs in URL-like contexts: arxiv.org/abs/2301.12345
+        for match in re.finditer(
+            r'arxiv\.org/(?:abs|pdf)/(\d{4}\.\d{4,5}(?:v\d+)?)', prose, re.IGNORECASE
+        ):
+            aid = match.group(1).rstrip(".")
+            base_id = re.sub(r'v\d+$', '', aid)
+            if base_id not in seen_ids:
+                seen_ids.add(base_id)
+                refs.append({"arxiv_id": aid})
+
+        return refs
+
+    def _resolve_via_arxiv(
+        self, refs: List[Dict[str, str]], search_summary: str = "",
+    ) -> Optional[List[Dict[str, Any]]]:
+        """Resolve paper references via the arXiv API.
+
+        For each ref with an arxiv_id, queries the arXiv API id_list endpoint
+        and parses the XML response into structured paper metadata.
+
+        Returns a list of normalized paper dicts, or None if resolution fails.
+        """
+        import xml.etree.ElementTree as ET
+
+        arxiv_ids = [r["arxiv_id"] for r in refs if r.get("arxiv_id")]
+        if not arxiv_ids:
+            return None
+
+        # Batch lookup: arXiv API supports comma-separated id_list
+        id_list = ",".join(arxiv_ids)
+        url = f"http://export.arxiv.org/api/query?id_list={id_list}&max_results={len(arxiv_ids)}"
+
+        gate = ProviderRateGate("arxiv")
+        deadline = time.time() + gate.config.max_wait_seconds
+        headers = {"User-Agent": "Academic-Citation-Tool/1.0 (research-tool)"}
+
+        try:
+            while True:
+                remaining = max(deadline - time.time(), 0.0)
+                with gate.request(
+                    action=f"arXiv metadata resolution for {len(arxiv_ids)} paper(s)",
+                    max_wait_seconds=remaining,
+                ) as lease:
+                    try:
+                        response = requests.get(url, headers=headers, timeout=30)
+                    except requests.exceptions.Timeout as exc:
+                        lease.mark_saturated(f"arXiv metadata request timed out: {exc}")
+                        continue
+                    except Exception as exc:
+                        lease.mark_failure(f"arXiv metadata request failed: {exc}")
+                        print(f"[OpenRouterDeepResearchTool] arXiv API call failed: {exc}")
+                        return None
+
+                    if response.status_code == 200:
+                        lease.mark_success()
+                        break
+
+                    if response.status_code in {429, 500, 502, 503, 504}:
+                        lease.mark_saturated(
+                            f"arXiv metadata request returned HTTP {response.status_code}",
+                            retry_after_seconds=parse_retry_after_seconds(
+                                response.headers.get("Retry-After")
+                            ),
+                        )
+                        continue
+
+                    lease.mark_failure(f"arXiv metadata request returned HTTP {response.status_code}")
+                    response.raise_for_status()
+                    return None
+        except ProviderRateLimitTimeout:
+            raise
+        except Exception as e:
+            print(f"[OpenRouterDeepResearchTool] arXiv API call failed: {e}")
+            return None
+
+        # Parse XML (same logic as CitationSearchTool._parse_arxiv_response)
+        try:
+            root = ET.fromstring(response.text)
+            papers: List[Dict[str, Any]] = []
+
+            for entry in root.findall("{http://www.w3.org/2005/Atom}entry"):
+                paper: Dict[str, Any] = {
+                    "title": "",
+                    "authors": [],
+                    "year": "",
+                    "abstract": "",
+                    "url": "",
+                    "arxiv_id": "",
+                    "doi": "",
+                    "venue": "arXiv preprint",
+                    "citation_count": 0,
+                    "relevance_summary": "",
+                    "source": "deep_research+arxiv",
+                }
+
+                title_elem = entry.find("{http://www.w3.org/2005/Atom}title")
+                if title_elem is not None and title_elem.text:
+                    paper["title"] = " ".join(title_elem.text.strip().split())
+
+                for author in entry.findall("{http://www.w3.org/2005/Atom}author"):
+                    name_elem = author.find("{http://www.w3.org/2005/Atom}name")
+                    if name_elem is not None and name_elem.text:
+                        paper["authors"].append(name_elem.text.strip())
+
+                published_elem = entry.find("{http://www.w3.org/2005/Atom}published")
+                if published_elem is not None and published_elem.text:
+                    paper["year"] = published_elem.text[:4]
+
+                summary_elem = entry.find("{http://www.w3.org/2005/Atom}summary")
+                if summary_elem is not None and summary_elem.text:
+                    paper["abstract"] = " ".join(summary_elem.text.strip().split())
+
+                id_elem = entry.find("{http://www.w3.org/2005/Atom}id")
+                if id_elem is not None and id_elem.text:
+                    paper["url"] = id_elem.text
+                    paper["arxiv_id"] = id_elem.text.split("/")[-1]
+
+                # Extract DOI from arxiv:doi element if present
+                doi_elem = entry.find("{http://arxiv.org/schemas/atom}doi")
+                if doi_elem is not None and doi_elem.text:
+                    paper["doi"] = doi_elem.text.strip()
+
+                # Extract primary category as venue hint
+                primary_cat = entry.find("{http://arxiv.org/schemas/atom}primary_category")
+                if primary_cat is not None:
+                    cat = primary_cat.attrib.get("term", "")
+                    if cat:
+                        paper["venue"] = f"arXiv preprint ({cat})"
+
+                # Extract journal_ref if published
+                journal_ref = entry.find("{http://arxiv.org/schemas/atom}journal_ref")
+                if journal_ref is not None and journal_ref.text:
+                    paper["venue"] = journal_ref.text.strip()
+
+                if paper["title"]:
+                    papers.append(paper)
+
+            if papers:
+                print(
+                    f"[OpenRouterDeepResearchTool] Resolved {len(papers)}/{len(arxiv_ids)} "
+                    f"papers via arXiv API."
+                )
+            return papers if papers else None
+
+        except Exception as e:
+            print(f"[OpenRouterDeepResearchTool] Failed to parse arXiv XML: {e}")
+            return None
+
     @staticmethod
     def _generate_bibtex(paper: Dict[str, Any]) -> Optional[str]:
         """Generate a BibTeX entry for a paper.
@@ -396,17 +577,64 @@ class OpenRouterDeepResearchTool(BaseTool):
         return "\n".join(lines)
 
     def _fallback_search(self, query: str, max_papers: int) -> str:
-        """Fall back to CitationSearchTool when deep research fails."""
+        """Fall back to staged provider search when deep research fails."""
         try:
             from ...writeup.citation_search_tool import CitationSearchTool
 
             fallback = CitationSearchTool()
-            return fallback._run(
-                search_query=query,
-                max_results=max_papers,
-                search_source="both",
+            arxiv_result = json.loads(
+                fallback._run(
+                    search_query=query,
+                    max_results=max_papers,
+                    search_source="arxiv",
+                )
             )
+
+            arxiv_citations = arxiv_result.get("citations", []) if isinstance(arxiv_result, dict) else []
+            coverage_target = min(max_papers, max(3, max_papers // 2))
+            needs_semantic_enrichment = (
+                self._is_targeted_citation_query(query)
+                or len(arxiv_citations) < coverage_target
+            )
+            if not needs_semantic_enrichment:
+                return json.dumps(arxiv_result, indent=2)
+
+            semantic_result = json.loads(
+                fallback._run(
+                    search_query=query,
+                    max_results=max_papers,
+                    search_source="semantic_scholar",
+                )
+            )
+            merged_citations = fallback._deduplicate_citations(
+                list(arxiv_citations)
+                + list(semantic_result.get("citations", []))
+            )[:max_papers]
+            merged_bibtex = []
+            for citation in merged_citations:
+                bibtex = fallback._generate_bibtex(citation)
+                if bibtex:
+                    merged_bibtex.append(bibtex)
+
+            result = {
+                "search_query": query,
+                "search_source": "arxiv+semantic_scholar_staged",
+                "total_results": len(merged_citations),
+                "citations": merged_citations,
+                "bibtex_entries": merged_bibtex,
+                "usage_instructions": {
+                    "latex_integration": "Copy BibTeX entries to your .bib file and use \\cite{key} in LaTeX",
+                    "citation_keys": [
+                        re.search(r"@\w+\{([^,]+),", bibtex).group(1)
+                        for bibtex in merged_bibtex
+                        if re.search(r"@\w+\{([^,]+),", bibtex)
+                    ],
+                },
+            }
+            return json.dumps(result, indent=2)
         except Exception as e:
+            if isinstance(e, ProviderRateLimitTimeout):
+                raise
             print(f"[OpenRouterDeepResearchTool] Fallback also failed: {e}")
             return json.dumps(
                 {
@@ -417,3 +645,16 @@ class OpenRouterDeepResearchTool(BaseTool):
                     "search_summary": f"Search unavailable: {e}",
                 }
             )
+
+    @staticmethod
+    def _is_targeted_citation_query(query: str) -> bool:
+        normalized = query.strip()
+        if not normalized:
+            return False
+        if re.search(r"(?:arxiv:)?\s*\d{4}\.\d{4,5}(?:v\d+)?", normalized, re.IGNORECASE):
+            return True
+        if re.search(r"\b10\.\d{4,9}/\S+\b", normalized):
+            return True
+        if normalized.count('"') >= 2 or normalized.count("'") >= 2:
+            return True
+        return False

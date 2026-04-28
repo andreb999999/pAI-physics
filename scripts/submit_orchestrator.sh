@@ -34,4 +34,11 @@ echo "  Repo: $REPO_DIR"
 # Export RESEARCH_TASK so the SLURM script can pick it up
 export RESEARCH_TASK="${RESEARCH_TASK:-}"
 
-sbatch "$SCRIPT_DIR/launch_orchestrator_engaging.sh" "$@"
+# Build sbatch args — override partition via SLURM_PARTITION env var if set
+SBATCH_ARGS=()
+if [[ -n "${SLURM_PARTITION:-}" ]]; then
+  SBATCH_ARGS+=("--partition=${SLURM_PARTITION}")
+  echo "  Partition: $SLURM_PARTITION (from SLURM_PARTITION env var)"
+fi
+
+sbatch "${SBATCH_ARGS[@]}" "$SCRIPT_DIR/launch_orchestrator_engaging.sh" "$@"

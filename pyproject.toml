@@ -23,6 +23,7 @@ classifiers = [
 dependencies = [
     # Engine (LangGraph pipeline)
     "langgraph>=0.4.0,<1.0",
+    "langgraph-checkpoint-sqlite>=3.0.1,<4.0",
     "langchain-core>=0.3.0,<1.0",
     "langchain-community>=0.3.0,<1.0",
     "langchain-openai>=0.3.0,<1.0",
@@ -96,7 +97,26 @@ secure = [
 
 # pip install poggio-ai[all] — everything except vllm / gpu extras
 all = [
-    "poggio-ai[observability,docs,web,experiment,secure]",
+    "langsmith>=0.1.0",
+    "wandb",
+    "mammoth==1.9.1",
+    "markdownify==1.1.0",
+    "python-pptx",
+    "puremagic",
+    "pydub",
+    "SpeechRecognition",
+    "youtube-transcript-api",
+    "crawl4ai",
+    "playwright",
+    "serpapi",
+    "pathvalidate",
+    "torch",
+    "transformers",
+    "datasets",
+    "huggingface_hub",
+    "tokenizers",
+    "tqdm",
+    "keyring>=24.0",
 ]
 
 [project.scripts]

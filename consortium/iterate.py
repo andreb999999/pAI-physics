@@ -19,9 +19,12 @@ from typing import Optional
 # Names that signal "this is the paper, not feedback"
 _PAPER_BASENAMES = {"final_paper", "main", "paper", "manuscript", "draft"}
 
-_MAX_FEEDBACK_CHARS = 15_000
-_MAX_PAPER_CHARS = 50_000
-_MAX_TOTAL_FEEDBACK_CHARS = 50_000
+# No artificial truncation — frontier models have 200K-2M token contexts.
+# A typical 40-page paper is ~80K chars (~20K tokens), well within limits.
+# Set to None to read the entire file; set to a positive int to cap.
+_MAX_FEEDBACK_CHARS = None     # None = unlimited
+_MAX_PAPER_CHARS = None        # None = unlimited
+_MAX_TOTAL_FEEDBACK_CHARS = None  # None = unlimited
 
 
 def validate_iterate_dir(path: str) -> dict:
@@ -196,16 +199,17 @@ def structure_feedback(items: list[dict]) -> str:
 
     total_chars = 0
     for item in items:
-        if total_chars >= _MAX_TOTAL_FEEDBACK_CHARS:
+        if _MAX_TOTAL_FEEDBACK_CHARS is not None and total_chars >= _MAX_TOTAL_FEEDBACK_CHARS:
             parts.append(
                 "\n> **Note:** Remaining feedback truncated due to length.\n"
             )
             break
         header = f"\n---\n## Feedback from `{item['source']}` ({item['format']})\n\n"
         content = item["content"]
-        remaining = _MAX_TOTAL_FEEDBACK_CHARS - total_chars
-        if len(content) > remaining:
-            content = content[:remaining] + "\n\n[...truncated...]"
+        if _MAX_TOTAL_FEEDBACK_CHARS is not None:
+            remaining = _MAX_TOTAL_FEEDBACK_CHARS - total_chars
+            if len(content) > remaining:
+                content = content[:remaining] + "\n\n[...truncated...]"
         parts.append(header)
         parts.append(content)
         total_chars += len(content)
@@ -270,13 +274,24 @@ def build_iterate_state_seed(iterate_dir: str, workspace_dir: str) -> dict:
         + "\n".join(summary_lines)
     )
 
+    # Extract binding constraints from human_directive.md if present.
+    # These are non-negotiable research decisions set by the PI that persona
+    # council members must respect (they may flag concerns but not REJECT
+    # based on these constraints).
+    binding_constraints = ""
+    directive_path = os.path.join(iterate_dir, "human_directive.md")
+    if os.path.isfile(directive_path):
+        with open(directive_path, "r", encoding="utf-8", errors="replace") as fh:
+            binding_constraints = fh.read()
+
     return {
         "iterate_mode": True,
         "iterate_prior_paper_path": prior_paper_ws,
         "iterate_feedback_path": feedback_path,
         "iterate_feedback_summary": feedback_summary,
+        "iterate_binding_constraints": binding_constraints,
         "formalized_results": (
             f"[Prior paper — revision mode]\n\n"
-            f"{paper_content[:5000]}"
+            f"{paper_content}"
         ),
     }

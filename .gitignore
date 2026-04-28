@@ -55,12 +55,14 @@ Miniconda3-latest-MacOSX-x86_64.sh
 # Slurm job outputs
 slurm_outputs/
 
-# Archive — keep manifests + YAMLs, exclude large results and token ledgers
+# Archive — keep YAMLs, exclude results, token ledgers, and manifests (contain absolute paths)
 archive/*/results/
 archive/*/token_ledger.jsonl
+archive/*/manifest.json
 
 # User-local LLM config (copy from .llm_config.yaml.example)
 .llm_config.yaml
+.llm_config.yaml.bak*
 
 # Local ad-hoc project workspaces (never commit)
 /project*/

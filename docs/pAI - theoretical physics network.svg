@@ -1,0 +1,212 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="3780" viewBox="0 0 1400 3780">
+<defs>
+<marker id="arrowhead" markerWidth="12" markerHeight="8" refX="10" refY="4" orient="auto">
+<polygon points="0 0, 12 4, 0 8" fill="#334155" />
+</marker>
+<filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+<feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#94a3b8" flood-opacity="0.25"/>
+</filter>
+</defs>
+<rect width="1400" height="3780" fill="#f8fafc" />
+<text x="700" y="24" fill="#0f172a" font-size="28" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">pAI - theoretical physics network</text>
+<g filter="url(#shadow)"><rect x="560" y="30" width="280" height="90" rx="18" ry="18" fill="#1d4ed8" stroke="#1e3a8a" stroke-width="2.5" />
+<text x="700" y="72.0" fill="#ffffff" font-size="20" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">Research prompt</text>
+<text x="700" y="94.0" fill="#dbeafe" font-size="12" font-weight="500" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">User-provided task or question</text></g>
+<g filter="url(#shadow)"><rect x="525" y="145" width="350" height="108" rx="18" ry="18" fill="#dbeafe" stroke="#284b8f" stroke-width="2.5" />
+<text x="700" y="194.0" fill="#0f172a" font-size="16" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">persona_council</text>
+<text x="700" y="216.0" fill="#334155" font-size="12" font-weight="500" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">Generates viewpoints and challenges assumptions</text></g>
+<g filter="url(#shadow)"><rect x="525" y="285" width="350" height="108" rx="18" ry="18" fill="#dbeafe" stroke="#284b8f" stroke-width="2.5" />
+<text x="700" y="334.0" fill="#0f172a" font-size="16" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">literature_review_agent</text>
+<text x="700" y="356.0" fill="#334155" font-size="12" font-weight="500" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">Collects prior work and constraints from references</text></g>
+<g filter="url(#shadow)"><rect x="525" y="425" width="350" height="108" rx="18" ry="18" fill="#e2e8f0" stroke="#284b8f" stroke-width="2.5" />
+<text x="700" y="474.0" fill="#0f172a" font-size="16" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">lit_review_gate</text>
+<text x="700" y="496.0" fill="#334155" font-size="12" font-weight="500" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">Checks if evidence is feasible and sufficient to proceed</text></g>
+<g filter="url(#shadow)"><rect x="525" y="565" width="350" height="108" rx="18" ry="18" fill="#dbeafe" stroke="#284b8f" stroke-width="2.5" />
+<text x="700" y="614.0" fill="#0f172a" font-size="16" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">brainstorm_agent</text>
+<text x="700" y="636.0" fill="#334155" font-size="12" font-weight="500" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">Proposes candidate directions and hypotheses</text></g>
+<g filter="url(#shadow)"><rect x="525" y="705" width="350" height="108" rx="18" ry="18" fill="#dcfce7" stroke="#166534" stroke-width="2.5" />
+<text x="700" y="754.0" fill="#0f172a" font-size="16" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">formalize_goals_entry</text>
+<text x="700" y="776.0" fill="#334155" font-size="12" font-weight="500" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">Converts ideas into structured goal handoff</text></g>
+<g filter="url(#shadow)"><rect x="525" y="845" width="350" height="108" rx="18" ry="18" fill="#dcfce7" stroke="#166534" stroke-width="2.5" />
+<text x="700" y="894.0" fill="#0f172a" font-size="16" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">formalize_goals_agent</text>
+<text x="700" y="916.0" fill="#334155" font-size="12" font-weight="500" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">Defines explicit objectives and success criteria</text></g>
+<g filter="url(#shadow)"><rect x="525" y="985" width="350" height="108" rx="18" ry="18" fill="#dcfce7" stroke="#166534" stroke-width="2.5" />
+<text x="700" y="1034.0" fill="#0f172a" font-size="16" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">research_plan_writeup_agent</text>
+<text x="700" y="1056.0" fill="#334155" font-size="12" font-weight="500" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">Writes the concrete execution plan</text></g>
+<g filter="url(#shadow)"><rect x="525" y="1125" width="350" height="108" rx="18" ry="18" fill="#f8fafc" stroke="#284b8f" stroke-width="2.5" />
+<text x="700" y="1174.0" fill="#0f172a" font-size="16" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">track_decomposition_gate</text>
+<text x="700" y="1196.0" fill="#334155" font-size="12" font-weight="500" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">Validates decomposition into executable tracks</text></g>
+<g filter="url(#shadow)"><rect x="525" y="1265" width="350" height="108" rx="18" ry="18" fill="#f8fafc" stroke="#284b8f" stroke-width="2.5" />
+<text x="700" y="1314.0" fill="#0f172a" font-size="16" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">milestone_goals</text>
+<text x="700" y="1336.0" fill="#334155" font-size="12" font-weight="500" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">Creates stage milestones and dependencies</text></g>
+<g filter="url(#shadow)"><rect x="525" y="1405" width="350" height="108" rx="18" ry="18" fill="#f8fafc" stroke="#284b8f" stroke-width="2.5" />
+<text x="700" y="1454.0" fill="#0f172a" font-size="16" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">track_router</text>
+<text x="700" y="1476.0" fill="#334155" font-size="12" font-weight="500" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">Dispatches work to theory and experiment branches</text></g>
+<g filter="url(#shadow)"><rect x="525" y="2225" width="350" height="108" rx="18" ry="18" fill="#f8fafc" stroke="#284b8f" stroke-width="2.5" />
+<text x="700" y="2274.0" fill="#0f172a" font-size="16" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">track_merge</text>
+<text x="700" y="2296.0" fill="#334155" font-size="12" font-weight="500" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">Combines branch outputs into unified state</text></g>
+<g filter="url(#shadow)"><rect x="525" y="2365" width="350" height="108" rx="18" ry="18" fill="#f8fafc" stroke="#284b8f" stroke-width="2.5" />
+<text x="700" y="2414.0" fill="#0f172a" font-size="16" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">verify_completion</text>
+<text x="700" y="2436.0" fill="#334155" font-size="12" font-weight="500" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">Routes to synthesize, rework, or rethink</text></g>
+<g filter="url(#shadow)"><rect x="525" y="2505" width="350" height="108" rx="18" ry="18" fill="#fde68a" stroke="#92400e" stroke-width="2.5" />
+<text x="700" y="2554.0" fill="#0f172a" font-size="16" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">formalize_results_agent</text>
+<text x="700" y="2576.0" fill="#334155" font-size="12" font-weight="500" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">Synthesizes accepted findings and claims</text></g>
+<g filter="url(#shadow)"><rect x="525" y="2645" width="350" height="108" rx="18" ry="18" fill="#fef3c7" stroke="#92400e" stroke-width="2.5" />
+<text x="700" y="2694.0" fill="#0f172a" font-size="16" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">duality_check</text>
+<text x="700" y="2716.0" fill="#334155" font-size="12" font-weight="500" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">Checks theory and empirical consistency</text></g>
+<g filter="url(#shadow)"><rect x="525" y="2785" width="350" height="108" rx="18" ry="18" fill="#f8fafc" stroke="#284b8f" stroke-width="2.5" />
+<text x="700" y="2834.0" fill="#0f172a" font-size="16" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">duality_gate</text>
+<text x="700" y="2856.0" fill="#334155" font-size="12" font-weight="500" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">Decides pass or follow-up investigation</text></g>
+<g filter="url(#shadow)"><rect x="525" y="2925" width="350" height="108" rx="18" ry="18" fill="#ede9fe" stroke="#6d28d9" stroke-width="2.5" />
+<text x="700" y="2974.0" fill="#0f172a" font-size="16" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">resource_preparation_agent</text>
+<text x="700" y="2996.0" fill="#334155" font-size="12" font-weight="500" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">Prepares citations, figures, and references</text></g>
+<g filter="url(#shadow)"><rect x="525" y="3065" width="350" height="108" rx="18" ry="18" fill="#ede9fe" stroke="#6d28d9" stroke-width="2.5" />
+<text x="700" y="3114.0" fill="#0f172a" font-size="16" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">writeup_agent</text>
+<text x="700" y="3136.0" fill="#334155" font-size="12" font-weight="500" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">Drafts manuscript sections and integrates artifacts</text></g>
+<g filter="url(#shadow)"><rect x="525" y="3205" width="350" height="108" rx="18" ry="18" fill="#ede9fe" stroke="#6d28d9" stroke-width="2.5" />
+<text x="700" y="3254.0" fill="#0f172a" font-size="16" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">proofreading_agent</text>
+<text x="700" y="3276.0" fill="#334155" font-size="12" font-weight="500" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">Improves clarity and language quality</text></g>
+<g filter="url(#shadow)"><rect x="525" y="3345" width="350" height="108" rx="18" ry="18" fill="#ede9fe" stroke="#6d28d9" stroke-width="2.5" />
+<text x="700" y="3394.0" fill="#0f172a" font-size="16" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">reviewer_agent</text>
+<text x="700" y="3416.0" fill="#334155" font-size="12" font-weight="500" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">Scores output quality and requests revision if needed</text></g>
+<g filter="url(#shadow)"><rect x="525" y="3485" width="350" height="108" rx="18" ry="18" fill="#f8fafc" stroke="#284b8f" stroke-width="2.5" />
+<text x="700" y="3534.0" fill="#0f172a" font-size="16" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">validation_gate</text>
+<text x="700" y="3556.0" fill="#334155" font-size="12" font-weight="500" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">Runs final artifact and quality validations</text></g>
+<g filter="url(#shadow)"><rect x="525" y="3625" width="350" height="116" rx="18" ry="18" fill="#14532d" stroke="#14532d" stroke-width="2.5" />
+<text x="700" y="3679.0" fill="#ffffff" font-size="18" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">Final artifacts</text>
+<text x="700" y="3701.0" fill="#dcfce7" font-size="12" font-weight="500" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">run_summary.json, budget_state.json, paper_workspace/</text></g>
+<g filter="url(#shadow)"><rect x="980" y="1490" width="380" height="780" rx="18" ry="18" fill="#fafafa" stroke="#94a3b8" stroke-width="2.5" stroke-dasharray="10 8" />
+<text x="1170" y="1876.0" fill="#0f172a" font-size="18" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">Theory track (optional)</text>
+<text x="1170" y="1898.0" fill="#334155" font-size="12" font-weight="500" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">Formal reasoning and verification branch</text></g>
+<g filter="url(#shadow)"><rect x="1035" y="1565" width="270" height="110" rx="18" ry="18" fill="#f8fafc" stroke="#64748b" stroke-width="2.5" />
+<text x="1170" y="1614.5" fill="#0f172a" font-size="14" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">math_literature_agent</text>
+<text x="1170" y="1635.5" fill="#334155" font-size="11" font-weight="500" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">Collects theorem and proof background</text></g>
+<g filter="url(#shadow)"><rect x="1035" y="1695" width="270" height="110" rx="18" ry="18" fill="#f8fafc" stroke="#64748b" stroke-width="2.5" />
+<text x="1170" y="1744.5" fill="#0f172a" font-size="14" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">math_proposer_agent</text>
+<text x="1170" y="1765.5" fill="#334155" font-size="11" font-weight="500" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">Proposes formal claims and structure</text></g>
+<g filter="url(#shadow)"><rect x="1035" y="1825" width="270" height="110" rx="18" ry="18" fill="#f8fafc" stroke="#64748b" stroke-width="2.5" />
+<text x="1170" y="1874.5" fill="#0f172a" font-size="14" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">math_prover_agent</text>
+<text x="1170" y="1895.5" fill="#334155" font-size="11" font-weight="500" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">Drafts proofs and key derivations</text></g>
+<g filter="url(#shadow)"><rect x="1035" y="1955" width="270" height="110" rx="18" ry="18" fill="#f8fafc" stroke="#64748b" stroke-width="2.5" />
+<text x="1170" y="2004.0" fill="#0f172a" font-size="13" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">math_rigorous_verifier_agent</text>
+<text x="1170" y="2025.0" fill="#334155" font-size="11" font-weight="500" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">Checks symbolic rigor and logic</text></g>
+<g filter="url(#shadow)"><rect x="1035" y="2085" width="270" height="110" rx="18" ry="18" fill="#f8fafc" stroke="#64748b" stroke-width="2.5" />
+<text x="1170" y="2134.0" fill="#0f172a" font-size="13" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">math_empirical_verifier_agent</text>
+<text x="1170" y="2155.0" fill="#334155" font-size="11" font-weight="500" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">Runs numeric or computational checks</text></g>
+<g filter="url(#shadow)"><rect x="1035" y="2215" width="270" height="110" rx="18" ry="18" fill="#f8fafc" stroke="#64748b" stroke-width="2.5" />
+<text x="1170" y="2264.0" fill="#0f172a" font-size="13" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">proof_transcription_agent</text>
+<text x="1170" y="2285.0" fill="#334155" font-size="11" font-weight="500" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">Converts proofs into paper artifacts</text></g>
+<g filter="url(#shadow)"><rect x="40" y="1490" width="380" height="650" rx="18" ry="18" fill="#fafafa" stroke="#94a3b8" stroke-width="2.5" stroke-dasharray="10 8" />
+<text x="230" y="1811.0" fill="#0f172a" font-size="18" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">Experiment track</text>
+<text x="230" y="1833.0" fill="#334155" font-size="12" font-weight="500" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">Empirical design, run, and verification branch</text></g>
+<g filter="url(#shadow)"><rect x="95" y="1565" width="270" height="110" rx="18" ry="18" fill="#fff7ed" stroke="#c2410c" stroke-width="2.5" />
+<text x="230" y="1614.0" fill="#0f172a" font-size="13" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">experiment_literature_agent</text>
+<text x="230" y="1635.0" fill="#334155" font-size="11" font-weight="500" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">Finds baselines and empirical precedents</text></g>
+<g filter="url(#shadow)"><rect x="95" y="1695" width="270" height="110" rx="18" ry="18" fill="#fff7ed" stroke="#c2410c" stroke-width="2.5" />
+<text x="230" y="1744.0" fill="#0f172a" font-size="13" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">experiment_design_agent</text>
+<text x="230" y="1765.0" fill="#334155" font-size="11" font-weight="500" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">Specifies setup, controls, and metrics</text></g>
+<g filter="url(#shadow)"><rect x="95" y="1825" width="270" height="110" rx="18" ry="18" fill="#fff7ed" stroke="#c2410c" stroke-width="2.5" />
+<text x="230" y="1874.5" fill="#0f172a" font-size="14" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">experimentation_agent</text>
+<text x="230" y="1895.5" fill="#334155" font-size="11" font-weight="500" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">Executes planned experiments</text></g>
+<g filter="url(#shadow)"><rect x="95" y="1955" width="270" height="110" rx="18" ry="18" fill="#fff7ed" stroke="#c2410c" stroke-width="2.5" />
+<text x="230" y="2003.5" fill="#0f172a" font-size="12" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">experiment_verification_agent</text>
+<text x="230" y="2024.5" fill="#334155" font-size="11" font-weight="500" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">Validates outputs and result quality</text></g>
+<g filter="url(#shadow)"><rect x="95" y="2085" width="270" height="110" rx="18" ry="18" fill="#fff7ed" stroke="#c2410c" stroke-width="2.5" />
+<text x="230" y="2133.5" fill="#0f172a" font-size="12" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">experiment_transcription_agent</text>
+<text x="230" y="2154.5" fill="#334155" font-size="11" font-weight="500" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">Packages findings into structured artifacts</text></g>
+<g filter="url(#shadow)"><rect x="980" y="2790" width="380" height="108" rx="18" ry="18" fill="#fee2e2" stroke="#b91c1c" stroke-width="2.5" />
+<text x="1170" y="2839.0" fill="#0f172a" font-size="16" font-weight="700" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">followup_lit_review</text>
+<text x="1170" y="2861.0" fill="#334155" font-size="12" font-weight="500" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">Performs targeted follow-up research</text></g>
+<text x="700.0" y="122.5" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">run starts</text>
+<line x1="700" y1="120" x2="700" y2="145" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" />
+<text x="700.0" y="259.0" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">viewpoints synthesized</text>
+<line x1="700" y1="253" x2="700" y2="285" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" />
+<text x="700.0" y="399.0" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">literature pass complete</text>
+<line x1="700" y1="393" x2="700" y2="425" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" />
+<text x="700.0" y="539.0" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">if feasible</text>
+<line x1="700" y1="533" x2="700" y2="565" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" />
+<text x="472.5" y="468.5" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">if infeasible</text>
+<line x1="525" y1="479" x2="420" y2="478" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" />
+<text x="472.5" y="328.5" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">reframe objective</text>
+<line x1="420" y1="478" x2="525" y2="199" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" stroke-dasharray="8 6" />
+<text x="700.0" y="679.0" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">candidate plans ready</text>
+<line x1="700" y1="673" x2="700" y2="705" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" />
+<text x="700.0" y="819.0" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">handoff normalized</text>
+<line x1="700" y1="813" x2="700" y2="845" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" />
+<text x="700.0" y="959.0" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">goals accepted</text>
+<line x1="700" y1="953" x2="700" y2="985" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" />
+<text x="700.0" y="1099.0" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">plan drafted</text>
+<line x1="700" y1="1093" x2="700" y2="1125" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" />
+<text x="700.0" y="1239.0" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">decomposition valid</text>
+<line x1="700" y1="1233" x2="700" y2="1265" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" />
+<text x="700.0" y="1379.0" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">milestones emitted</text>
+<line x1="700" y1="1373" x2="700" y2="1405" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" />
+<text x="377.5" y="1502.0" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">route: experiment</text>
+<line x1="525" y1="1459" x2="230" y2="1565" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" />
+<text x="1022.5" y="1502.0" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">route: theory</text>
+<line x1="875" y1="1459" x2="1170" y2="1565" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" />
+<text x="1170.0" y="1675.0" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">proof context ready</text>
+<line x1="1170" y1="1675" x2="1170" y2="1695" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" />
+<text x="1170.0" y="1805.0" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">claims proposed</text>
+<line x1="1170" y1="1805" x2="1170" y2="1825" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" />
+<text x="1170.0" y="1935.0" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">proof draft complete</text>
+<line x1="1170" y1="1935" x2="1170" y2="1955" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" />
+<text x="1170.0" y="2065.0" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">rigor checks pass</text>
+<line x1="1170" y1="2065" x2="1170" y2="2085" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" />
+<text x="1170.0" y="2195.0" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">numeric checks pass</text>
+<line x1="1170" y1="2195" x2="1170" y2="2215" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" />
+<text x="230.0" y="1675.0" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">baselines identified</text>
+<line x1="230" y1="1675" x2="230" y2="1695" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" />
+<text x="230.0" y="1805.0" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">design approved</text>
+<line x1="230" y1="1805" x2="230" y2="1825" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" />
+<text x="230.0" y="1935.0" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">runs complete</text>
+<line x1="230" y1="1935" x2="230" y2="1955" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" />
+<text x="230.0" y="2065.0" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">results validated</text>
+<line x1="230" y1="2065" x2="230" y2="2085" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" />
+<text x="445.0" y="2199.5" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">ingest experiment artifacts</text>
+<line x1="365" y1="2140" x2="525" y2="2279" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" />
+<text x="955.0" y="2264.5" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">ingest theory artifacts</text>
+<line x1="1035" y1="2270" x2="875" y2="2279" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" />
+<text x="700.0" y="2339.0" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">both tracks merged</text>
+<line x1="700" y1="2333" x2="700" y2="2365" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" />
+<text x="700.0" y="2479.0" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">if complete</text>
+<line x1="700" y1="2473" x2="700" y2="2505" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" />
+<text x="477.5" y="2408.5" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">if fundamental rethink</text>
+<line x1="525" y1="2419" x2="430" y2="2418" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" />
+<text x="477.5" y="1508.5" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">return to ideation</text>
+<line x1="430" y1="2418" x2="525" y2="619" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" stroke-dasharray="8 6" />
+<text x="922.5" y="2408.5" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">if partial rework</text>
+<line x1="875" y1="2419" x2="970" y2="2418" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" />
+<text x="922.5" y="1648.5" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">refine goals</text>
+<line x1="970" y1="2418" x2="875" y2="899" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" stroke-dasharray="8 6" />
+<text x="700.0" y="2619.0" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">results formalized</text>
+<line x1="700" y1="2613" x2="700" y2="2645" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" />
+<text x="700.0" y="2759.0" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">duality checked</text>
+<line x1="700" y1="2753" x2="700" y2="2785" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" />
+<text x="700.0" y="2899.0" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">if pass</text>
+<line x1="700" y1="2893" x2="700" y2="2925" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" />
+<text x="927.5" y="2831.5" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">if follow-up needed</text>
+<line x1="875" y1="2839" x2="980" y2="2844" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" />
+<text x="700.0" y="3039.0" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">assets assembled</text>
+<line x1="700" y1="3033" x2="700" y2="3065" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" />
+<text x="700.0" y="3179.0" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">draft compiled</text>
+<line x1="700" y1="3173" x2="700" y2="3205" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" />
+<text x="700.0" y="3319.0" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">language polished</text>
+<line x1="700" y1="3313" x2="700" y2="3345" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" />
+<text x="700.0" y="3459.0" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">review complete</text>
+<line x1="700" y1="3453" x2="700" y2="3485" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" />
+<text x="700.0" y="3599.0" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">if all checks pass</text>
+<line x1="700" y1="3593" x2="700" y2="3625" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" />
+<text x="927.5" y="3528.5" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">if revisions required</text>
+<line x1="875" y1="3539" x2="980" y2="3538" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" />
+<text x="1170.0" y="3211.5" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">revision path</text>
+<line x1="1170" y1="3538" x2="1170" y2="2905" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" stroke-dasharray="8 6" />
+<text x="1170.0" y="2837.5" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">enter follow-up review</text>
+<line x1="1170" y1="2905" x2="1170" y2="2790" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" stroke-dasharray="8 6" />
+<text x="1170.0" y="2911.5" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">follow-up complete</text>
+<line x1="1170" y1="2898" x2="1170" y2="2945" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" />
+<text x="1170.0" y="1771.5" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">loop to ideation</text>
+<line x1="1170" y1="2945" x2="1170" y2="618" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" stroke-dasharray="8 6" />
+<text x="1022.5" y="608.5" fill="#334155" font-size="11" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">resume at brainstorm</text>
+<line x1="1170" y1="618" x2="875" y2="619" stroke="#334155" stroke-width="3" marker-end="url(#arrowhead)" stroke-dasharray="8 6" />
+</svg>

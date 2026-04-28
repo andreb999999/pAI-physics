@@ -28,6 +28,7 @@ import argparse
 import json
 import math
 import os
+import re
 import sys
 import time as _time
 from datetime import datetime, timezone
@@ -41,9 +42,8 @@ if _TEX_LIVE_BIN and _TEX_LIVE_BIN not in os.environ.get("PATH", ""):
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(_HERE))
 
-# Load .env so notification credentials (TELEGRAM_BOT_TOKEN, etc.) are available
-from dotenv import load_dotenv
-load_dotenv(os.path.join(os.path.dirname(_HERE), ".env"), override=False)
+from consortium.cli.core.env_manager import inject_runtime_env
+inject_runtime_env(repo_root=os.path.dirname(_HERE))
 
 from consortium.campaign.spec import Stage, load_spec
 from consortium.campaign.status import (
@@ -116,18 +116,25 @@ def print_status_report(spec, status, campaign_dir: str) -> None:
 
 
 def _preflight_api_check() -> bool:
-    """Quick check that the primary API (Anthropic) is reachable and has credits.
+    """Quick check that the OpenRouter API is reachable and has credits.
 
     Makes a minimal API call (max_tokens=1) with the cheapest model.
     Returns True if OK, False if the API is unreachable or credits are exhausted.
     Cost: ~$0.001 per call.
     """
     try:
+        api_key = os.environ.get("OPENROUTER_API_KEY", "")
+        if not api_key:
+            print("[heartbeat] OPENROUTER_API_KEY not set; skipping API pre-flight check.")
+            return False
         import litellm
-        resp = litellm.completion(
-            model="claude-haiku-4-5-20251001",
+        from consortium.utils import normalize_model_for_litellm
+        probe_model = os.environ.get("CONSORTIUM_OPENROUTER_PROBE_MODEL", "claude-opus-4-6")
+        litellm.completion(
+            model=normalize_model_for_litellm(probe_model),
             messages=[{"role": "user", "content": "ping"}],
             max_tokens=1,
+            api_key=api_key,
         )
         return True
     except Exception as exc:
@@ -276,6 +283,9 @@ def _apply_campaign_plan(spec, status, campaign_dir: str):
                 "workspace": None,
                 "pid": None,
                 "slurm_job_id": None,
+                "attempt_id": None,
+                "stdout_log": None,
+                "stderr_log": None,
                 "started_at": None,
                 "completed_at": None,
                 "missing_artifacts": [],
@@ -308,6 +318,7 @@ def _write_resolved_spec(spec, campaign_dir: str) -> None:
                 "id": s.id,
                 "task_file": s.task_file,
                 "args": s.args,
+                "env": s.env,
                 "depends_on": s.depends_on,
                 "context_from": s.context_from,
                 "memory_dirs": s.memory_dirs,
@@ -354,13 +365,14 @@ def _check_workspace_mtime(workspace: str) -> tuple:
         return (False, 0.0)
     newest = 0.0
     try:
-        for entry in os.scandir(workspace):
-            try:
-                mt = entry.stat().st_mtime
-                if mt > newest:
-                    newest = mt
-            except OSError:
-                continue
+        for root, _, files in os.walk(workspace):
+            for fname in files:
+                try:
+                    mt = os.path.getmtime(os.path.join(root, fname))
+                    if mt > newest:
+                        newest = mt
+                except OSError:
+                    continue
     except OSError:
         return (False, 0.0)
     if newest == 0.0:
@@ -550,6 +562,11 @@ def run_heartbeat(
             status.mark_failed(sid, reason, missing)
             write_status(campaign_dir, status)
 
+            saturation_exit = _handle_provider_saturation(stage, spec, status, campaign_dir)
+            if saturation_exit is not None:
+                _save_idle_tick_count(campaign_dir, 0)
+                return saturation_exit
+
             # --- Autonomous repair attempt ---
             repair_exit = _try_repair(stage, spec, status, campaign_dir)
             if repair_exit is not None:
@@ -598,6 +615,11 @@ def run_heartbeat(
         for stage in spec.stages:
             sid = stage.id
             if status.stage_status(sid) == FAILED:
+                saturation_exit = _handle_provider_saturation(stage, spec, status, campaign_dir)
+                if saturation_exit is not None:
+                    _save_idle_tick_count(campaign_dir, 0)
+                    return saturation_exit
+
                 repair_exit = _try_repair(stage, spec, status, campaign_dir)
                 if repair_exit is not None:
                     _save_idle_tick_count(campaign_dir, 0)
@@ -693,8 +715,17 @@ def run_heartbeat(
 
         # Ready to launch
         proc = launch_stage(stage, spec, status, campaign_dir)
-        workspace = build_stage_workspace(stage, spec, status)
-        status.mark_in_progress(sid, workspace, proc.pid)
+        workspace = getattr(proc, "stage_workspace", None)
+        if workspace is None:
+            workspace = build_stage_workspace(stage, spec, status)
+        status.mark_in_progress(
+            sid,
+            workspace,
+            proc.pid,
+            attempt_id=getattr(proc, "attempt_id", None),
+            stdout_log=getattr(proc, "stdout_log_path", None),
+            stderr_log=getattr(proc, "stderr_log_path", None),
+        )
         write_status(campaign_dir, status)
         notify_stage_launched(sid, proc.pid, workspace, spec.notification)
         launched_any = True
@@ -764,10 +795,13 @@ def _validate_artifact_content(workspace: str, stage) -> list:
         # where required markers may appear beyond that offset).
         _MAX_VALIDATE_BYTES = 10_000_000
         if any(artifact.endswith(ext) for ext in (".json", ".md", ".txt", ".tex", ".csv")):
+            json_payload = None
             try:
                 read_limit = min(file_size, _MAX_VALIDATE_BYTES)
                 with open(full) as f:
                     content = f.read(read_limit)
+                if artifact.endswith(".json"):
+                    json_payload = json.loads(content)
             except Exception:
                 continue
 
@@ -785,7 +819,199 @@ def _validate_artifact_content(workspace: str, stage) -> list:
             if artifact.endswith(".json") and '"status": "not_executed"' in content:
                 errors.append(f"{artifact}: hollow artifact (status=not_executed)")
 
+            if isinstance(json_payload, dict):
+                for key in rules.get("json_required_keys", []):
+                    if key not in json_payload:
+                        errors.append(f"{artifact}: missing JSON key '{key}'")
+
+                for key, minimum in (rules.get("json_min_numeric") or {}).items():
+                    try:
+                        value = float(json_payload.get(key))
+                    except Exception:
+                        errors.append(f"{artifact}: JSON key '{key}' is missing or non-numeric")
+                        continue
+                    if value < float(minimum):
+                        errors.append(
+                            f"{artifact}: JSON key '{key}' below minimum ({value} < {minimum})"
+                        )
+
+                for key, max_items in (rules.get("json_max_list_length") or {}).items():
+                    value = json_payload.get(key)
+                    if not isinstance(value, list):
+                        errors.append(f"{artifact}: JSON key '{key}' must be a list")
+                        continue
+                    if len(value) > int(max_items):
+                        errors.append(
+                            f"{artifact}: JSON key '{key}' too long ({len(value)} > {max_items})"
+                        )
+
     return errors
+
+
+_LITERATURE_RATE_PATTERNS = (
+    r"\b429\b",
+    r"rate limit",
+    r"rate-limit",
+    r"too many requests",
+    r"\btimed out\b",
+    r"\btimeout\b",
+    r"literature provider saturation",
+    r"\[literature-rate-limit\]",
+)
+_LITERATURE_CONTEXT_PATTERNS = (
+    r"literature_review_agent",
+    r"math_literature_agent",
+    r"experiment_literature_agent",
+    r"deep_literature_search",
+    r"citation_search_tool",
+    r"semantic scholar",
+    r"\barxiv\b",
+)
+_HARD_FAILURE_PATTERNS = (
+    r"sqlite3\.databaseerror",
+    r"file is not a database",
+    r"syntaxerror",
+    r"modulenotfounderror",
+    r"filenotfounderror",
+    r"permission denied",
+    r"no space left on device",
+    r"disk quota",
+)
+
+
+def _read_stage_log_excerpt(status, stage_id: str, campaign_dir: str, max_bytes: int = 200_000) -> str:
+    """Read the tail of the current stage attempt logs for classification."""
+    chunks: list[str] = []
+    stage_data = status.raw()["stages"].get(stage_id, {})
+    for label, key in (("stdout", "stdout_log"), ("stderr", "stderr_log")):
+        path = stage_data.get(key)
+        if not path:
+            continue
+        full_path = path if os.path.isabs(path) else os.path.join(campaign_dir, path)
+        try:
+            with open(full_path, encoding="utf-8", errors="replace") as handle:
+                handle.seek(0, os.SEEK_END)
+                size = handle.tell()
+                handle.seek(max(0, size - max_bytes))
+                chunks.append(f"\n--- {label} ({os.path.basename(full_path)}) ---\n")
+                chunks.append(handle.read())
+        except OSError:
+            continue
+    return "".join(chunks)
+
+
+def _classify_failure_mode(stage, status, campaign_dir: str) -> dict:
+    """Classify stage failures to distinguish provider saturation from hard failures."""
+    log_excerpt = _read_stage_log_excerpt(status, stage.id, campaign_dir)
+    text = log_excerpt.lower()
+    rate_hits = sum(len(re.findall(pattern, text)) for pattern in _LITERATURE_RATE_PATTERNS)
+    context_hits = sum(len(re.findall(pattern, text)) for pattern in _LITERATURE_CONTEXT_PATTERNS)
+    hard_hits = [pattern for pattern in _HARD_FAILURE_PATTERNS if re.search(pattern, text)]
+
+    if not hard_hits and context_hits > 0 and rate_hits >= 2:
+        reason = (
+            f"literature_provider_saturation: repeated provider throttling/timeouts detected "
+            f"(rate_hits={rate_hits}, context_hits={context_hits})"
+        )
+        return {
+            "type": "literature_provider_saturation",
+            "reason": reason,
+            "log_excerpt": log_excerpt[-8000:],
+            "rate_hits": rate_hits,
+            "context_hits": context_hits,
+        }
+
+    return {
+        "type": "generic_failure",
+        "reason": "",
+        "log_excerpt": log_excerpt[-8000:],
+        "rate_hits": rate_hits,
+        "context_hits": context_hits,
+        "hard_hits": hard_hits,
+    }
+
+
+def _handle_provider_saturation(stage, spec, status, campaign_dir: str) -> "int | None":
+    """Cool down and relaunch literature-saturated stages without invoking repair agents."""
+    classification = _classify_failure_mode(stage, status, campaign_dir)
+    if classification.get("type") != "literature_provider_saturation":
+        return None
+
+    sid = stage.id
+    stage_data = status.raw()["stages"].setdefault(sid, {})
+    saturation_log = stage_data.setdefault("provider_saturation_log", [])
+    failure_marker = stage_data.get("completed_at") or ""
+    matching_entry = next(
+        (entry for entry in reversed(saturation_log) if entry.get("failure_completed_at") == failure_marker),
+        None,
+    )
+
+    now = datetime.now(timezone.utc)
+    if matching_entry is None:
+        saturation_attempt = len(saturation_log) + 1
+        backoff_seconds = _compute_backoff_seconds(spec.repair, saturation_attempt)
+        ready_at = now.timestamp() + backoff_seconds
+        entry = {
+            "attempt": saturation_attempt,
+            "failure_completed_at": failure_marker,
+            "observed_at": now.isoformat(),
+            "ready_at": datetime.fromtimestamp(ready_at, timezone.utc).isoformat(),
+            "reason": classification["reason"],
+            "log_excerpt": classification["log_excerpt"],
+        }
+        saturation_log.append(entry)
+        write_status(campaign_dir, status)
+        minutes = max(backoff_seconds / 60.0, 1 / 60.0)
+        notify(
+            f"Campaign '{spec.name}' stage '{sid}' is cooling down on external literature providers "
+            f"(Semantic Scholar/arXiv saturation). OpenClaw will relaunch after about {minutes:.1f} minutes "
+            f"instead of invoking the repair agent.",
+            spec.notification,
+        )
+        print(
+            f"[heartbeat] Stage '{sid}' classified as literature_provider_saturation. "
+            f"Cooling down for {backoff_seconds:.0f}s before relaunch."
+        )
+        return 1
+
+    try:
+        ready_at = datetime.fromisoformat(matching_entry["ready_at"])
+    except (KeyError, TypeError, ValueError):
+        ready_at = now
+
+    remaining = (ready_at - now).total_seconds()
+    if remaining > 0:
+        print(
+            f"[heartbeat] Stage '{sid}' is waiting out literature provider cooldown: "
+            f"{remaining:.0f}s remaining."
+        )
+        return 1
+
+    print(f"[heartbeat] Relaunching stage '{sid}' after literature provider cooldown.")
+    status.mark_pending_retry(sid)
+    write_status(campaign_dir, status)
+
+    proc = launch_stage(stage, spec, status, campaign_dir)
+    from consortium.campaign.runner import build_stage_workspace
+
+    workspace = getattr(proc, "stage_workspace", None)
+    if workspace is None:
+        workspace = build_stage_workspace(stage, spec, status)
+    status.mark_in_progress(
+        sid,
+        workspace,
+        proc.pid,
+        attempt_id=getattr(proc, "attempt_id", None),
+        stdout_log=getattr(proc, "stdout_log_path", None),
+        stderr_log=getattr(proc, "stderr_log_path", None),
+    )
+    write_status(campaign_dir, status)
+    notify(
+        f"Campaign '{spec.name}' stage '{sid}' relaunched after literature provider cooldown.",
+        spec.notification,
+    )
+    notify_stage_launched(sid, proc.pid, workspace, spec.notification)
+    return 3
 
 
 def _compute_backoff_seconds(repair_config, attempt_num: int) -> float:
@@ -1002,8 +1228,17 @@ def _handle_repair_result(
         # Relaunch the stage
         proc = launch_stage(stage, spec, status, campaign_dir)
         from consortium.campaign.runner import build_stage_workspace
-        workspace = build_stage_workspace(stage, spec, status)
-        status.mark_in_progress(sid, workspace, proc.pid)
+        workspace = getattr(proc, "stage_workspace", None)
+        if workspace is None:
+            workspace = build_stage_workspace(stage, spec, status)
+        status.mark_in_progress(
+            sid,
+            workspace,
+            proc.pid,
+            attempt_id=getattr(proc, "attempt_id", None),
+            stdout_log=getattr(proc, "stdout_log_path", None),
+            stderr_log=getattr(proc, "stderr_log_path", None),
+        )
         write_status(campaign_dir, status)
         notify_stage_launched(sid, proc.pid, workspace, spec.notification)
         return 3  # stage relaunched

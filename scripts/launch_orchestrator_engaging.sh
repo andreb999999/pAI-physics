@@ -14,7 +14,7 @@
 # =============================================================================
 
 #SBATCH --job-name=consortium_orch
-#SBATCH --partition=sched_mit_hill
+#SBATCH --partition=batch                 # Override via: sbatch --partition=YOUR_PARTITION
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=4
@@ -69,6 +69,10 @@ echo "Python:    $(which python) ($(python --version 2>&1))"
 # --- Enable SLURM experiment submission ---
 export CONSORTIUM_SLURM_ENABLED=1
 export ENGAGING_CONFIG="$REPO_DIR/engaging_config.yaml"
+
+# Suppress Vertex AI / Google Cloud SDK ImportError noise in litellm
+# (all models route through OpenRouter; Vertex credentials are not needed)
+export LITELLM_LOG=ERROR
 
 # --- Task ---
 # RESEARCH_TASK can be set as an env var before sbatch, or passed via --task flag

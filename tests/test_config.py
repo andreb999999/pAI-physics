@@ -19,6 +19,17 @@ class TestLoadLlmConfig:
         monkeypatch.chdir(tmp_path)
         assert load_llm_config() is None
 
+    def test_honors_consortium_llm_config_path_override(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        cfg_path = tmp_path / "rigorous.yaml"
+        cfg = {"main_agents": {"model": "claude-opus-4-6"}}
+        cfg_path.write_text(yaml.dump(cfg))
+        monkeypatch.setenv("CONSORTIUM_LLM_CONFIG_PATH", str(cfg_path))
+
+        result = load_llm_config()
+
+        assert result["main_agents"]["model"] == "claude-opus-4-6"
+
     def test_loads_valid_yaml(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         cfg = {"main_agents": {"model": "claude-sonnet-4-5", "reasoning_effort": "high"}}

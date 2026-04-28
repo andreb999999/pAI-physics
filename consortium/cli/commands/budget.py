@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import click
 from rich.console import Console
 from rich.table import Table
+
+from consortium.cli.core.paths import find_results_dir
+from consortium.cli.core.run_inspector import inspect_run
 
 console = Console()
 
@@ -21,8 +23,8 @@ def budget(results_dir: str | None) -> None:
     Examples:
       msc budget              # Summary of all runs
     """
-    rdir = Path(results_dir) if results_dir else Path.cwd() / "results"
-    if not rdir.is_dir():
+    rdir = Path(results_dir) if results_dir else find_results_dir()
+    if rdir is None or not rdir.is_dir():
         console.print("[dim]No results/ directory found.[/]")
         return
 
@@ -39,25 +41,11 @@ def budget(results_dir: str | None) -> None:
     )
 
     for d in run_dirs:
-        cost = 0.0
-        model = "-"
-
-        for fname in ("budget_state.json", "run_summary.json"):
-            fpath = d / fname
-            if fpath.exists():
-                try:
-                    with open(fpath, "r") as f:
-                        data = json.load(f)
-                    cost = data.get("total_usd", data.get("total_cost_usd", 0.0))
-                    model = data.get("model", model)
-                    if cost > 0:
-                        break
-                except (json.JSONDecodeError, OSError):
-                    pass
-
+        info = inspect_run(d)
+        cost = info["budget_usd"] or 0.0
         if cost > 0:
             total += cost
-            table.add_row(d.name, f"${cost:.2f}", model)
+            table.add_row(d.name, f"${cost:.2f}", info["model"])
 
     console.print(table)
     console.print(f"\n[bold]Total spend:[/] ${total:.2f}")

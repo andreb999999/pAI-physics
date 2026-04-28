@@ -33,9 +33,10 @@ _EXPECTED_FIELDS = frozenset({
     "validation_retry_count", "max_validation_retries",
     "tree_search_enabled", "enable_milestone_gates", "milestone_timeout",
     "iterate_mode", "autonomous_mode", "finished",
-    "lit_review_attempts", "brainstorm_cycle",
+    "lit_review_attempts", "brainstorm_cycle", "brainstorm_artifact_retries",
     "verify_rework_attempts", "duality_rework_attempts",
     "theory_repair_count",
+    "iterate_start_stage_override", "executed_stages",
 })
 
 
@@ -164,6 +165,7 @@ class ResearchState(TypedDict):
     pipeline_stage_index: int             # Index into pipeline_stages; incremented after each stage completes
     current_agent: Optional[str]          # Name of next specialist to invoke (set by router)
     agent_task: Optional[str]             # Task prompt for the specialist (cleared to None after use)
+    iterate_start_stage_override: Optional[str]  # explicit iterate-mode entry stage override
 
     # -----------------------------------------------------------------
     # Agent outputs — keyed by agent name, shallow-merged across parallel branches.
@@ -175,6 +177,7 @@ class ResearchState(TypedDict):
     # Artifact tracking
     # -----------------------------------------------------------------
     artifacts: dict                       # artifact_name -> absolute path
+    executed_stages: Annotated[list[str], operator.add]  # ordered canonical stage visits
 
     # -----------------------------------------------------------------
     # Iteration counters
@@ -230,6 +233,8 @@ class ResearchState(TypedDict):
     iterate_prior_paper_path: Optional[str]      # path to prior paper in workspace
     iterate_feedback_path: Optional[str]         # path to consolidated feedback markdown
     iterate_feedback_summary: Optional[str]      # short summary of key changes needed
+    iterate_binding_constraints: Optional[str]   # PI's non-negotiable research directives (from human_directive.md)
+    iterate_route: Optional[str]                 # routing decision: writing_only, needs_research, needs_full_rethink
 
     # -----------------------------------------------------------------
     # Intermediate validation checkpoints
@@ -263,8 +268,14 @@ class ResearchState(TypedDict):
     # -----------------------------------------------------------------
     lit_review_attempts: int                   # lit_review→council loop (max 2)
     brainstorm_cycle: int                      # brainstorm re-entry from verify or duality (max 3)
+    brainstorm_artifact_retries: int           # brainstorm artifact repair attempts (max 2)
     verify_rework_attempts: int                # verify→formalize_goals loop (max 3)
     duality_rework_attempts: int               # duality→followup_lit→brainstorm loop (max 2)
+
+    # -----------------------------------------------------------------
+    # Critical failure — halts pipeline on non-retryable errors (e.g. 4xx API)
+    # -----------------------------------------------------------------
+    critical_failure: Optional[str]              # None = OK; set to error message to halt pipeline
 
     # -----------------------------------------------------------------
     # Terminal flag

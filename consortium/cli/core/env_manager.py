@@ -9,31 +9,42 @@ from typing import Any
 
 from consortium.cli.core.config_manager import get_config_dir
 
+_TRUEISH = {"1", "true", "yes", "on"}
+_FALSEISH = {"0", "false", "no", "off"}
+
 
 # API key definitions: name, env var, provider, required level
 API_KEYS = [
     {
+        "name": "OpenRouter",
+        "env_var": "OPENROUTER_API_KEY",
+        "provider": "openrouter",
+        "level": "required",
+        "description": "All models via OpenRouter (single key for Claude, GPT, Gemini, etc.)",
+        "prefix": "sk-or-",
+    },
+    {
         "name": "Anthropic",
         "env_var": "ANTHROPIC_API_KEY",
         "provider": "anthropic",
-        "level": "required",
-        "description": "Claude models (Opus, Sonnet) — primary research models",
+        "level": "optional",
+        "description": "Claude models directly (alternative to OpenRouter)",
         "prefix": "sk-ant-",
     },
     {
         "name": "OpenAI",
         "env_var": "OPENAI_API_KEY",
         "provider": "openai",
-        "level": "required",
-        "description": "GPT-5 models — used in counsel mode debates",
+        "level": "optional",
+        "description": "GPT models directly (alternative to OpenRouter)",
         "prefix": "sk-",
     },
     {
         "name": "Google AI",
         "env_var": "GOOGLE_API_KEY",
         "provider": "google",
-        "level": "recommended",
-        "description": "Gemini models — recommended for counsel mode (3-model debate)",
+        "level": "optional",
+        "description": "Gemini models directly (alternative to OpenRouter)",
         "prefix": "",
     },
     {
@@ -81,19 +92,13 @@ NOTIFICATION_KEYS = [
 ]
 
 
-def get_env_file_path(config_dir_override: str | None = None) -> Path:
-    """Return the path to the .env file."""
-    return get_config_dir(config_dir_override) / ".env"
-
-
-def load_env_vars(config_dir_override: str | None = None) -> dict[str, str]:
-    """Load existing env vars from the .env file."""
-    env_path = get_env_file_path(config_dir_override)
-    if not env_path.exists():
+def _load_env_file(path: Path) -> dict[str, str]:
+    """Load KEY=VALUE pairs from an env file."""
+    if not path.exists():
         return {}
 
     env_vars: dict[str, str] = {}
-    with open(env_path, "r") as f:
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
         for line in f:
             line = line.strip()
             if not line or line.startswith("#"):
@@ -105,6 +110,23 @@ def load_env_vars(config_dir_override: str | None = None) -> dict[str, str]:
                 if key and value:
                     env_vars[key] = value
     return env_vars
+
+
+def get_env_file_path(config_dir_override: str | None = None) -> Path:
+    """Return the path to the .env file."""
+    return get_config_dir(config_dir_override) / ".env"
+
+
+def load_env_vars(config_dir_override: str | None = None) -> dict[str, str]:
+    """Load existing env vars from the .env file."""
+    return _load_env_file(get_env_file_path(config_dir_override))
+
+
+def load_repo_env_vars(repo_root: str | Path | None = None) -> dict[str, str]:
+    """Load env vars from the repo-root .env file when present."""
+    if repo_root is None:
+        return {}
+    return _load_env_file(Path(repo_root) / ".env")
 
 
 def save_env_file(
@@ -152,37 +174,173 @@ def save_env_file(
     return env_path
 
 
-def inject_env(config_dir_override: str | None = None) -> None:
-    """Load .env vars into the current process environment.
+def _should_use_repo_env(
+    repo_root: str | Path | None,
+    allow_repo_env: bool | None,
+) -> bool:
+    """Return whether repo-root .env should participate in env resolution."""
+    if repo_root is None:
+        return False
+    if allow_repo_env is not None:
+        return allow_repo_env
 
-    Called before spawning consortium subprocess so it inherits the keys.
+    env_override = os.getenv("CONSORTIUM_USE_REPO_ENV", "").strip().lower()
+    if env_override in _TRUEISH:
+        return True
+    if env_override in _FALSEISH:
+        return False
+
+    repo_path = Path(repo_root).resolve()
+    try:
+        cwd = Path.cwd().resolve()
+    except OSError:
+        return False
+    return cwd == repo_path or repo_path in cwd.parents
+
+
+def _merge_runtime_env(
+    *,
+    config_dir_override: str | None = None,
+    repo_root: str | Path | None = None,
+    base_env: dict[str, str] | None = None,
+    allow_repo_env: bool | None = None,
+) -> tuple[dict[str, str], dict[str, str]]:
+    env = dict(base_env or os.environ)
+    sources = {key: "shell" for key, value in env.items() if value}
+    protected = set(sources)
+
+    include_repo_env = _should_use_repo_env(repo_root, allow_repo_env)
+    if include_repo_env:
+        for key, value in load_repo_env_vars(repo_root).items():
+            if not env.get(key):
+                env[key] = value
+                sources[key] = "repo-env"
+
+    for key, value in load_env_vars(config_dir_override).items():
+        if key in protected:
+            continue
+        env[key] = value
+        sources[key] = "config-dir"
+
+    return env, sources
+
+
+def build_runtime_env(
+    *,
+    config_dir_override: str | None = None,
+    repo_root: str | Path | None = None,
+    base_env: dict[str, str] | None = None,
+    allow_repo_env: bool | None = None,
+) -> dict[str, str]:
+    """Merge shell, config-dir, and repo-local env layers.
+
+    Precedence:
+    1. Existing process environment
+    2. ~/.msc/.env
+    3. repo-root .env (only when explicitly allowed or running from repo root)
     """
+    env, _ = _merge_runtime_env(
+        config_dir_override=config_dir_override,
+        repo_root=repo_root,
+        base_env=base_env,
+        allow_repo_env=allow_repo_env,
+    )
+    return env
+
+
+def inject_runtime_env(
+    *,
+    config_dir_override: str | None = None,
+    repo_root: str | Path | None = None,
+    allow_repo_env: bool | None = None,
+) -> None:
+    """Load repo-local and ~/.msc env layers into the current process."""
+    os.environ.update(
+        build_runtime_env(
+            config_dir_override=config_dir_override,
+            repo_root=repo_root,
+            base_env=dict(os.environ),
+            allow_repo_env=allow_repo_env,
+        )
+    )
+
+
+def inject_env(config_dir_override: str | None = None) -> None:
+    """Load ~/.msc/.env vars into the current process environment."""
     env_vars = load_env_vars(config_dir_override)
     for key, value in env_vars.items():
         if key not in os.environ:
             os.environ[key] = value
 
 
-def check_required_keys(config_dir_override: str | None = None) -> list[dict[str, Any]]:
+def check_required_keys(
+    config_dir_override: str | None = None,
+    *,
+    repo_root: str | Path | None = None,
+    allow_repo_env: bool | None = None,
+) -> list[dict[str, Any]]:
     """Check which required/recommended API keys are configured.
 
     Returns a list of dicts with 'name', 'env_var', 'level', 'configured' fields.
     """
-    env_vars = load_env_vars(config_dir_override)
+    env_vars, sources = _merge_runtime_env(
+        config_dir_override=config_dir_override,
+        repo_root=repo_root,
+        allow_repo_env=allow_repo_env,
+    )
     results = []
     for key_info in API_KEYS:
-        configured = bool(
-            env_vars.get(key_info["env_var"]) or os.environ.get(key_info["env_var"])
-        )
-        results.append({**key_info, "configured": configured})
+        configured = bool(env_vars.get(key_info["env_var"]))
+        results.append({
+            **key_info,
+            "configured": configured,
+            "source": sources.get(key_info["env_var"]),
+        })
     return results
 
 
+def has_required_llm_key(
+    config_dir_override: str | None = None,
+    *,
+    repo_root: str | Path | None = None,
+    allow_repo_env: bool | None = None,
+) -> bool:
+    """Return True when the required OpenRouter key is configured."""
+    env_vars = build_runtime_env(
+        config_dir_override=config_dir_override,
+        repo_root=repo_root,
+        allow_repo_env=allow_repo_env,
+    )
+    return bool(env_vars.get("OPENROUTER_API_KEY"))
+
+
+def get_runtime_env_sources(
+    config_dir_override: str | None = None,
+    *,
+    repo_root: str | Path | None = None,
+    allow_repo_env: bool | None = None,
+    base_env: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """Return the winning source for each resolved environment variable."""
+    _, sources = _merge_runtime_env(
+        config_dir_override=config_dir_override,
+        repo_root=repo_root,
+        allow_repo_env=allow_repo_env,
+        base_env=base_env,
+    )
+    return sources
+
+
 def has_any_llm_key(config_dir_override: str | None = None) -> bool:
-    """Check if at least one LLM API key is configured."""
+    """Check if at least one LLM API key is configured.
+
+    Returns True if OpenRouter key is set (sufficient for all models) or
+    if any direct provider key (Anthropic, OpenAI, Google) is set.
+    """
     results = check_required_keys(config_dir_override)
     return any(
         r["configured"]
         for r in results
-        if r["level"] in ("required", "recommended") and r["provider"] != "serper"
+        if r["provider"] not in ("serper",)
+        and r["env_var"].endswith("_API_KEY")
     )

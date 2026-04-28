@@ -92,14 +92,27 @@ def create_specialist_agent(
         try:
             result = react_agent.invoke(
                 {"messages": [HumanMessage(content=task)]},
+                config={"recursion_limit": 100},
             )
         except Exception as e:
             logger.error("Agent '%s' failed during invoke: %s", agent_name, e, exc_info=True)
             output = f"[AGENT_ERROR: {agent_name}: {type(e).__name__}: {e}]"
-            return {
+            update: dict = {
                 "agent_outputs": {**state.get("agent_outputs", {}), agent_name: output},
                 "agent_task": None,
             }
+            # Non-retryable errors (4xx Bad Request, auth errors) should halt the
+            # pipeline rather than continuing with empty state.  Transient errors
+            # (5xx, timeouts) are already retried by litellm's built-in retry logic.
+            error_name = type(e).__name__
+            if error_name in ("BadRequestError", "AuthenticationError", "PermissionDeniedError"):
+                update["critical_failure"] = (
+                    f"Non-retryable error in {agent_name}: {error_name}: {e}"
+                )
+                logger.critical(
+                    "CRITICAL FAILURE — pipeline will halt. %s: %s", error_name, e,
+                )
+            return update
         finally:
             set_current_agent_name(None)
 

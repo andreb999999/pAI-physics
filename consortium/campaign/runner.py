@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import shlex
 import socket
 import subprocess
 import sys
@@ -26,6 +27,11 @@ from .spec import CampaignSpec, Stage
 from .status import CampaignStatus
 
 logger = logging.getLogger(__name__)
+
+
+def next_stage_attempt_id(status: CampaignStatus, stage_id: str) -> int:
+    previous = status.stage_attempt_id(stage_id)
+    return (previous or 0) + 1
 
 
 def build_task_prompt(
@@ -206,6 +212,24 @@ def _find_available_callback_port(
     )
 
 
+def _build_stage_env(
+    stage: Stage,
+    spec: CampaignSpec,
+    workspace: str,
+    extra_env: Optional[dict] = None,
+) -> dict[str, str]:
+    """Resolve the effective environment overrides for a stage launch."""
+    resolved = {str(k): str(v) for k, v in (stage.env or {}).items()}
+    if "COUNSEL_MODEL_TIMEOUT_SECONDS" not in resolved:
+        resolved["COUNSEL_MODEL_TIMEOUT_SECONDS"] = str(spec.counsel_model_timeout_seconds)
+    if "CONSORTIUM_LIT_RATE_STATE_DIR" not in resolved:
+        resolved["CONSORTIUM_LIT_RATE_STATE_DIR"] = os.path.join(workspace, ".lit_rate_state")
+    if extra_env:
+        for key, value in extra_env.items():
+            resolved[str(key)] = str(value)
+    return resolved
+
+
 def launch_stage(
     stage: Stage,
     spec: CampaignSpec,
@@ -313,20 +337,37 @@ def launch_stage(
 
         cwd = os.path.dirname(launcher)
 
-    env = {**os.environ, **(extra_env or {})}
+    stage_env = _build_stage_env(stage, spec, workspace, extra_env=extra_env)
+    env = {
+        **os.environ,
+        **stage_env,
+        "PYTHONDONTWRITEBYTECODE": "1",
+        # Campaign supervision already rotates per-attempt logs. Keep the
+        # child attached to those files instead of re-redirecting inside the
+        # runner, and force line-buffered Python output into the attempt logs.
+        "CONSORTIUM_LOG_TO_FILES": "0",
+        "PYTHONUNBUFFERED": "1",
+    }
 
     log_dir = os.path.join(campaign_dir, "logs")
     os.makedirs(log_dir, exist_ok=True)
-    stdout_log = open(os.path.join(log_dir, f"{stage.id}_stdout.log"), "a")
-    stderr_log = open(os.path.join(log_dir, f"{stage.id}_stderr.log"), "a")
+    attempt_id = next_stage_attempt_id(status, stage.id)
+    stdout_log_path = os.path.join(log_dir, f"{stage.id}_attempt_{attempt_id}_stdout.log")
+    stderr_log_path = os.path.join(log_dir, f"{stage.id}_attempt_{attempt_id}_stderr.log")
+    stdout_log = open(stdout_log_path, "a")
+    stderr_log = open(stderr_log_path, "a")
 
     print(f"[campaign] Launching stage '{stage.id}': {' '.join(cmd[:5])} ...")
     proc = subprocess.Popen(
         cmd,
+        stdin=subprocess.DEVNULL,
         stdout=stdout_log,
         stderr=stderr_log,
         env=env,
         cwd=cwd,
+        # Detach from the heartbeat shell/session so the launched stage
+        # survives after the heartbeat process exits.
+        start_new_session=True,
     )
 
     # Close file handles in the parent — the child inherited the FDs.
@@ -339,6 +380,11 @@ def launch_stage(
     os.makedirs(pid_dir, exist_ok=True)
     with open(os.path.join(pid_dir, f"{stage.id}.pid"), "w") as f:
         f.write(str(proc.pid))
+
+    setattr(proc, "attempt_id", attempt_id)
+    setattr(proc, "stdout_log_path", stdout_log_path)
+    setattr(proc, "stderr_log_path", stderr_log_path)
+    setattr(proc, "stage_workspace", workspace)
 
     print(f"[campaign] Stage '{stage.id}' started (PID {proc.pid}), workspace: {workspace}")
     return proc
@@ -464,11 +510,12 @@ def launch_stage_slurm(
     slurm_log_dir = os.path.join(campaign_dir, "slurm_logs")
     os.makedirs(slurm_log_dir, exist_ok=True)
 
+    stage_env = _build_stage_env(stage, spec, workspace, extra_env=extra_env)
+
     # Build environment exports
     env_exports = ""
-    if extra_env:
-        for k, v in extra_env.items():
-            env_exports += f"export {k}={v!r}\n"
+    for key, value in stage_env.items():
+        env_exports += f"export {key}={shlex.quote(value)}\n"
 
     script_content = f"""#!/bin/bash
 #SBATCH --job-name=campaign_{stage.id}

@@ -2,7 +2,8 @@
 # =============================================================================
 # PoggioAI/MSc CLI Wrapper
 # =============================================================================
-# Convenience interface for common PoggioAI/MSc operations.
+# Legacy repo-local helper for common PoggioAI/MSc operations.
+# Prefer the installed `msc` CLI after `python -m pip install -e .`.
 #
 # Usage:
 #   ./poggioaimsc run --task "..."              Run a single research pipeline
@@ -37,6 +38,9 @@ fi
 usage() {
     cat << 'EOF'
 Usage: ./poggioaimsc <command> [options]
+
+This wrapper is kept for legacy repo-local workflows.
+Prefer `msc ...` for normal setup, runs, and campaigns.
 
 Commands:
   run             Run a single research pipeline

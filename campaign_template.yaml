@@ -9,6 +9,7 @@
 
 name: "My Research Campaign"
 workspace_root: "results/my_campaign_v1"        # MUST be unique per campaign
+budget_usd: 150                                 # campaign-wide budget cap in USD
 
 heartbeat_interval_minutes: 15
 

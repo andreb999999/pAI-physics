@@ -103,3 +103,17 @@ class TestStageAliases:
         stages = build_pipeline_stages_v2(enable_math_agents=False)
         with pytest.raises(ValueError, match="Unknown --start-from-stage"):
             _resolve_start_stage_index("nonexistent_stage", stages)
+
+
+class TestIterateRouting:
+    def test_iterate_override_bypasses_classifier(self):
+        from consortium.graph import iterate_persona_exit_router
+
+        state = {"iterate_start_stage_override": "literature_review_agent"}
+        assert iterate_persona_exit_router(state) == "literature_review_agent"
+
+    def test_iterate_without_override_uses_classifier(self):
+        from consortium.graph import iterate_persona_exit_router
+
+        state = {"iterate_start_stage_override": None}
+        assert iterate_persona_exit_router(state) == "iterate_router"

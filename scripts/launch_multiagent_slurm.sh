@@ -6,7 +6,7 @@
 # GPU experiments are submitted as separate SLURM jobs from within the pipeline.
 # =============================================================================
 #SBATCH --job-name=consortium_orch       # Job name
-#SBATCH --partition=sched_mit_hill       # CPU partition (12hr limit, MIT Engaging)
+#SBATCH --partition=batch                 # Override via: sbatch --partition=YOUR_PARTITION
 #SBATCH --nodes=1                        # Number of nodes
 #SBATCH --ntasks-per-node=1              # Tasks per node
 #SBATCH --cpus-per-task=4                # CPUs per task (API calls + local processing)
@@ -76,6 +76,10 @@ echo "Python path: $(which python)"
 # Enable SLURM-based experiment execution (Tier 2 GPU jobs)
 export CONSORTIUM_SLURM_ENABLED=1
 export ENGAGING_CONFIG="$REPO_DIR/engaging_config.yaml"
+
+# Suppress Vertex AI / Google Cloud SDK ImportError noise in litellm
+# (all models route through OpenRouter; Vertex credentials are not needed)
+export LITELLM_LOG=ERROR
 
 # =============================================================================
 # RESEARCH TASK DEFINITION

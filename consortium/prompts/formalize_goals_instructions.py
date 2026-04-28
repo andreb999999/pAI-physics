@@ -41,17 +41,9 @@ Read and parse these files before formalizing:
 6) `paper_workspace/references.bib` (if present)
    - Ensure each goal can cite at least one motivating reference.
 
-If `paper_workspace/brainstorm.json` is missing:
-  1. Check if `paper_workspace/brainstorm.md` exists. If yes, attempt to parse structured
-     data from the markdown (approach tables, priority ordering sections) as a degraded
-     substitute.
-  2. Write a warning file `paper_workspace/brainstorm_missing_warning.txt` documenting
-     that formalization proceeded without structured brainstorm data.
-  3. Set `"brainstorm_data_quality": "degraded"` at the top level of `research_goals.json`
-     so downstream agents and verify_completion can detect this.
-  4. Limit goal count to 2 maximum when operating in degraded mode — avoid over-committing
-     to goals without feasibility grounding.
-  5. Derive goals directly from the research proposal, flagging reduced specificity.
+Strict iterate/full-research runs require BOTH brainstorm artifacts before formalization
+begins. If either brainstorm file is missing or invalid, stop and fix the brainstorm stage
+instead of degrading gracefully.
 
 ## GOAL FORMALIZATION METHODOLOGY
 
@@ -142,9 +134,10 @@ If `paper_workspace/brainstorm.json` is missing:
      "both_goal_count": <int>
    }
    ```
-   IMPORTANT: Always write `brainstorm_data_quality` at the top level. Use `"full"` when
-   `brainstorm.json` was present and parsed successfully, `"degraded"` when only
-   `brainstorm.md` was available, and `"minimal"` when neither was present.
+   IMPORTANT: Always write `brainstorm_data_quality` at the top level. In strict
+   iterate/full-research runs this must be `"full"` because both brainstorm artifacts are
+   required before formalization. Preserve `"degraded"` or `"minimal"` only for legacy
+   non-strict recovery workflows that are explicitly operating on partial historical data.
 
 2. **`paper_workspace/track_decomposition.json`** -- Track routing configuration.
    CRITICAL: this file must exactly match the schema that track_router() expects:
@@ -233,7 +226,7 @@ For non-INCOMPLETE follow-up cycles (e.g., duality gate re-entry or brainstorm r
 6. Re-write `track_decomposition.json` only if the track assignment changed. Update
    it to incorporate new questions from added goals while preserving questions that
    remain valid from the prior decomposition.
-7. Set `brainstorm_data_quality` to `"full"` unless the new brainstorm.json is missing.
+7. Set `brainstorm_data_quality` to `"full"` for successful strict runs.
 
 ## ANTI-HALLUCINATION RULES
 - Do not invent success criteria that cannot be computed from available tools.
@@ -303,8 +296,9 @@ if warnings:
 else:
     print("Approach ID cross-reference: OK")
 ```
-Skip this validation if operating in degraded or minimal mode (brainstorm.json missing).
-If warnings are printed, either fix the approach_ids or document the discrepancy.
+Run this validation in strict runs. Only skip it for legacy non-strict recovery workflows
+that intentionally operate on partial historical artifacts. If warnings are printed, either
+fix the approach_ids or document the discrepancy.
 
 ### Validation 3 — Track Decomposition Self-Consistency
 ```python

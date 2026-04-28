@@ -117,6 +117,17 @@ def filter_model_params(original_func):
 
             final_kwargs = fk
 
+        elif isinstance(model, str) and "gemini" in model:
+            # Gemini thinking tokens count against max_tokens.
+            # Strip thinking_budget (not a litellm param) and inflate max_tokens
+            # to ensure sufficient text output after reasoning.
+            fk = kwargs.copy()
+            thinking_budget = fk.pop("thinking_budget", 0)
+            mt = fk.get("max_tokens")
+            if mt is not None and thinking_budget:
+                fk["max_tokens"] = int(mt) + int(thinking_budget)
+            final_kwargs = fk
+
         else:
             final_kwargs = kwargs
 
@@ -151,8 +162,9 @@ def _validate_config(config):
 
 
 def load_llm_config():
-    """Load LLM configuration from .llm_config.yaml if it exists."""
-    config_path = ".llm_config.yaml"
+    """Load LLM configuration from the configured YAML path if it exists."""
+    config_path = os.environ.get("CONSORTIUM_LLM_CONFIG_PATH", ".llm_config.yaml")
+    config_path = os.path.expandvars(os.path.expanduser(config_path))
     if os.path.exists(config_path):
         try:
             with open(config_path, 'r') as f:

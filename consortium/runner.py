@@ -16,15 +16,18 @@ import sys
 import threading
 import time
 from datetime import datetime
+from pathlib import Path
+from typing import TextIO
 
 import litellm
-from dotenv import load_dotenv
 
 from .args import parse_arguments
+from .cli.core.env_manager import get_runtime_env_sources, inject_runtime_env
 from .config import load_llm_config, filter_model_params
 from .interaction.callback_tools import setup_user_input_socket
 from .interaction.http_steering import add_http_steering
 from .prereqs import check_latex_prereqs
+from .run_status import read_run_status, write_run_status
 from .supervision import sanitize_result_payload
 from .token_usage_tracker import initialize_run_token_tracker
 from .counsel import create_counsel_models, DEFAULT_COUNSEL_MODEL_SPECS, set_counsel_timeout
@@ -32,8 +35,6 @@ from .graph import build_pipeline_stages_v2, get_default_checkpointer
 from .utils import create_model, create_model_registry, save_agent_memory
 
 logger = logging.getLogger(__name__)
-
-load_dotenv(override=True)
 
 litellm.drop_params = True
 litellm.completion = filter_model_params(litellm.completion)
@@ -50,6 +51,61 @@ class _VertexErrorFilter:
     def filter(self, record):
         msg = str(getattr(record, "msg", ""))
         return not any(s in msg for s in self._SUPPRESSED)
+
+
+class _TeeStream:
+    """Mirror writes to both the original stream and a file handle."""
+
+    def __init__(self, primary: TextIO, mirror: TextIO):
+        self._primary = primary
+        self._mirror = mirror
+
+    def write(self, data: str) -> int:
+        written = self._primary.write(data)
+        self._mirror.write(data)
+        return written
+
+    def flush(self) -> None:
+        self._primary.flush()
+        self._mirror.flush()
+
+    def isatty(self) -> bool:
+        return self._primary.isatty()
+
+    @property
+    def encoding(self):  # pragma: no cover - passthrough attribute
+        return getattr(self._primary, "encoding", None)
+
+
+def _parse_bool_env(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _resolve_project_root() -> Path | None:
+    explicit = os.getenv("CONSORTIUM_PROJECT_ROOT")
+    if explicit:
+        try:
+            return Path(explicit).resolve()
+        except OSError:
+            return None
+
+    try:
+        from .cli.core.paths import find_project_root
+        return find_project_root()
+    except Exception:
+        logger.debug("Failed to resolve project root", exc_info=True)
+        return None
+
+
+def _resolve_summary_model_id(llm_config: dict | None, model_name: str) -> str:
+    if llm_config:
+        summary_cfg = llm_config.get("summary_model", {})
+        if isinstance(summary_cfg, dict) and summary_cfg.get("model"):
+            return str(summary_cfg["model"])
+    return model_name
 
 _DEFAULT_TASK = (
     "Investigate whether training small language models with multiple paraphrased responses "
@@ -270,17 +326,119 @@ def _resolve_model_settings(args, llm_config):
     return model_name, reasoning_effort, verbosity, budget_tokens, effort
 
 
+def _resolve_counsel_settings(args, llm_config):
+    """Return the effective counsel configuration after CLI/config precedence."""
+    counsel_cfg = llm_config.get("counsel", {}) if llm_config else {}
+
+    counsel_enabled = getattr(args, "enable_counsel", False)
+    counsel_disabled = getattr(args, "no_counsel", False)
+    if counsel_disabled:
+        counsel_enabled = False
+    elif not counsel_enabled:
+        counsel_enabled = bool(counsel_cfg.get("enabled", False))
+
+    max_debate_rounds = getattr(args, "counsel_max_debate_rounds", None)
+    if max_debate_rounds is None:
+        max_debate_rounds = int(counsel_cfg.get("max_debate_rounds", 3))
+
+    configured_model_specs = counsel_cfg.get("models") or DEFAULT_COUNSEL_MODEL_SPECS
+    effective_model_specs = configured_model_specs if counsel_enabled else []
+    synthesis_model = counsel_cfg.get("synthesis_model", "claude-opus-4-6")
+
+    return {
+        "enabled": counsel_enabled,
+        "configured_model_specs": configured_model_specs,
+        "effective_model_specs": effective_model_specs,
+        "effective_model_names": [spec.get("model", "unknown") for spec in effective_model_specs],
+        "max_debate_rounds": max_debate_rounds if counsel_enabled else 0,
+        "synthesis_model": synthesis_model if counsel_enabled else None,
+    }
+
+
+def _build_effective_model_manifest(
+    *,
+    args,
+    llm_config: dict | None,
+    model_name: str,
+    summary_model_id: str,
+    counsel_settings: dict,
+    persona_specs: list[dict] | None,
+    persona_synthesis_model: str,
+    duality_check_model: str,
+) -> tuple[dict, dict]:
+    policy_source = os.getenv("CONSORTIUM_MODEL_POLICY_SOURCE") or ("config" if llm_config else "default")
+    selected_tier = os.getenv("CONSORTIUM_SELECTED_TIER")
+    provenance = {
+        "main_model": "cli" if getattr(args, "model", None) else policy_source,
+        "summary_model": policy_source if llm_config else "derived",
+        "counsel": ("cli" if getattr(args, "enable_counsel", False) or getattr(args, "no_counsel", False) else policy_source),
+        "persona_council": policy_source if persona_specs else "default",
+        "duality_check": policy_source if llm_config else "default",
+        "run_experiment_tool": policy_source if llm_config and llm_config.get("run_experiment_tool") else "derived",
+        "per_agent_models": policy_source if llm_config and llm_config.get("per_agent_models", {}).get("enabled") else "disabled",
+    }
+
+    manifest = {
+        "selected_tier": selected_tier,
+        "main_model": model_name,
+        "summary_model": summary_model_id,
+        "counsel": {
+            "enabled": bool(counsel_settings.get("enabled", False)),
+            "models": list(counsel_settings.get("effective_model_specs", [])),
+            "synthesis_model": counsel_settings.get("synthesis_model"),
+        },
+        "persona_council": {
+            "personas": list(persona_specs or []),
+            "synthesis_model": persona_synthesis_model,
+        },
+        "duality_check": {
+            "model": duality_check_model,
+        },
+        "run_experiment_tool": dict((llm_config or {}).get("run_experiment_tool", {})),
+        "per_agent_models": dict((llm_config or {}).get("per_agent_models", {})),
+    }
+    return manifest, provenance
+
+
+def _write_effective_model_manifest(workspace_dir: str, manifest: dict) -> str | None:
+    out_path = os.path.join(workspace_dir, "effective_models.json")
+    try:
+        with open(out_path, "w") as f:
+            json.dump(manifest, f, indent=2)
+        return out_path
+    except OSError:
+        logger.debug("Failed to write effective_models.json", exc_info=True)
+        return None
+
+
 def _build_required_artifacts(args, enforce_paper_artifacts, enforce_editorial_artifacts,
                                require_experiment_plan):
+    from .paper_contract import (
+        COPYEDIT_REPORT_PDF,
+        COPYEDIT_REPORT_TEX,
+        FINAL_PAPER_PDF,
+        FINAL_PAPER_TEX,
+        PAPER_CONTRACT_PATH,
+        PERSONA_VERDICTS_JSON,
+        REVIEW_VERDICT_JSON,
+        canonical_section_paths,
+    )
+
     artifacts = []
     if enforce_paper_artifacts:
-        artifacts.append("final_paper.tex")
+        artifacts.extend([PAPER_CONTRACT_PATH, FINAL_PAPER_TEX, *canonical_section_paths()])
         if require_experiment_plan:
             artifacts.append("experiments_to_run_later.md")
-        if args.require_pdf:
-            artifacts.append("final_paper.pdf")
+        if args.require_pdf or enforce_editorial_artifacts:
+            artifacts.append(FINAL_PAPER_PDF)
+        if getattr(args, "iterate", None):
+            artifacts.append(PERSONA_VERDICTS_JSON)
         if enforce_editorial_artifacts:
             artifacts.extend([
+                COPYEDIT_REPORT_TEX,
+                COPYEDIT_REPORT_PDF,
+                REVIEW_VERDICT_JSON,
+                PERSONA_VERDICTS_JSON,
                 "paper_workspace/author_style_guide.md",
                 "paper_workspace/intro_skeleton.tex",
                 "paper_workspace/style_macros.tex",
@@ -288,9 +446,8 @@ def _build_required_artifacts(args, enforce_paper_artifacts, enforce_editorial_a
                 "paper_workspace/editorial_contract.md",
                 "paper_workspace/theorem_map.json",
                 "paper_workspace/revision_log.md",
-                "paper_workspace/copyedit_report.tex",
                 "paper_workspace/review_report.tex",
-                "paper_workspace/review_verdict.json",
+                "paper_workspace/review_report.pdf",
             ])
             if args.enable_math_agents:
                 artifacts.append("paper_workspace/claim_traceability.json")
@@ -330,6 +487,8 @@ def _validate_api_keys(model_name: str) -> list[str]:
 
 def _list_runs(results_dir: str = "results") -> None:
     """Print a summary table of past runs in the results directory."""
+    from .cli.core.run_inspector import inspect_run
+
     if not os.path.isdir(results_dir):
         print(f"No results directory found at '{results_dir}'.")
         return
@@ -347,59 +506,51 @@ def _list_runs(results_dir: str = "results") -> None:
     print("-" * len(header))
 
     for name in entries:
-        ws = os.path.join(results_dir, name)
-        # Cost
-        cost_str = "?"
-        budget_path = os.path.join(ws, "budget_state.json")
-        if os.path.exists(budget_path):
-            try:
-                with open(budget_path) as f:
-                    bd = json.load(f)
-                total = bd.get("total_usd", bd.get("total_cost_usd", None))
-                if total is not None:
-                    cost_str = f"${float(total):.2f}"
-            except (json.JSONDecodeError, OSError):
-                logger.debug("Failed to read budget_state.json for %s", name, exc_info=True)
-        # Status
-        status_str = "unknown"
-        status_path = os.path.join(ws, "STATUS.txt")
-        if os.path.exists(status_path):
-            try:
-                with open(status_path) as f:
-                    status_str = f.read().strip()[:20]
-            except OSError:
-                logger.debug("Failed to read STATUS.txt for %s", name, exc_info=True)
-        # Task
-        task_str = ""
-        summary_path = os.path.join(ws, "run_summary.json")
-        if os.path.exists(summary_path):
-            try:
-                with open(summary_path) as f:
-                    sm = json.load(f)
-                task_str = sm.get("task", "")[:43]
-            except (json.JSONDecodeError, OSError):
-                logger.debug("Failed to read run_summary.json for %s", name, exc_info=True)
-        print(f"{name:<45} {task_str:<45} {cost_str:>8}  {status_str}")
+        info = inspect_run(Path(results_dir) / name)
+        cost_str = f"${info['budget_usd']:.2f}" if info["budget_usd"] is not None else "?"
+        task_str = str(info["task"] or "")[:43]
+        print(f"{name:<45} {task_str:<45} {cost_str:>8}  {info['status']}")
 
 
-def _write_experiment_metadata(workspace_dir: str, args, model_name: str, task: str) -> None:
+def _write_experiment_metadata(
+    workspace_dir: str,
+    args,
+    model_name: str,
+    task: str,
+    *,
+    project_root: str | None = None,
+    counsel_settings: dict | None = None,
+    persona_settings: dict | None = None,
+    effective_models: dict | None = None,
+    model_provenance: dict | None = None,
+    credential_sources: dict | None = None,
+    log_paths: dict[str, str] | None = None,
+) -> None:
     """Write experiment_metadata.json to the workspace at run start."""
-    git_commit = "unknown"
-    try:
-        git_commit = subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL, text=True
-        ).strip()
-    except OSError:
-        logger.debug("Could not determine git commit hash", exc_info=True)
+    git_commit = None
+    git_dirty = None
+    git_cwd = project_root or None
+    if git_cwd:
+        try:
+            git_commit = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"],
+                cwd=git_cwd,
+                stderr=subprocess.DEVNULL,
+                text=True,
+            ).strip()
+        except (OSError, subprocess.CalledProcessError):
+            logger.debug("Could not determine git commit hash", exc_info=True)
 
-    git_dirty = False
-    try:
-        result = subprocess.check_output(
-            ["git", "status", "--porcelain"], stderr=subprocess.DEVNULL, text=True
-        )
-        git_dirty = bool(result.strip())
-    except OSError:
-        logger.debug("Could not determine git dirty status", exc_info=True)
+        try:
+            result = subprocess.check_output(
+                ["git", "status", "--porcelain"],
+                cwd=git_cwd,
+                stderr=subprocess.DEVNULL,
+                text=True,
+            )
+            git_dirty = bool(result.strip())
+        except (OSError, subprocess.CalledProcessError):
+            logger.debug("Could not determine git dirty status", exc_info=True)
 
     metadata = {
         "timestamp": datetime.now().isoformat(),
@@ -407,6 +558,14 @@ def _write_experiment_metadata(workspace_dir: str, args, model_name: str, task: 
         "python_version": platform.python_version(),
         "git_commit": git_commit,
         "git_dirty": git_dirty,
+        "project_root": project_root,
+        "llm_config_path": os.path.abspath(
+            os.path.expandvars(
+                os.path.expanduser(
+                    os.environ.get("CONSORTIUM_LLM_CONFIG_PATH", ".llm_config.yaml")
+                )
+            )
+        ),
         "model": model_name,
         "task_preview": task[:200],
         "cli_args": {
@@ -417,6 +576,30 @@ def _write_experiment_metadata(workspace_dir: str, args, model_name: str, task: 
             "min_review_score": getattr(args, "min_review_score", 8),
         },
     }
+    if effective_models is not None:
+        metadata["effective_models"] = effective_models
+    if model_provenance is not None:
+        metadata["model_provenance"] = model_provenance
+    if credential_sources is not None:
+        metadata["credential_sources"] = credential_sources
+    if log_paths is not None:
+        metadata["log_files"] = log_paths
+    if counsel_settings is not None:
+        metadata["counsel"] = {
+            "enabled": bool(counsel_settings.get("enabled", False)),
+            "model_names": list(counsel_settings.get("effective_model_names", [])),
+            "model_specs": list(counsel_settings.get("effective_model_specs", [])),
+            "max_debate_rounds": int(counsel_settings.get("max_debate_rounds", 0)),
+            "synthesis_model": counsel_settings.get("synthesis_model"),
+        }
+    if persona_settings is not None:
+        metadata["persona_council"] = {
+            "debate_rounds": int(persona_settings.get("debate_rounds", 0)),
+            "synthesis_model": persona_settings.get("synthesis_model"),
+            "max_post_vote_retries": int(persona_settings.get("max_post_vote_retries", 0)),
+            "personas": list(persona_settings.get("personas", [])),
+            "duality_check_model": persona_settings.get("duality_check_model"),
+        }
     out_path = os.path.join(workspace_dir, "experiment_metadata.json")
     try:
         with open(out_path, "w") as f:
@@ -426,7 +609,10 @@ def _write_experiment_metadata(workspace_dir: str, args, model_name: str, task: 
 
 
 def _write_run_summary(workspace_dir: str, task: str, model_name: str,
-                        start_time: datetime, stages_completed: list[str]) -> None:
+                        start_time: datetime, stages_completed: list[str], *,
+                        status: str = "completed",
+                        status_reason: str | None = None,
+                        current_stage: str | None = None) -> None:
     """Write run_summary.json to the workspace at run end."""
     duration_s = (datetime.now() - start_time).total_seconds()
 
@@ -452,7 +638,14 @@ def _write_run_summary(workspace_dir: str, task: str, model_name: str,
 
     # Detect final paper path
     paper_path = None
-    for candidate in ["final_paper.pdf", "final_paper.tex", "final_paper.md"]:
+    for candidate in [
+        "paper_workspace/final_paper.pdf",
+        "paper_workspace/final_paper.tex",
+        "paper_workspace/final_paper.md",
+        "final_paper.pdf",
+        "final_paper.tex",
+        "final_paper.md",
+    ]:
         p = os.path.join(workspace_dir, candidate)
         if os.path.exists(p):
             paper_path = candidate
@@ -462,12 +655,18 @@ def _write_run_summary(workspace_dir: str, task: str, model_name: str,
         "task": task,
         "model": model_name,
         "started_at": start_time.isoformat(),
+        "completed_at": datetime.now().isoformat(),
         "duration_seconds": round(duration_s, 1),
         "stages_completed": stages_completed,
         "total_cost_usd": total_cost,
         "total_tokens": total_tokens,
         "final_paper": paper_path,
         "workspace": workspace_dir,
+        "status": status,
+        "completed": status == "completed",
+        "failed": status == "failed",
+        "status_reason": status_reason,
+        "current_stage": current_stage,
     }
     out_path = os.path.join(workspace_dir, "run_summary.json")
     try:
@@ -480,6 +679,29 @@ def _write_run_summary(workspace_dir: str, task: str, model_name: str,
 
 def main():
     args = parse_arguments()
+    project_root = _resolve_project_root()
+    repo_env_override = os.getenv("CONSORTIUM_USE_REPO_ENV")
+    allow_repo_env = None if repo_env_override in {None, ""} else _parse_bool_env(
+        "CONSORTIUM_USE_REPO_ENV",
+        default=False,
+    )
+    base_env = dict(os.environ)
+    inject_runtime_env(
+        repo_root=project_root,
+        allow_repo_env=allow_repo_env,
+    )
+    credential_sources_env = os.getenv("CONSORTIUM_CREDENTIAL_SOURCES_JSON")
+    if credential_sources_env:
+        try:
+            credential_sources = json.loads(credential_sources_env)
+        except json.JSONDecodeError:
+            credential_sources = {}
+    else:
+        credential_sources = get_runtime_env_sources(
+            repo_root=project_root,
+            allow_repo_env=allow_repo_env,
+            base_env=base_env,
+        )
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_start_time = datetime.now()
     effective_pipeline_mode = "full_research"
@@ -494,13 +716,7 @@ def main():
         "1", "true", "yes", "on",
     }
     enable_file_logs = env_log_default if args.log_to_files is None else args.log_to_files
-    if enable_file_logs and not getattr(args, "dry_run", False):
-        os.makedirs("logs", exist_ok=True)
-        out_path = f"logs/consortium_{timestamp}.out"
-        err_path = f"logs/consortium_{timestamp}.err"
-        logger.info("Redirecting stdout/stderr to: %s, %s", out_path, err_path)
-        sys.stdout = open(out_path, "w", buffering=1)
-        sys.stderr = open(err_path, "w", buffering=1)
+    log_paths: dict[str, str] | None = None
 
     if args.debug:
         os.environ["LITELLM_LOG"] = "DEBUG"
@@ -541,12 +757,13 @@ def main():
     model_name, reasoning_effort, verbosity, budget_tokens, effort = _resolve_model_settings(
         args, llm_config
     )
+    counsel_settings = _resolve_counsel_settings(args, llm_config)
 
     # --- API key validation (always run; also serves as the dry-run check) ---
     key_errors = _validate_api_keys(model_name)
     # Eagerly validate counsel API keys so we don't fail hours into an expensive run
-    if getattr(args, "enable_counsel", False):
-        for spec in DEFAULT_COUNSEL_MODEL_SPECS:
+    if counsel_settings["enabled"]:
+        for spec in counsel_settings["effective_model_specs"]:
             key_errors.extend(_validate_api_keys(spec["model"]))
     if key_errors:
         for err in key_errors:
@@ -563,7 +780,7 @@ def main():
         logger.info("  reasoning_effort: %s", reasoning_effort)
         logger.info("  budget cap      : $%s", usd_limit)
         logger.info("  math agents     : %s", getattr(args, 'enable_math_agents', False))
-        logger.info("  counsel mode    : %s", getattr(args, 'enable_counsel', False))
+        logger.info("  counsel mode    : %s", counsel_settings["enabled"])
         logger.info("  output format   : %s", getattr(args, 'output_format', 'latex'))
         logger.info("[dry-run] All checks passed. Remove --dry-run to start the real run.")
         return 0
@@ -592,17 +809,9 @@ def main():
         os.environ["RUN_EXPERIMENT_REASONING_EFFORT"] = exp.get("reasoning_effort", "high")
 
     # --- Workspace setup ---
-    if args.resume:
-        results_base_dir = os.path.abspath(args.resume)
-        if not os.path.exists(results_base_dir):
-            logger.error("Workspace directory does not exist: %s", results_base_dir)
-            return 1
-        if not os.path.isdir(results_base_dir):
-            logger.error("Path is not a directory: %s", results_base_dir)
-            return 1
-        task = args.task or _CONTINUATION_TASK
-        logger.info("Resuming from: %s", results_base_dir)
-    elif getattr(args, "iterate", None):
+    # Iterate mode takes priority over resume — the campaign runner always
+    # passes --resume <workspace>, but --iterate needs its own workspace setup.
+    if getattr(args, "iterate", None):
         # --- Iterate mode: revision from prior paper + feedback ---
         if args.start_from_stage:
             logger.error("--iterate and --start-from-stage cannot be used together. "
@@ -614,23 +823,48 @@ def main():
         except ValueError as e:
             logger.error("Iterate validation failed: %s", e)
             return 1
-        results_base_dir = os.path.join("results", f"consortium_{timestamp}_iterate")
-        os.makedirs(results_base_dir, exist_ok=True)
+        # Use --resume workspace if provided (campaign runner), else create new
+        if args.resume:
+            results_base_dir = os.path.abspath(args.resume)
+            os.makedirs(results_base_dir, exist_ok=True)
+        else:
+            results_base_dir = os.path.join("results", f"consortium_{timestamp}_iterate")
+            os.makedirs(results_base_dir, exist_ok=True)
         task = args.task or "Revise and improve the paper based on reviewer feedback."
         iterate_seed = build_iterate_state_seed(args.iterate, results_base_dir)
         logger.info("Created iterate workspace: %s", results_base_dir)
         logger.info("Prior paper: %s", iterate_seed.get('iterate_prior_paper_path', 'N/A'))
         logger.info("Feedback: %s", iterate_seed.get('iterate_feedback_summary', 'N/A'))
-        _write_experiment_metadata(results_base_dir, args, model_name, task)
+    elif args.resume:
+        results_base_dir = os.path.abspath(args.resume)
+        if not os.path.exists(results_base_dir):
+            logger.error("Workspace directory does not exist: %s", results_base_dir)
+            return 1
+        if not os.path.isdir(results_base_dir):
+            logger.error("Path is not a directory: %s", results_base_dir)
+            return 1
+        task = args.task or _CONTINUATION_TASK
+        logger.info("Resuming from: %s", results_base_dir)
     else:
         results_base_dir = os.path.join("results", f"consortium_{timestamp}")
         os.makedirs(results_base_dir, exist_ok=True)
         task = args.task or _DEFAULT_TASK
         logger.info("Created workspace: %s", results_base_dir)
-        _write_experiment_metadata(results_base_dir, args, model_name, task)
 
     os.environ["RESULTS_BASE_DIR"] = results_base_dir
     os.environ["CONSORTIUM_OUTPUT_FORMAT"] = getattr(args, "output_format", "latex")
+
+    if enable_file_logs and not getattr(args, "dry_run", False):
+        logs_dir = os.path.join(results_base_dir, "logs")
+        os.makedirs(logs_dir, exist_ok=True)
+        out_path = os.path.join(logs_dir, f"consortium_{timestamp}.out")
+        err_path = os.path.join(logs_dir, f"consortium_{timestamp}.err")
+        logger.info("Teeing stdout/stderr to: %s, %s", out_path, err_path)
+        stdout_file = open(out_path, "w", buffering=1)
+        stderr_file = open(err_path, "w", buffering=1)
+        sys.stdout = _TeeStream(sys.stdout, stdout_file)
+        sys.stderr = _TeeStream(sys.stderr, stderr_file)
+        log_paths = {"stdout": out_path, "stderr": err_path}
 
     # --- Token tracking ---
     run_id = f"{timestamp}_{os.getpid()}"
@@ -677,6 +911,15 @@ def main():
             resolved_stage, start_stage_index,
         )
 
+    write_run_status(
+        results_base_dir,
+        status="running",
+        current_stage=pipeline_stages[start_stage_index] if pipeline_stages else None,
+        pid=os.getpid(),
+        started_at=run_start_time.isoformat(),
+        extra={"selected_tier": os.getenv("CONSORTIUM_SELECTED_TIER")},
+    )
+
     # --- Artifact gate setup ---
     auto_enforce = "final_paper" in task.lower() or "experiments_to_run_later" in task.lower()
     enforce_paper_artifacts = args.enforce_paper_artifacts or auto_enforce
@@ -722,6 +965,7 @@ def main():
     model_registry = create_model_registry(
         llm_config, model, budget_config=budget_config, budget_dir=results_base_dir,
     )
+    summary_model_id = _resolve_summary_model_id(llm_config, model_name)
     if model_registry._agent_models:
         tier_counts: dict[str, int] = {}
         for _agent, _m in model_registry._agent_models.items():
@@ -739,23 +983,17 @@ def main():
 
     # --- Counsel model setup ---
     counsel_cfg = llm_config.get("counsel", {}) if llm_config else {}
-    # Priority: --enable-counsel flag > --no-counsel flag > config file
-    counsel_enabled = getattr(args, "enable_counsel", False)
-    counsel_disabled = getattr(args, "no_counsel", False)
-    if counsel_disabled:
-        counsel_enabled = False
-    elif not counsel_enabled:
-        counsel_enabled = bool(counsel_cfg.get("enabled", False))
+    counsel_enabled = counsel_settings["enabled"]
+
+    if counsel_enabled:
+        os.environ.pop("CONSORTIUM_COUNSEL_DISABLED", None)
+    else:
+        os.environ["CONSORTIUM_COUNSEL_DISABLED"] = "1"
 
     counsel_models_list = None
     if counsel_enabled:
-        max_debate_rounds = getattr(args, "counsel_max_debate_rounds", None)
-        if max_debate_rounds is None:
-            max_debate_rounds = int(counsel_cfg.get("max_debate_rounds", 3))
-
-        # Build model specs from config if provided, otherwise use defaults
-        cfg_model_specs = counsel_cfg.get("models")
-        model_specs = cfg_model_specs if cfg_model_specs else None
+        max_debate_rounds = counsel_settings["max_debate_rounds"]
+        model_specs = counsel_settings["effective_model_specs"] or None
 
         logger.info("Counsel mode enabled — %d models, %d debate rounds per stage.",
                     len(model_specs or DEFAULT_COUNSEL_MODEL_SPECS), max_debate_rounds)
@@ -802,15 +1040,25 @@ def main():
             persona_debate_rounds = int(pc_cfg.get("max_debate_rounds", 3))
 
         persona_council_specs = pc_cfg.get("personas") or None
-        persona_synthesis_model = pc_cfg.get("synthesis_model", "claude-opus-4-6")
-        duality_check_model = dc_cfg.get("model", "claude-opus-4-6")
+        persona_synthesis_model = pc_cfg.get("synthesis_model", model_name)
+        persona_post_vote_retries = getattr(args, "persona_post_vote_retries", None)
+        if persona_post_vote_retries is None:
+            persona_post_vote_retries = int(pc_cfg.get("max_post_vote_retries", 1))
+        duality_check_model = dc_cfg.get("model", model_name)
         enable_duality_check = not getattr(args, "no_duality_check", False)
+
+        # Quality limits (new args, fallback to defaults)
+        theory_repair_max_attempts = getattr(args, "theory_repair_max_attempts", None) or 2
+        duality_max_attempts = getattr(args, "duality_max_attempts", None) or 2
+        max_validation_retries = getattr(args, "max_validation_retries", None) or 3
+        enable_ensemble_review = getattr(args, "enable_ensemble_review", False)
 
         # Extract budget manager if available
         budget_manager = None
         if hasattr(model, "budget_manager"):
             budget_manager = model.budget_manager
 
+        from .cli.core.model_policy import build_default_persona_specs
         from .graph import build_research_graph_v2
         from .graph_config import (
             ResearchGraphConfig,
@@ -819,6 +1067,41 @@ def main():
             ArtifactEnforcementConfig,
         )
         checkpointer = get_default_checkpointer(results_base_dir)
+        effective_persona_specs = persona_council_specs or build_default_persona_specs(
+            model=model_name,
+            reasoning_effort=reasoning_effort,
+            budget_tokens=budget_tokens,
+        )
+        effective_models, model_provenance = _build_effective_model_manifest(
+            args=args,
+            llm_config=llm_config,
+            model_name=model_name,
+            summary_model_id=summary_model_id,
+            counsel_settings=counsel_settings,
+            persona_specs=effective_persona_specs,
+            persona_synthesis_model=persona_synthesis_model,
+            duality_check_model=duality_check_model,
+        )
+        manifest_path = _write_effective_model_manifest(results_base_dir, effective_models)
+        _write_experiment_metadata(
+            results_base_dir,
+            args,
+            model_name,
+            task,
+            project_root=str(project_root) if project_root else None,
+            counsel_settings=counsel_settings,
+            persona_settings={
+                "debate_rounds": persona_debate_rounds,
+                "synthesis_model": persona_synthesis_model,
+                "max_post_vote_retries": persona_post_vote_retries,
+                "personas": effective_persona_specs,
+                "duality_check_model": duality_check_model,
+            },
+            effective_models=effective_models,
+            model_provenance=model_provenance,
+            credential_sources=credential_sources,
+            log_paths=log_paths,
+        )
         graph_config = ResearchGraphConfig(
             model=model,
             workspace_dir=results_base_dir,
@@ -834,16 +1117,22 @@ def main():
             followup_max_iterations=args.followup_max_iterations,
             manager_max_steps=args.manager_max_steps or 50,
             authorized_imports=essential_imports,
+            summary_model_id=summary_model_id,
             checkpointer=checkpointer,
             counsel_models=counsel_models_list,
             tree_search=tree_search_config,
             enable_milestone_gates=enable_milestone_gates,
             adversarial_verification=adversarial_verification,
             iterate_mode=bool(getattr(args, "iterate", None)),
+            theory_repair_max_attempts=theory_repair_max_attempts,
+            duality_max_attempts=duality_max_attempts,
+            max_validation_retries=max_validation_retries,
+            enable_ensemble_review=enable_ensemble_review,
             persona_council=PersonaCouncilConfig(
-                specs=persona_council_specs,
+                specs=effective_persona_specs,
                 debate_rounds=persona_debate_rounds,
                 synthesis_model=persona_synthesis_model,
+                max_post_vote_retries=persona_post_vote_retries,
             ),
             duality_check=DualityCheckConfig(
                 enabled=enable_duality_check,
@@ -855,6 +1144,9 @@ def main():
         graph = build_research_graph_v2(graph_config)
         logger.info("Pipeline: %d persona debate rounds, duality_check=%s",
                     persona_debate_rounds, 'enabled' if enable_duality_check else 'disabled')
+
+        if manifest_path:
+            logger.info("Effective model manifest: %s", manifest_path)
 
         if adversarial_verification:
             logger.info("Adversarial verification enabled — red-team verifiers will "
@@ -883,8 +1175,10 @@ def main():
             "pipeline_stage_index": start_stage_index,
             "current_agent": None,
             "agent_task": None,
+            "iterate_start_stage_override": None,
             "agent_outputs": {},
             "artifacts": {},
+            "executed_stages": [],
             "iteration_count": 0,
             "followup_iteration": 0,
             "research_cycle": 0,
@@ -919,6 +1213,7 @@ def main():
             "duality_check_result": None,
             "lit_review_attempts": 0,
             "brainstorm_cycle": 0,
+            "brainstorm_artifact_retries": 0,
             "verify_rework_attempts": 0,
             "duality_rework_attempts": 0,
             # Iterate mode fields
@@ -926,19 +1221,32 @@ def main():
             "iterate_prior_paper_path": None,
             "iterate_feedback_path": None,
             "iterate_feedback_summary": None,
+            "iterate_binding_constraints": None,
+            "iterate_route": None,
+            # Critical failure halts pipeline on non-retryable errors
+            "critical_failure": None,
+            # Theory repair tracking
+            "theory_repair_count": 0,
+            "theory_track_summary": None,
+            "validation_retry_count": 0,
+            "max_validation_retries": max_validation_retries,
         }
 
         # --- Iterate mode: merge state seed and override entry stage ---
         if getattr(args, "iterate", None):
             initial_state.update(iterate_seed)  # noqa: F821 (defined in iterate branch above)
-            iterate_entry_stage = getattr(args, "iterate_start_stage", "resource_preparation_agent")
-            canonical = _canonical_stage_name(iterate_entry_stage)
-            try:
+            iterate_entry_stage = getattr(args, "iterate_start_stage", None)
+            if iterate_entry_stage:
+                canonical = _canonical_stage_name(iterate_entry_stage)
+                if canonical not in pipeline_stages:
+                    logger.error(
+                        "iterate-start-stage '%s' resolved to unknown stage '%s'.",
+                        iterate_entry_stage,
+                        canonical,
+                    )
+                    return 1
+                initial_state["iterate_start_stage_override"] = canonical
                 initial_state["pipeline_stage_index"] = pipeline_stages.index(canonical)
-            except ValueError:
-                logger.warning("iterate-start-stage '%s' not in pipeline stages, "
-                              "defaulting to resource_preparation_agent", iterate_entry_stage)
-                initial_state["pipeline_stage_index"] = pipeline_stages.index("resource_preparation_agent")
 
         # Use workspace_dir as thread_id for default resumability.
         # For stage-based resume, create a fresh thread in the same workspace so
@@ -961,13 +1269,22 @@ def main():
         # but not making progress for >30 min).
         progress_file = os.path.join(results_base_dir, ".progress_heartbeat")
         _graph_done = threading.Event()
+        stages_done: list[str] = []
 
         def _watchdog_writer():
             while not _graph_done.is_set():
                 try:
+                    current_status = read_run_status(results_base_dir)
                     tmp = progress_file + ".tmp"
                     with open(tmp, "w") as f:
-                        json.dump({"ts": time.time(), "pid": os.getpid()}, f)
+                        json.dump(
+                            {
+                                "ts": time.time(),
+                                "pid": os.getpid(),
+                                "stage": current_status.get("current_stage"),
+                            },
+                            f,
+                        )
                     os.replace(tmp, progress_file)
                 except OSError:
                     logger.debug("Heartbeat write failed (disk full / permissions)", exc_info=True)
@@ -1026,17 +1343,26 @@ def main():
             )
 
         # Determine which stages completed (read from state if available)
-        stages_done = []
         if isinstance(final_state, dict):
-            idx = final_state.get("pipeline_stage_index", 0)
-            stages_done = pipeline_stages[:idx]
+            executed = final_state.get("executed_stages") or []
+            if isinstance(executed, list):
+                stages_done = [stage for stage in executed if isinstance(stage, str)]
 
+        write_run_status(
+            results_base_dir,
+            status="completed",
+            current_stage=stages_done[-1] if stages_done else None,
+            pid=os.getpid(),
+            finished_at=datetime.now().isoformat(),
+        )
         _write_run_summary(
             workspace_dir=results_base_dir,
             task=task,
             model_name=model_name,
             start_time=run_start_time,
             stages_completed=stages_done,
+            status="completed",
+            current_stage=stages_done[-1] if stages_done else None,
         )
 
         logger.info("=" * 50)
@@ -1044,7 +1370,31 @@ def main():
         logger.info("=" * 50)
 
     except Exception as e:
+        if "results_base_dir" in locals():
+            current_status = read_run_status(results_base_dir)
+            write_run_status(
+                results_base_dir,
+                status="failed",
+                current_stage=current_status.get("current_stage"),
+                status_reason=str(e),
+                pid=os.getpid(),
+                finished_at=datetime.now().isoformat(),
+            )
+            _write_run_summary(
+                workspace_dir=results_base_dir,
+                task=task if "task" in locals() else _DEFAULT_TASK,
+                model_name=model_name if "model_name" in locals() else "unknown",
+                start_time=run_start_time,
+                stages_completed=stages_done if "stages_done" in locals() else [],
+                status="failed",
+                status_reason=str(e),
+                current_stage=current_status.get("current_stage"),
+            )
         logger.error("Error during pipeline execution: %s", e, exc_info=True)
         return 1
 
     return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

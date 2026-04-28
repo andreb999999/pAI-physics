@@ -394,3 +394,105 @@ Stages were marked completed at ~03:19 UTC — human appears to have manually ad
 **Active stages**: None — nothing to analyze
 **Budget**: $1907.83 spent of $2000 (95.4%). Rigor: minimal. Remaining: $92.17.
 **Action**: No action needed. Campaign fully completed. Budget nearly exhausted but campaign is done.
+
+## 2026-04-04T07:09 — Log Monitor Tick (3:08 AM ET)
+
+**Observation**: iterate_v4 is marked `in_progress` but shows signs of completion:
+- `pid_alive: false` — process PID 82720 is no longer running
+- `log_active: false` — no log activity detected
+- `artifacts_complete: true` — all required artifacts present
+- `workspace_active: true` — workspace files recently modified
+- Stage started at 04:53 UTC (about 2h 15min prior to this tick)
+
+**Log errors found**:
+- 22 ImportErrors + 10 tracebacks — all Vertex AI credential errors (non-fatal; litellm falls back to Anthropic/OpenAI)
+- 3 OpenDeepSearchTool warnings — non-fatal fallback to PaperSearch + arXiv
+- Last log timestamp: ~23:09:53 UTC April 3rd (≈8h ago) — suggests stage ran to completion hours ago
+
+**Assessment**: Stage likely completed successfully. Artifacts complete + PID dead = completion signal. Errors are cosmetic (Vertex credentials not configured, known non-issue). No OOM, no fatal crashes, no stalled progress.
+
+**Action**: No critical alert needed. Heartbeat tick should pick this up, run `distill iterate_v4`, and handle post-completion steps.
+
+**Budget note**: $26.39 spent total ($20.28 on iterate_v4). Campaign limit shows $0 (unlimited or misconfigured). No budget sentinel files detected in the campaign directory.
+
+## 2026-04-04T09:24 UTC — Log Monitor Tick (5:24 AM ET)
+
+**Stage**: iterate_v4
+**Status**: failed (manually set) — all artifacts PRESENT
+**Ran**: 04:53–08:34 UTC (~3.6 hours)
+**Total spend**: $30.54 ($24.43 iterate_v4 + $6.10 archived run1)
+
+**Log observations**:
+- 22x ImportError + 10x Traceback in last 100 lines — non-fatal, pipeline continued
+- 4x Vertex AI credential errors (Google Cloud SDK not found) — expected on HPC; non-fatal for Claude-based pipeline
+- 3x OpenDeepSearchTool unavailable warnings — expected fallback to arXiv
+- No OOM, no rate limit exhaustion, no stalled progress detected
+
+**Artifacts**: Complete — paper_workspace/, milestone_reports/, stage_summaries/, counsel_sandboxes/, budget artifacts all present
+
+**Assessment**: Stage was manually set to failed by human after artifacts were already produced. This is NOT an autonomous failure — the pipeline ran to completion. No repair or autonomous debug needed.
+
+**Action**: None. Monitoring continues. Awaiting human review of outputs or next instruction.
+
+## 2026-04-04T10:20 UTC — Log Monitor Tick
+
+**Stage**: iterate_v4 | **Status**: failed (manually set) | **Artifacts**: Complete
+
+**Log analysis findings**:
+- 22x ImportError + 10x Traceback in tail-100 (non-fatal — occurred at 23:09:53, pipeline continued past these)
+- Errors are Vertex AI credential failures (Google Cloud SDK not found on this node) — expected/benign, litellm falls back to other providers
+- 3x OpenDeepSearchTool unavailable warnings — also expected fallback behavior
+
+**Assessment**: No new anomalies. Stage artifacts are fully present. Manual failure status reflects human override after pipeline completed, not a crash. No OOM, no stall, no imminent failure detected.
+
+**Action**: None. Awaiting human decision on next steps (review outputs, relaunch, or close campaign).
+
+## 2026-04-04T14:44 UTC — Log Monitor Tick
+
+**Stage**: iterate_v4 | **Status**: failed (manually set) | **Artifacts**: Complete | **Spend**: $70.58
+
+**Log analysis findings**:
+- Same recurring Vertex AI credential errors (non-fatal, expected on HPC)
+- 18x ImportError, 8x Traceback in tail-80 — same benign pattern as prior ticks
+- No new errors. No OOM, no stall, no active process running.
+
+**Assessment**: No change since last tick. Stage was manually set to failed after producing all artifacts. Pipeline is idle — no SLURM job, no PID. Awaiting human decision.
+
+**Action**: None. Silent exit.
+
+## 2026-04-06 19:01 UTC — Log Monitor Tick
+
+**Stage**: iterate_v4 | **Status**: failed (manually set)
+**Artifacts**: complete (all present)
+**Errors in last 100 log lines**: 22 ImportErrors, 10 tracebacks; last errors are Vertex AI credential warnings (non-critical — pipeline doesn't require Vertex)
+**Warnings**: OpenDeepSearchTool unavailable, falling back to arXiv/PaperSearch (expected)
+
+**Assessment**: No change. Stage was manually set to failed after producing all artifacts — pipeline idle, no SLURM job running. Vertex credential errors are cosmetic (litellm tries to load GCP creds at startup even when not used). No OOM, no stall, no active failures.
+
+**Action**: None. Silent exit.
+
+## 2026-04-07T19:12 UTC — Heartbeat: SQLite Checkpoint Corruption (v5 Rigorous)
+
+**Stage**: iterate_v5_rigorous (attempt 6 → 7)
+**Status**: repairing → pending → in_progress
+**Category**: Infrastructure (corrupted SQLite on shared filesystem)
+
+**Problem**: Attempt 6 crashed immediately at graph.invoke() with `sqlite3.DatabaseError: file is not a database`. The LangGraph checkpoint DB (`checkpoints.db`) had a 4.1MB WAL file that was corrupted — likely due to the shared Lustre/GPFS filesystem not handling SQLite WAL journaling reliably across prior attempts (3–5 had various timeouts and errors that may have led to unclean shutdown).
+
+**Prior attempts**:
+- Attempt 1: unknown (85KB stdout)
+- Attempt 2: crashed (empty stdout, 3.7KB stderr)
+- Attempt 3: model timeouts, JSON parse errors
+- Attempt 4: model timeouts, JSON parse, code exec error — produced some artifacts
+- Attempt 5: JSON parse errors — produced more artifacts
+- Attempt 6: immediate crash on SQLite checkpoint read
+
+**Action taken**:
+1. Confirmed corruption: `file` says SQLite 3.52 but `PRAGMA integrity_check` returns "file is not a database"
+2. Deleted corrupted checkpoint files (checkpoints.db, .db-wal, .db-shm)
+3. Reset stage status to pending
+4. Relaunched → attempt 7, PID 3650889
+
+**Budget**: $248.87 / $4000 (6.2%) — ample headroom
+**Risk**: Pipeline restarts from scratch (loses prior partial progress in checkpoints). But prior artifacts in paper_workspace/ are preserved on disk and the `--resume` flag should pick them up.
+**Debug cost**: $0 (manual fix, no Claude Code needed)

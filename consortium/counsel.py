@@ -23,6 +23,7 @@ import os
 import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from fnmatch import fnmatch
 from typing import Any, List, Optional
 
 import litellm
@@ -34,36 +35,23 @@ from .utils import normalize_model_for_litellm
 
 logger = logging.getLogger(__name__)
 
+_TRUEISH = {"1", "true", "yes", "on"}
+
 
 # Default model specs matching the 4 top-tier frontier models.
 # Used for debate-phase litellm.completion calls (where we need the model name string).
 DEFAULT_COUNSEL_MODEL_SPECS = [
     {"model": "claude-opus-4-6",  "reasoning_effort": "high"},
     {"model": "gpt-5.4",          "reasoning_effort": "high", "verbosity": "high"},
-    {"model": "gemini-3-pro-preview",   "thinking_budget": 65536},
+    {"model": "gemini-3.1-pro-preview",   "thinking_budget": 131072},
+    {"model": "claude-sonnet-4-6", "reasoning_effort": "high"},
 ]
 
 # Per-stage model routing: cheaper models for ideation, frontier for verification.
 # Stages not listed here fall back to DEFAULT_COUNSEL_MODEL_SPECS.
 STAGE_MODEL_SPECS: dict[str, list[dict]] = {
-    # Ideation stages — cheaper models are adequate
-    "brainstorm_agent": [
-        {"model": "claude-sonnet-4-6",    "reasoning_effort": "medium"},
-        {"model": "gpt-4.1",              "reasoning_effort": "medium"},
-        {"model": "gemini-3-pro-preview", "thinking_budget": 16384},
-    ],
-    "literature_review_agent": [
-        {"model": "claude-sonnet-4-6",    "reasoning_effort": "medium"},
-        {"model": "gpt-4.1",              "reasoning_effort": "medium"},
-        {"model": "gemini-3-pro-preview", "thinking_budget": 16384},
-    ],
-    "formalize_goals_agent": [
-        {"model": "claude-sonnet-4-6",    "reasoning_effort": "high"},
-        {"model": "gpt-4.1",              "reasoning_effort": "high"},
-        {"model": "gemini-3-pro-preview", "thinking_budget": 32768},
-    ],
-    # Verification stages — keep frontier models
-    # math_rigorous_verifier_agent, reviewer_agent, etc. use DEFAULT_COUNSEL_MODEL_SPECS
+    # All stages use the same frontier models routed through OpenRouter.
+    # Per-stage overrides removed to avoid routing/pricing mismatches.
 }
 
 SYNTHESIS_MODEL = "claude-opus-4-6"
@@ -124,7 +112,30 @@ _WRITABLE_EXTS = frozenset({
 _SKIP_DIRS = frozenset({
     "counsel_sandboxes", "_test_sandboxes", "__pycache__",
 })
-_SKIP_SUFFIXES = frozenset({".db", ".lock"})
+_SKIP_FILE_PATTERNS = frozenset({"*.db", "*.db-*", "*.lock", ".nfs*"})
+
+
+def _safe_rmtree(path: str) -> None:
+    """Remove a directory tree, tolerating NFS stale lock files (.nfs*)."""
+    def _onerror(func, fpath, exc_info):
+        # Skip NFS lock files that are busy
+        basename = os.path.basename(fpath)
+        if basename.startswith(".nfs"):
+            logger.debug("[counsel] Skipping busy NFS lock file: %s", fpath)
+            return
+        # For other errors, try chmod and retry once
+        try:
+            os.chmod(fpath, 0o777)
+            func(fpath)
+        except Exception:
+            logger.warning("[counsel] Cannot remove %s: %s", fpath, exc_info[1])
+
+    shutil.rmtree(path, onerror=_onerror)
+
+
+def _should_skip_sandbox_file(filename: str) -> bool:
+    """Return True for transient artifacts that should never enter sandboxes."""
+    return any(fnmatch(filename, pattern) for pattern in _SKIP_FILE_PATTERNS)
 
 
 def _populate_sandbox(workspace_dir: str, sandbox_dir: str) -> None:
@@ -135,7 +146,7 @@ def _populate_sandbox(workspace_dir: str, sandbox_dir: str) -> None:
     that agents actually modify.
     """
     if os.path.exists(sandbox_dir):
-        shutil.rmtree(sandbox_dir)
+        _safe_rmtree(sandbox_dir)
 
     max_attempts = 5
     for attempt in range(max_attempts):
@@ -149,7 +160,7 @@ def _populate_sandbox(workspace_dir: str, sandbox_dir: str) -> None:
                 os.makedirs(dst_root, exist_ok=True)
 
                 for fname in files:
-                    if any(fname.endswith(s) for s in _SKIP_SUFFIXES):
+                    if _should_skip_sandbox_file(fname):
                         continue
                     src = os.path.join(root, fname)
                     dst = os.path.join(dst_root, fname)
@@ -170,7 +181,7 @@ def _populate_sandbox(workspace_dir: str, sandbox_dir: str) -> None:
                 attempt + 1, exc, 1 << attempt,
             )
             if os.path.exists(sandbox_dir):
-                shutil.rmtree(sandbox_dir, ignore_errors=True)
+                _safe_rmtree(sandbox_dir)
             time.sleep(1 << attempt)
 
 
@@ -213,6 +224,7 @@ def _merge_sandbox(sandbox_dir: str, workspace_dir: str) -> list[str]:
     """Copy all files from sandbox into workspace (last sandbox wins on conflicts).
 
     Returns a list of relative paths that failed to merge.
+    Skips symlinks that point back to the workspace (read-only files).
     """
     failed: list[str] = []
     for root, dirs, files in os.walk(sandbox_dir):
@@ -221,9 +233,21 @@ def _merge_sandbox(sandbox_dir: str, workspace_dir: str) -> list[str]:
             src = os.path.join(root, fname)
             rel = os.path.relpath(src, sandbox_dir)
             dst = os.path.join(workspace_dir, rel)
+            # Skip symlinks that resolve to the same file as dst (read-only workspace files)
+            if os.path.islink(src):
+                try:
+                    if os.path.realpath(src) == os.path.realpath(dst):
+                        continue
+                except OSError:
+                    pass
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             try:
-                shutil.copy2(src, dst)
+                # If src is a symlink, copy the actual content
+                if os.path.islink(src):
+                    real_src = os.path.realpath(src)
+                    shutil.copy2(real_src, dst)
+                else:
+                    shutil.copy2(src, dst)
             except OSError as exc:
                 logger.warning("counsel merge failed to copy %s: %s", rel, exc)
                 failed.append(rel)
@@ -248,7 +272,7 @@ def run_counsel_stage(
     agent_name: str,
     max_debate_rounds: int = 3,
     model_specs: Optional[List[dict]] = None,
-    model_timeout_seconds: int = 600,
+    model_timeout_seconds: int = 3600,
 ) -> str:
     """
     Run multi-model counsel for one pipeline stage.
@@ -262,6 +286,10 @@ def run_counsel_stage(
 
     Returns the consensus output string.
     """
+    if os.getenv("CONSORTIUM_COUNSEL_DISABLED", "").strip().lower() in _TRUEISH:
+        raise RuntimeError(
+            f"Counsel execution requested for stage '{agent_name}' while counsel is disabled."
+        )
     specs = model_specs or DEFAULT_COUNSEL_MODEL_SPECS
     sandbox_base = os.path.join(workspace_dir, "counsel_sandboxes", agent_name)
     os.makedirs(sandbox_base, exist_ok=True)
@@ -301,7 +329,11 @@ def run_counsel_stage(
             from .agents.base_agent import _unwrap_model
             # Budget is now recorded automatically by the monkey-patched litellm.completion()
             agent = create_react_agent(model=_unwrap_model(model), tools=s_tools, prompt=system_prompt)
-            invoke_cfg = None
+            invoke_cfg = {
+                "recursion_limit": int(
+                    os.getenv("CONSORTIUM_COUNSEL_SANDBOX_RECURSION_LIMIT", "200")
+                )
+            }
 
             # Retry on transient API errors (auth, service unavailable, rate limit)
             _RETRYABLE = (
@@ -311,7 +343,7 @@ def run_counsel_stage(
                 "BadRequestError", "HTTPStatusError",
             )
             _RETRYABLE_SUBSTRINGS = ("429", "500", "502", "503", "rate limit", "overloaded")
-            _MAX_RETRIES = 3
+            _MAX_RETRIES = 5
             result = None
             for _attempt in range(_MAX_RETRIES):
                 try:
@@ -326,8 +358,9 @@ def run_counsel_stage(
                         or any(s in err_str for s in _RETRYABLE_SUBSTRINGS)
                     )
                     if is_retryable:
-                        wait = 5 * (2 ** _attempt)  # 5s, 10s, 20s
-                        print(f"[counsel:{agent_name}] model_{idx} ({label}) transient error (attempt {_attempt+1}/{_MAX_RETRIES}): {err_type}. Retrying in {wait}s...")
+                        import random as _rand
+                        wait = 5 * (2 ** _attempt) + _rand.uniform(0, 3)  # 5-8s, 10-13s, 20-23s, 40-43s, 80-83s
+                        print(f"[counsel:{agent_name}] model_{idx} ({label}) transient error (attempt {_attempt+1}/{_MAX_RETRIES}): {err_type}: {str(_api_err)[:500]}. Retrying in {wait:.0f}s...")
                         _time.sleep(wait)
                         if _attempt == _MAX_RETRIES - 1:
                             raise  # final attempt, propagate
@@ -364,69 +397,81 @@ def run_counsel_stage(
                     c = getattr(m, "content", None)
                     last_contents.append(f"{type(m).__name__}:type={type(c).__name__}:len={len(str(c)[:100])}")
                 print(f"[counsel:DEBUG] model_{idx} empty output. Last 5 msg types: {msg_types}. Last 3: {last_contents}")
-            # Fallback: if no text found, summarize the workspace diff
+            # Fallback: read the agent's primary output file from the sandbox.
+            # Agents often write results to files via tools rather than returning
+            # text in their final message, so we check key output locations.
+            if not output and sandbox_dir:
+                for candidate in [
+                    "paper_workspace/final_paper.tex",
+                    "paper_workspace/research_proposal.md",
+                    "paper_workspace/brainstorm.md",
+                    "math_workspace/formalized_results.md",
+                    "paper_workspace/abstract.tex",
+                ]:
+                    candidate_path = os.path.join(sandbox_dir, candidate)
+                    if os.path.isfile(candidate_path) and os.path.getsize(candidate_path) > 100:
+                        try:
+                            with open(candidate_path, "r", encoding="utf-8") as _f:
+                                output = _f.read()[:8000]
+                            break
+                        except Exception:
+                            pass
             if not output:
-                import os
-                new_files = []
-                for root, dirs, files in os.walk(sandbox_dir):
-                    for f in files:
-                        fp = os.path.join(root, f)
-                        if not any(x in fp for x in ["__pycache__", "token_usage", "budget_", "checkpoint"]):
-                            new_files.append(os.path.relpath(fp, sandbox_dir))
-                if new_files:
-                    output = f"Agent completed. Files created/modified in sandbox: {len(new_files)} files."
+                output = f"[COUNSEL_ERROR: {label} produced empty output]"
             print(f"[counsel:DEBUG] model_{idx} output len={len(output)} starts_with_bracket={output[:1]=='['} first80={repr(output[:80])}")
         except Exception as e:
             output = f"[COUNSEL_ERROR: {label} failed: {e}]"
+            print(f"[counsel:{agent_name}] model_{idx} ({label}) FAILED: {type(e).__name__}: {str(e)[:500]}")
         logger.info("[counsel:%s] model_%d (%s) complete.", agent_name, idx, label)
         return idx, output
 
     sandbox_outputs: List[str] = [""] * len(counsel_models)
-    with ThreadPoolExecutor(max_workers=len(counsel_models)) as pool:
-        futures = {pool.submit(_run_one_sandbox, i): i for i in range(len(counsel_models))}
-        _fail_count = 0
-        _total = len(counsel_models)
-        try:
-            for future in as_completed(futures, timeout=model_timeout_seconds + 60):
-                try:
-                    idx, output = future.result(timeout=model_timeout_seconds)
-                    sandbox_outputs[idx] = output
-                    # Early quorum check: if too many have failed, cancel remaining
-                    if output.startswith("[COUNSEL_ERROR:"):
-                        _fail_count += 1
-                except TimeoutError:
-                    _fail_count += 1
-                    for f, i in futures.items():
-                        if f is future:
-                            label = specs[i]["model"] if i < len(specs) else f"model_{i}"
-                            sandbox_outputs[i] = f"[COUNSEL_ERROR: {label} timed out after {model_timeout_seconds}s]"
-                            logger.warning("[counsel:%s] model_%d (%s) TIMED OUT after %ds", agent_name, i, label, model_timeout_seconds)
-                            break
-                except Exception as e:
-                    _fail_count += 1
-                    for f, i in futures.items():
-                        if f is future:
-                            label = specs[i]["model"] if i < len(specs) else f"model_{i}"
-                            sandbox_outputs[i] = f"[COUNSEL_ERROR: {label} error: {e}]"
-                            logger.warning("[counsel:%s] model_%d (%s) error: %s", agent_name, i, label, e)
-                            break
-                # Cancel remaining futures if quorum is now impossible
-                if _fail_count > _total - _MIN_QUORUM:
-                    logger.warning(
-                        "[counsel:%s] Early quorum failure: %d/%d failed, cancelling remaining.",
-                        agent_name, _fail_count, _total,
-                    )
-                    for f in futures:
-                        if not f.done():
-                            f.cancel()
-                    break
-        except TimeoutError:
-            for f, i in futures.items():
-                if not f.done():
-                    label = specs[i]["model"] if i < len(specs) else f"model_{i}"
-                    sandbox_outputs[i] = f"[COUNSEL_ERROR: {label} timed out after {model_timeout_seconds}s]"
-                    logger.warning("[counsel:%s] model_%d (%s) TIMED OUT (outer timeout)", agent_name, i, label)
-                    f.cancel()
+    _MAX_SANDBOX_RETRIES = 3  # Retry failed/timed-out models up to this many times
+
+    # Track which model indices still need to run
+    _pending_indices = set(range(len(counsel_models)))
+
+    for _sandbox_attempt in range(_MAX_SANDBOX_RETRIES):
+        if not _pending_indices:
+            break
+        if _sandbox_attempt > 0:
+            print(f"[counsel:{agent_name}] Retrying {len(_pending_indices)} failed model(s) (attempt {_sandbox_attempt + 1}/{_MAX_SANDBOX_RETRIES})...")
+
+        with ThreadPoolExecutor(max_workers=len(_pending_indices)) as pool:
+            futures = {pool.submit(_run_one_sandbox, i): i for i in _pending_indices}
+            try:
+                for future in as_completed(futures, timeout=model_timeout_seconds + 60):
+                    try:
+                        idx, output = future.result(timeout=model_timeout_seconds)
+                        sandbox_outputs[idx] = output
+                        if not output.startswith("[COUNSEL_ERROR:"):
+                            _pending_indices.discard(idx)
+                    except TimeoutError:
+                        for f, i in futures.items():
+                            if f is future:
+                                label = specs[i]["model"] if i < len(specs) else f"model_{i}"
+                                sandbox_outputs[i] = f"[COUNSEL_ERROR: {label} timed out after {model_timeout_seconds}s]"
+                                logger.warning("[counsel:%s] model_%d (%s) TIMED OUT after %ds", agent_name, i, label, model_timeout_seconds)
+                                break
+                    except Exception as e:
+                        for f, i in futures.items():
+                            if f is future:
+                                label = specs[i]["model"] if i < len(specs) else f"model_{i}"
+                                sandbox_outputs[i] = f"[COUNSEL_ERROR: {label} error: {e}]"
+                                logger.warning("[counsel:%s] model_%d (%s) error: %s", agent_name, i, label, e)
+                                break
+            except TimeoutError:
+                for f, i in futures.items():
+                    if not f.done():
+                        label = specs[i]["model"] if i < len(specs) else f"model_{i}"
+                        sandbox_outputs[i] = f"[COUNSEL_ERROR: {label} timed out after {model_timeout_seconds}s]"
+                        logger.warning("[counsel:%s] model_%d (%s) TIMED OUT (outer timeout)", agent_name, i, label)
+                        f.cancel()
+
+        # Check if we have quorum — if so, no need to retry
+        _valid_count = sum(1 for i, o in enumerate(sandbox_outputs) if o and not o.startswith("[COUNSEL_ERROR:"))
+        if _valid_count >= _MIN_QUORUM:
+            break
 
     # ------------------------------------------------------------------
     # 1b. Quorum check — skip debate if too few models succeeded
@@ -610,6 +655,10 @@ def create_counsel_node(
     Drop-in replacement for create_specialist_agent when counsel mode is enabled.
     Accepts the same state dict and returns the same state-update dict shape.
     """
+    if os.getenv("CONSORTIUM_COUNSEL_DISABLED", "").strip().lower() in _TRUEISH:
+        raise RuntimeError(
+            f"Attempted to create counsel node '{agent_name}' while counsel is disabled."
+        )
     _timeout = model_timeout_seconds if model_timeout_seconds is not None else DEFAULT_MODEL_TIMEOUT_SECONDS
 
     def counsel_node(state: dict) -> dict:

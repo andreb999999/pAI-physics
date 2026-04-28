@@ -4,6 +4,7 @@ Tests for consortium/runner.py — utility functions (no real API calls).
 
 import json
 import os
+import subprocess
 import pytest
 from datetime import datetime
 from unittest.mock import patch
@@ -71,7 +72,7 @@ class TestListRuns:
         out = capsys.readouterr().out
         assert "consortium_20260101_120000" in out
         assert "$5.42" in out
-        assert "COMPLETE" in out
+        assert "partial" in out or "completed" in out
 
 
 class TestWriteExperimentMetadata:
@@ -95,6 +96,33 @@ class TestWriteExperimentMetadata:
         assert "python_version" in meta
         assert meta["cli_args"]["enable_math_agents"] is False
 
+    def test_handles_missing_git_context_without_failing(self, tmp_path):
+        from consortium.runner import _write_experiment_metadata
+
+        class FakeArgs:
+            enable_math_agents = False
+            enable_counsel = False
+            output_format = "latex"
+            enforce_paper_artifacts = False
+            min_review_score = 8
+
+        with patch(
+            "consortium.runner.subprocess.check_output",
+            side_effect=subprocess.CalledProcessError(128, ["git"]),
+        ):
+            _write_experiment_metadata(
+                str(tmp_path),
+                FakeArgs(),
+                "claude-opus-4-6",
+                "Test task",
+                project_root=str(tmp_path),
+            )
+
+        meta = json.loads((tmp_path / "experiment_metadata.json").read_text())
+        assert meta["project_root"] == str(tmp_path)
+        assert meta["git_commit"] is None
+        assert meta["git_dirty"] is None
+
     def test_task_preview_truncated(self, tmp_path):
         from consortium.runner import _write_experiment_metadata
 
@@ -110,6 +138,87 @@ class TestWriteExperimentMetadata:
         with open(tmp_path / "experiment_metadata.json") as f:
             meta = json.load(f)
         assert len(meta["task_preview"]) <= 200
+
+    def test_records_effective_counsel_configuration(self, tmp_path):
+        from consortium.runner import _write_experiment_metadata
+
+        class FakeArgs:
+            enable_math_agents = True
+            enable_counsel = True
+            output_format = "latex"
+            enforce_paper_artifacts = True
+            min_review_score = 8
+
+        _write_experiment_metadata(
+            str(tmp_path),
+            FakeArgs(),
+            "claude-opus-4-6",
+            "Muon iterate replay",
+            counsel_settings={
+                "enabled": True,
+                "effective_model_specs": [
+                    {"model": "claude-opus-4-6", "reasoning_effort": "high"},
+                    {"model": "gpt-5.4", "reasoning_effort": "high", "verbosity": "high"},
+                    {"model": "gemini-3.1-pro-preview", "thinking_budget": 131072},
+                    {"model": "claude-sonnet-4-6", "reasoning_effort": "high"},
+                ],
+                "effective_model_names": [
+                    "claude-opus-4-6",
+                    "gpt-5.4",
+                    "gemini-3.1-pro-preview",
+                    "claude-sonnet-4-6",
+                ],
+                "max_debate_rounds": 5,
+                "synthesis_model": "claude-opus-4-6",
+            },
+            persona_settings={
+                "debate_rounds": 5,
+                "synthesis_model": "claude-opus-4-6",
+                "max_post_vote_retries": 1,
+            },
+        )
+
+        with open(tmp_path / "experiment_metadata.json") as f:
+            meta = json.load(f)
+
+        assert meta["counsel"]["enabled"] is True
+        assert meta["counsel"]["max_debate_rounds"] == 5
+        assert meta["counsel"]["model_names"] == [
+            "claude-opus-4-6",
+            "gpt-5.4",
+            "gemini-3.1-pro-preview",
+            "claude-sonnet-4-6",
+        ]
+        assert meta["counsel"]["synthesis_model"] == "claude-opus-4-6"
+        assert meta["persona_council"]["debate_rounds"] == 5
+        assert meta["persona_council"]["synthesis_model"] == "claude-opus-4-6"
+
+    def test_records_effective_models_and_credential_sources(self, tmp_path):
+        from consortium.runner import _write_experiment_metadata
+
+        class FakeArgs:
+            enable_math_agents = True
+            enable_counsel = False
+            output_format = "markdown"
+            enforce_paper_artifacts = False
+            min_review_score = 8
+
+        _write_experiment_metadata(
+            str(tmp_path),
+            FakeArgs(),
+            "gpt-5-mini",
+            "Budget task",
+            effective_models={"main_model": "gpt-5-mini"},
+            model_provenance={"main_model": "tier"},
+            credential_sources={"OPENROUTER_API_KEY": "config-dir"},
+            log_paths={"stdout": "/tmp/stdout.log", "stderr": "/tmp/stderr.log"},
+        )
+
+        meta = json.loads((tmp_path / "experiment_metadata.json").read_text())
+        assert meta["effective_models"]["main_model"] == "gpt-5-mini"
+        assert meta["model_provenance"]["main_model"] == "tier"
+        assert meta["credential_sources"]["OPENROUTER_API_KEY"] == "config-dir"
+        assert meta["log_files"]["stdout"] == "/tmp/stdout.log"
 
 
 class TestWriteRunSummary:
@@ -132,6 +241,8 @@ class TestWriteRunSummary:
         assert summary["model"] == "claude-opus-4-6"
         assert "ideation_agent" in summary["stages_completed"]
         assert summary["duration_seconds"] >= 0
+        assert summary["status"] == "completed"
+        assert summary["completed"] is True
 
     def test_reads_budget_state_for_cost(self, tmp_path):
         from consortium.runner import _write_run_summary
@@ -140,3 +251,48 @@ class TestWriteRunSummary:
         with open(tmp_path / "run_summary.json") as f:
             summary = json.load(f)
         assert abs(summary["total_cost_usd"] - 12.34) < 1e-6
+
+    def test_prefers_paper_workspace_final_paper(self, tmp_path):
+        from consortium.runner import _write_run_summary
+
+        pw = tmp_path / "paper_workspace"
+        pw.mkdir()
+        (pw / "final_paper.pdf").write_bytes(b"%PDF-1.4\nstub")
+
+        _write_run_summary(
+            workspace_dir=str(tmp_path),
+            task="Muon task",
+            model_name="claude-opus-4-6",
+            start_time=datetime.now(),
+            stages_completed=["writeup_agent", "proofreading_agent", "reviewer_agent"],
+        )
+
+        with open(tmp_path / "run_summary.json") as f:
+            summary = json.load(f)
+
+        assert summary["final_paper"] == "paper_workspace/final_paper.pdf"
+        assert summary["stages_completed"] == [
+            "writeup_agent",
+            "proofreading_agent",
+            "reviewer_agent",
+        ]
+
+    def test_records_failed_status_and_reason(self, tmp_path):
+        from consortium.runner import _write_run_summary
+
+        _write_run_summary(
+            workspace_dir=str(tmp_path),
+            task="Failed task",
+            model_name="gpt-5-mini",
+            start_time=datetime.now(),
+            stages_completed=["persona_council"],
+            status="failed",
+            status_reason="boom",
+            current_stage="persona_council",
+        )
+
+        summary = json.loads((tmp_path / "run_summary.json").read_text())
+        assert summary["status"] == "failed"
+        assert summary["failed"] is True
+        assert summary["status_reason"] == "boom"
+        assert summary["current_stage"] == "persona_council"

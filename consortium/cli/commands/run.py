@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -11,13 +12,26 @@ import click
 from rich.console import Console
 from rich.table import Table
 
-from consortium.cli.core.config_manager import load_config
-from consortium.cli.core.env_manager import has_any_llm_key, inject_env
+from consortium.cli.core.config_manager import load_explicit_config
+from consortium.cli.core.env_manager import (
+    check_required_keys,
+    has_required_llm_key,
+    inject_runtime_env,
+)
 from consortium.cli.core.flag_translator import build_argv
 from consortium.cli.core.llm_config_generator import write_llm_config
+from consortium.cli.core.paths import build_runner_argv, find_project_root
 from consortium.cli.core.presets import PRESETS, TIERS, TIER_ORDER, resolve_tier_name
 
 console = Console()
+
+
+def _should_use_repo_env(project_root: Path | None) -> bool:
+    if project_root is None:
+        return False
+    cwd = Path.cwd().resolve()
+    project_root = project_root.resolve()
+    return cwd == project_root or project_root in cwd.parents
 
 
 @click.command()
@@ -46,6 +60,11 @@ console = Console()
 @click.option("--tree-search/--no-tree-search", default=None, help="Enable/disable tree search.")
 @click.option("--max-run-seconds", type=int, default=None, help="Hard timeout in seconds.")
 @click.option("--stream/--no-stream", default=True, help="Enable/disable streaming display.")
+@click.option(
+    "--iterate", "-i", type=click.Path(exists=True), default=None,
+    help="Path to directory with prior paper (.tex/.pdf) + feedback (.md/.tex) for revision mode.",
+)
+@click.option("--iterate-start-stage", type=str, default=None, help="Override entry stage for iterate mode.")
 @click.pass_context
 def run(
     ctx: click.Context,
@@ -63,6 +82,8 @@ def run(
     tree_search: bool | None,
     max_run_seconds: int | None,
     stream: bool,
+    iterate: str | None,
+    iterate_start_stage: str | None,
 ) -> None:
     """Run a research pipeline on a question or topic.
 
@@ -73,21 +94,28 @@ def run(
       msc run --task-file my_task.txt --tier max
       msc run "Quick survey of GAN architectures" --tier budget --dry-run
     """
+    config_dir = ctx.obj.get("config_dir")
+    user_cfg = load_explicit_config(config_dir)
+    project_root = find_project_root()
+
     # Resolve task
     if task_file and not task:
         with open(task_file, "r") as f:
             task = f.read().strip()
     if not task:
-        console.print("[bold white on red] Error [/] Provide a research task as an argument or via --task-file.")
-        raise SystemExit(1)
+        if iterate:
+            task = "Revise and improve the paper based on reviewer feedback."
+        else:
+            console.print("[bold white on red] Error [/] Provide a research task as an argument or via --task-file.")
+            raise SystemExit(1)
 
-    config_dir = ctx.obj.get("config_dir")
     quiet = ctx.obj.get("quiet", False)
 
     # Check for API keys
-    if not has_any_llm_key(config_dir):
+    if not has_required_llm_key(config_dir, repo_root=project_root):
         console.print(
-            "[bold white on red] Error [/] No API keys configured. Run [bold white]msc setup[/] first."
+            "[bold white on red] Error [/] OPENROUTER_API_KEY is required. "
+            "Run [bold white]msc setup[/] first or configure it in your environment."
         )
         raise SystemExit(1)
 
@@ -97,81 +125,127 @@ def run(
     if tier_name is None and preset is not None:
         tier_name = resolve_tier_name(preset)
     if tier_name is None:
-        user_cfg = load_config(config_dir)
         tier_name = user_cfg.get("tier") or user_cfg.get("preset")
     if tier_name is None:
         tier_name = "medium"
     tier_name = resolve_tier_name(tier_name)
     selected_tier = TIERS[tier_name]
 
+    persisted_model = user_cfg.get("model")
+    persisted_budget = user_cfg.get("budget_usd")
+    persisted_output = user_cfg.get("output_format")
+    persisted_mode = user_cfg.get("mode")
+    persisted_counsel = user_cfg.get("enable_counsel")
+    persisted_math = user_cfg.get("enable_math_agents")
+    persisted_tree = user_cfg.get("enable_tree_search")
+
+    effective_model = model or (
+        persisted_model if persisted_model and persisted_model != selected_tier.model else selected_tier.model
+    )
+    effective_budget = budget if budget is not None else (
+        int(persisted_budget)
+        if persisted_budget is not None and int(persisted_budget) != selected_tier.budget_usd
+        else selected_tier.budget_usd
+    )
+    effective_output = output_format or (
+        persisted_output
+        if persisted_output and persisted_output != selected_tier.output_format
+        else selected_tier.output_format
+    )
+    effective_mode = mode or (
+        persisted_mode if persisted_mode and persisted_mode != "auto" else None
+    )
+    effective_counsel = counsel
+    if effective_counsel is None and persisted_counsel is not None and bool(persisted_counsel) != selected_tier.enable_counsel:
+        effective_counsel = bool(persisted_counsel)
+    if effective_counsel is None:
+        effective_counsel = selected_tier.enable_counsel
+
+    effective_math = math
+    if effective_math is None and persisted_math is not None and bool(persisted_math) != selected_tier.enable_math_agents:
+        effective_math = bool(persisted_math)
+    if effective_math is None:
+        effective_math = selected_tier.enable_math_agents
+
+    effective_tree = tree_search
+    if effective_tree is None and persisted_tree is not None and bool(persisted_tree) != selected_tier.enable_tree_search:
+        effective_tree = bool(persisted_tree)
+    if effective_tree is None:
+        effective_tree = selected_tier.enable_tree_search
+
     # ── Generate .llm_config.yaml from tier ─────────────────────────
-    user_cfg = load_config(config_dir)
     if not user_cfg.get("custom_llm_config", False):
-        # Guard: don't overwrite a hand-edited config without warning
         _cfg_path = Path(".llm_config.yaml")
-        _should_write = True
         if _cfg_path.exists():
             try:
                 _head = _cfg_path.read_text()[:300]
                 if "Auto-generated by msc" not in _head:
+                    backup_path = _cfg_path.with_suffix(_cfg_path.suffix + ".bak")
+                    counter = 1
+                    while backup_path.exists():
+                        backup_path = _cfg_path.with_suffix(_cfg_path.suffix + f".bak.{counter}")
+                        counter += 1
+                    _cfg_path.replace(backup_path)
                     console.print(
-                        "[dim]Skipping .llm_config.yaml generation — file appears hand-edited.[/]\n"
-                        "[dim]Set custom_llm_config: true in ~/.msc/config.yaml to silence this,[/]\n"
-                        "[dim]or delete .llm_config.yaml to let msc regenerate it.[/]"
+                        "[dim]Backed up existing .llm_config.yaml to "
+                        f"{backup_path.name} and regenerated it from the selected tier.[/]\n"
+                        "[dim]Set custom_llm_config: true in ~/.msc/config.yaml if you want "
+                        "to manage the project file yourself.[/]"
                     )
-                    _should_write = False
             except OSError:
                 pass
-        if _should_write:
-            llm_overrides: dict = {}
-            if model:
-                llm_overrides["model"] = model
-            if budget is not None:
-                llm_overrides["budget_usd"] = budget
-            if counsel is not None:
-                llm_overrides["counsel"] = counsel
-            write_llm_config(selected_tier, ".llm_config.yaml", overrides=llm_overrides or None)
+        llm_overrides: dict[str, object] = {
+            "model": effective_model,
+            "budget_usd": effective_budget,
+            "counsel": effective_counsel,
+        }
+        write_llm_config(selected_tier, ".llm_config.yaml", overrides=llm_overrides)
 
     # Build overrides from CLI flags
     overrides: dict[str, object] = {"dry_run": dry_run}
-    if model:
-        overrides["model"] = model
-    if budget is not None:
-        overrides["budget_usd"] = budget
-    if output_format:
-        overrides["output_format"] = output_format
-    if mode:
-        overrides["mode"] = mode
+    if effective_model != selected_tier.model:
+        overrides["model"] = effective_model
+    if effective_budget != selected_tier.budget_usd:
+        overrides["budget_usd"] = effective_budget
+    if effective_output != selected_tier.output_format:
+        overrides["output_format"] = effective_output
+    if effective_mode:
+        overrides["mode"] = effective_mode
     if max_run_seconds:
         overrides["max_run_seconds"] = max_run_seconds
-    if counsel is True:
+    if effective_counsel is True:
         overrides["enable_counsel"] = True
         overrides["no_counsel"] = False
-    elif counsel is False:
+    else:
         overrides["enable_counsel"] = False
         overrides["no_counsel"] = True
-    if math is True:
+    if effective_math is True:
         overrides["enable_math_agents"] = True
-    elif math is False:
+    else:
         overrides["enable_math_agents"] = False
-    if tree_search is True:
+    if effective_tree is True:
         overrides["enable_tree_search"] = True
-    elif tree_search is False:
+    else:
         overrides["enable_tree_search"] = False
+    if iterate:
+        overrides["iterate"] = iterate
+    if iterate_start_stage:
+        overrides["iterate_start_stage"] = iterate_start_stage
 
     # Build argv
-    argv = build_argv(task, tier_name, **overrides)
+    argv = build_runner_argv(build_argv(task, tier_name, **overrides))
 
     # Show run summary
     if not quiet:
-        effective_model = model or selected_tier.model
-        effective_budget = budget or selected_tier.budget_usd
         counsel_status = "off"
-        if counsel is True or (counsel is None and selected_tier.enable_counsel):
+        if effective_counsel:
             specs = selected_tier.counsel_model_specs
             counsel_status = f"on ({len(specs)} models)" if specs else "on"
-        elif counsel is False:
-            counsel_status = "off"
+        key_results = check_required_keys(config_dir, repo_root=project_root)
+        openrouter_source = next(
+            (kr.get("source") for kr in key_results if kr["env_var"] == "OPENROUTER_API_KEY" and kr["configured"]),
+            None,
+        ) or "shell"
 
         table = Table(
             title="[bold white]Run Configuration[/]",
@@ -185,14 +259,21 @@ def run(
         table.add_row("Tier", f"{selected_tier.tier_label} ({selected_tier.budget_range})")
         table.add_row("Model", effective_model)
         table.add_row("Budget", f"${effective_budget}")
-        table.add_row("Output", output_format or selected_tier.output_format)
+        table.add_row("Output", effective_output)
         table.add_row("Counsel", counsel_status)
+        table.add_row("Credentials", f"OpenRouter via {openrouter_source}")
         table.add_row("Dry run", "yes" if dry_run else "no")
         console.print(table)
         console.print()
 
     # Inject API keys into environment
-    inject_env(config_dir)
+    allow_repo_env = _should_use_repo_env(project_root)
+    inject_runtime_env(
+        config_dir_override=config_dir,
+        repo_root=project_root,
+        allow_repo_env=allow_repo_env,
+    )
+    key_results = check_required_keys(config_dir, repo_root=project_root, allow_repo_env=allow_repo_env)
 
     # Run consortium
     if not quiet:
@@ -200,6 +281,20 @@ def run(
         console.print(f"[dim]$ {' '.join(argv)}[/dim]\n")
 
     env = dict(**os.environ)
+    env["CONSORTIUM_SELECTED_TIER"] = selected_tier.name
+    env["CONSORTIUM_MODEL_POLICY_SOURCE"] = (
+        "config" if user_cfg.get("custom_llm_config", False) else "tier"
+    )
+    env["CONSORTIUM_USE_REPO_ENV"] = "1" if allow_repo_env else "0"
+    env["CONSORTIUM_CREDENTIAL_SOURCES_JSON"] = json.dumps(
+        {
+            kr["env_var"]: kr.get("source")
+            for kr in key_results
+            if kr.get("configured") and kr.get("source")
+        }
+    )
+    if project_root is not None:
+        env["CONSORTIUM_PROJECT_ROOT"] = str(project_root)
 
     # Use streaming display if available and requested
     use_streaming = stream and not dry_run and not quiet and sys.stdout.isatty()
@@ -207,7 +302,6 @@ def run(
     if use_streaming:
         try:
             from consortium.cli.display import StreamingDisplay
-            effective_budget = budget or selected_tier.budget_usd
             display = StreamingDisplay(budget=effective_budget)
             rc = display.run(argv, env)
             raise SystemExit(rc)
@@ -219,7 +313,7 @@ def run(
         raise SystemExit(proc.returncode)
     except FileNotFoundError:
         console.print(
-            "[bold white on red] Error [/] 'consortium' command not found. "
-            "Install it with: [bold white]pip install -e .[/]"
+            "[bold white on red] Error [/] Python could not launch the consortium runner module. "
+            "Reinstall with: [bold white]python -m pip install -e .[/]"
         )
         raise SystemExit(1)

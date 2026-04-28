@@ -12,11 +12,11 @@ def parse_arguments():
         epilog="""
 Examples:
   # Create new workspace (model from .llm_config.yaml)
-  python launch_multiagent.py --task "Research transformer attention mechanisms"
+  python -m consortium.runner --task "Research transformer attention mechanisms"
 
   # Resume from existing workspace
-  python launch_multiagent.py --resume results/consortium_20250929_143022/ --model claude-sonnet-4-6
-  python launch_multiagent.py --resume results/consortium_20250929_143022/ --task "Continue writing the conclusion section"
+  python -m consortium.runner --resume results/consortium_20250929_143022/ --model claude-sonnet-4-6
+  python -m consortium.runner --resume results/consortium_20250929_143022/ --task "Continue writing the conclusion section"
         """
     )
 
@@ -160,8 +160,9 @@ Examples:
     parser.add_argument(
         "--iterate-start-stage",
         type=str,
-        default="resource_preparation_agent",
-        help="Override the entry stage for iterate mode (default: resource_preparation_agent). "
+        default=None,
+        help="Hard override for iterate-mode entry stage. When set, iterate routing "
+             "is bypassed and the pipeline enters the requested canonical stage directly. "
              "Use 'writeup_agent' to skip resource preparation if paper_workspace is ready.",
     )
 
@@ -386,10 +387,46 @@ Examples:
     )
 
     parser.add_argument(
+        "--persona-post-vote-retries",
+        dest="persona_post_vote_retries",
+        type=int,
+        default=None,
+        help="Max post-vote retry rounds in persona council (default: 1).",
+    )
+
+    parser.add_argument(
         "--no-duality-check",
         action="store_true",
         default=False,
         help="Disable duality check gate (formalize results goes directly to paper production).",
+    )
+
+    parser.add_argument(
+        "--theory-repair-max-attempts",
+        dest="theory_repair_max_attempts",
+        type=int,
+        default=None,
+        help="Max theory track repair retries (default: 2).",
+    )
+    parser.add_argument(
+        "--duality-max-attempts",
+        dest="duality_max_attempts",
+        type=int,
+        default=None,
+        help="Max duality gate rework attempts (default: 2).",
+    )
+    parser.add_argument(
+        "--max-validation-retries",
+        dest="max_validation_retries",
+        type=int,
+        default=None,
+        help="Max validation gate retries before forced completion (default: 3).",
+    )
+    parser.add_argument(
+        "--enable-ensemble-review",
+        action="store_true",
+        default=False,
+        help="Enable 5-reviewer ensemble (parallel reviews with different biases).",
     )
 
     # -----------------------------------------------------------------

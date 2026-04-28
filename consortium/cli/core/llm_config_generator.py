@@ -7,6 +7,11 @@ from typing import Any, Optional
 
 import yaml
 
+from consortium.cli.core.model_policy import (
+    build_default_persona_specs,
+    normalize_model_settings,
+    persona_spec_to_runtime_spec,
+)
 from consortium.cli.core.presets import Preset
 
 
@@ -38,10 +43,16 @@ def tier_to_llm_config(tier: Preset) -> dict[str, Any]:
     cfg: dict[str, Any] = {}
 
     # --- Main model ---
-    main = {"model": tier.model, "reasoning_effort": tier.reasoning_effort}
-    if tier.budget_tokens:
-        main["budget_tokens"] = tier.budget_tokens
+    main = normalize_model_settings(
+        tier.model,
+        {
+            "model": tier.model,
+            "reasoning_effort": tier.reasoning_effort,
+            **({"budget_tokens": tier.budget_tokens} if tier.budget_tokens else {}),
+        },
+    )
     cfg["main_agents"] = main
+    cfg["summary_model"] = {"model": tier.model}
 
     # --- Experiment tool models ---
     if tier.experiment_tool_models:
@@ -67,7 +78,10 @@ def tier_to_llm_config(tier: Preset) -> dict[str, Any]:
     if tier.enable_counsel and tier.counsel_model_specs:
         counsel["max_debate_rounds"] = tier.counsel_debate_rounds
         counsel["synthesis_model"] = tier.counsel_synthesis_model or tier.model
-        counsel["models"] = [dict(spec) for spec in tier.counsel_model_specs]
+        counsel["models"] = [
+            normalize_model_settings(str(spec["model"]), dict(spec))
+            for spec in tier.counsel_model_specs
+        ]
     else:
         counsel["max_debate_rounds"] = 0
         counsel["synthesis_model"] = tier.model
@@ -79,6 +93,18 @@ def tier_to_llm_config(tier: Preset) -> dict[str, Any]:
         "max_debate_rounds": tier.counsel_debate_rounds if tier.enable_counsel else 3,
         "synthesis_model": tier.counsel_synthesis_model or tier.model,
     }
+    persona_specs = (
+        [persona_spec_to_runtime_spec(dict(spec)) for spec in tier.persona_council_specs]
+        if tier.persona_council_specs
+        else build_default_persona_specs(
+            model=tier.model,
+            reasoning_effort=tier.reasoning_effort,
+            budget_tokens=tier.budget_tokens,
+        )
+    )
+    cfg["persona_council"]["personas"] = persona_specs
+    if tier.persona_post_vote_retries is not None:
+        cfg["persona_council"]["max_post_vote_retries"] = tier.persona_post_vote_retries
 
     # --- Duality check ---
     cfg["duality_check"] = {"model": tier.model}
@@ -86,7 +112,10 @@ def tier_to_llm_config(tier: Preset) -> dict[str, Any]:
     # --- Per-agent model tiers ---
     pa: dict[str, Any] = {"enabled": tier.per_agent_models_enabled}
     if tier.per_agent_models_enabled and tier.per_agent_tiers:
-        pa["tiers"] = {name: config for name, config in tier.per_agent_tiers}
+        pa["tiers"] = {
+            name: normalize_model_settings(str(config["model"]), dict(config))
+            for name, config in tier.per_agent_tiers
+        }
         if tier.agent_tier_assignments:
             pa["agent_tiers"] = {agent: t for agent, t in tier.agent_tier_assignments}
     cfg["per_agent_models"] = pa

@@ -193,6 +193,65 @@ class TestValidatePaperQuality:
         assert not result["is_valid"]
         assert result["errors"]
 
+    def test_missing_input_section_is_fatal(self, tmp_path):
+        pw = tmp_path / "paper_workspace"
+        pw.mkdir()
+        (pw / "final_paper.tex").write_text(
+            "\\documentclass{article}\n"
+            "\\title{Real Title}\n"
+            "\\author{Real Author}\n"
+            "\\begin{document}\n"
+            "\\input{abstract}\n"
+            "\\input{introduction}\n"
+            "\\end{document}\n"
+        )
+        (pw / "abstract.tex").write_text("Muon abstract.")
+
+        result = validate_paper_quality(
+            str(tmp_path),
+            require_pdf=True,
+            enforce_contract=True,
+        )
+
+        assert not result["is_valid"]
+        assert any("missing \\input/\\include sources" in err for err in result["errors"])
+        assert any("missing paper_workspace/final_paper.pdf" in err for err in result["errors"])
+
+    def test_generic_input_skeleton_is_fatal(self, tmp_path):
+        pw = tmp_path / "paper_workspace"
+        pw.mkdir()
+        (pw / "paper_contract.json").write_text(
+            json.dumps({"required_terms": [], "required_sections": []})
+        )
+        (pw / "final_paper.tex").write_text(
+            "\\documentclass{article}\n"
+            "\\title{Research Paper Title}\n"
+            "\\author{Author Names}\n"
+            "\\begin{document}\n"
+            "\\input{abstract}\n"
+            "\\input{introduction}\n"
+            "\\input{methods}\n"
+            "\\input{results}\n"
+            "\\input{discussion}\n"
+            "\\input{conclusion}\n"
+            "\\end{document}\n"
+        )
+        for section in [
+            "abstract.tex",
+            "introduction.tex",
+            "methods.tex",
+            "results.tex",
+            "discussion.tex",
+            "conclusion.tex",
+        ]:
+            (pw / section).write_text("placeholder body")
+
+        result = validate_paper_quality(str(tmp_path), enforce_contract=True)
+
+        assert not result["is_valid"]
+        assert any("Research Paper Title" in err for err in result["errors"])
+        assert any("generic" in err and "input skeleton" in err for err in result["errors"])
+
 
 # ---------------------------------------------------------------------------
 # validate_math_acceptance — no claim graph → valid (math not used)
@@ -210,9 +269,15 @@ class TestValidateMathAcceptance:
             "workspace_dir": str(tmp_path),
             "enforce_paper_artifacts": True,
             "enforce_editorial_artifacts": True,
+            "iterate_mode": True,
         }
         required = build_required_artifacts(state)
+        assert "paper_workspace/paper_contract.json" in required
+        assert "paper_workspace/abstract.tex" in required
+        assert "paper_workspace/conclusion.tex" in required
+        assert "paper_workspace/final_paper.pdf" in required
         assert "paper_workspace/copyedit_report.tex" in required
+        assert "paper_workspace/copyedit_report.pdf" in required
         assert "paper_workspace/review_report.tex" in required
         assert "paper_workspace/copyedit_report.md" not in required
         assert "paper_workspace/review_report.md" not in required
@@ -222,7 +287,15 @@ class TestValidateMathAcceptance:
         pw = tmp_path / "paper_workspace"
         pw.mkdir()
         # Create all required artifacts
-        (tmp_path / "final_paper.tex").write_text("\\documentclass{article}")
+        (pw / "paper_contract.json").write_text(json.dumps({"required_terms": [], "required_sections": []}))
+        (pw / "final_paper.tex").write_text("\\documentclass{article}")
+        (pw / "final_paper.pdf").write_bytes(b"pdf")
+        (pw / "abstract.tex").write_text("Abstract")
+        (pw / "introduction.tex").write_text("Introduction")
+        (pw / "methods.tex").write_text("Methods")
+        (pw / "results.tex").write_text("Results")
+        (pw / "discussion.tex").write_text("Discussion")
+        (pw / "conclusion.tex").write_text("Conclusion")
         (pw / "track_decomposition.json").write_text("{}")
         (pw / "literature_review.pdf").write_bytes(b"pdf")
         (pw / "research_plan.pdf").write_bytes(b"pdf")
@@ -236,8 +309,11 @@ class TestValidateMathAcceptance:
         (pw / "theorem_map.json").write_text("{}")
         (pw / "revision_log.md").write_text("log")
         (pw / "copyedit_report.tex").write_text("\\section{Report}")
+        (pw / "copyedit_report.pdf").write_bytes(b"pdf")
         (pw / "review_report.tex").write_text("\\section{Review}")
+        (pw / "review_report.pdf").write_bytes(b"pdf")
         (pw / "review_verdict.json").write_text("{}")
+        (pw / "persona_verdicts.json").write_text("{}")
         state = {
             "workspace_dir": str(tmp_path),
             "enforce_paper_artifacts": True,
