@@ -313,7 +313,7 @@ def test_campaign_launch_detaches_stage_and_keeps_attempt_logs(tmp_path, monkeyp
     assert env["PYTHONUNBUFFERED"] == "1"
     assert env["CONSORTIUM_SS_COOLDOWN_SEC"] == "120"
     assert env["COUNSEL_MODEL_TIMEOUT_SECONDS"] == "222"
-    assert env["CONSORTIUM_LIT_RATE_STATE_DIR"].endswith("iterate_v4/.lit_rate_state")
+    assert env["CONSORTIUM_LIT_RATE_STATE_DIR"].replace("\\", "/").endswith("iterate_v4/.lit_rate_state")
     assert kwargs["stdin"] is subprocess.DEVNULL
     assert kwargs["start_new_session"] is True
     assert Path(proc.stdout_log_path).name == "iterate_v4_attempt_5_stdout.log"
@@ -327,10 +327,10 @@ def test_stage_env_is_loaded_from_campaign_spec(tmp_path, monkeypatch):
     monkeypatch.setenv("LIT_WAIT", "1800")
     campaign_file.write_text(
         "name: Muon\n"
-        f'workspace_root: "{tmp_path / "results"}"\n'
+        f'workspace_root: "{(tmp_path / "results").as_posix()}"\n'
         "stages:\n"
         "  - id: iterate_v4\n"
-        f'    task_file: "{task_file}"\n'
+        f'    task_file: "{task_file.as_posix()}"\n'
         "    env:\n"
         '      CONSORTIUM_LIT_MAX_WAIT_SEC: "${LIT_WAIT}"\n'
         '      CONSORTIUM_SS_COOLDOWN_SEC: "120"\n'
@@ -528,12 +528,12 @@ def test_manual_failed_status_preserves_existing_reason_and_supports_override(
     campaign_file = tmp_path / "campaign.yaml"
     campaign_file.write_text(
         "name: Muon\n"
-        f'workspace_root: "{campaign_dir}"\n'
+        f'workspace_root: "{campaign_dir.as_posix()}"\n'
         "planning:\n"
         "  enabled: false\n"
         "stages:\n"
         "  - id: iterate_v4\n"
-        f'    task_file: "{task_file}"\n'
+        f'    task_file: "{task_file.as_posix()}"\n'
     )
 
     status_path = campaign_dir / "campaign_status.json"

@@ -420,19 +420,21 @@ def test_doctor_rejects_openai_only_and_accepts_openrouter(tmp_path, monkeypatch
 def test_runtime_env_ignores_repo_env_outside_repo_root(tmp_path, monkeypatch):
     repo_root = tmp_path / "repo"
     workspace = tmp_path / "work"
+    empty_config_dir = tmp_path / "empty_config"
     repo_root.mkdir()
     workspace.mkdir()
+    empty_config_dir.mkdir()
     (repo_root / ".env").write_text('OPENROUTER_API_KEY="sk-or-from-repo"\n')
     monkeypatch.chdir(workspace)
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
 
-    env = build_runtime_env(repo_root=repo_root)
-    sources = get_runtime_env_sources(repo_root=repo_root)
+    env = build_runtime_env(repo_root=repo_root, config_dir_override=str(empty_config_dir))
+    sources = get_runtime_env_sources(repo_root=repo_root, config_dir_override=str(empty_config_dir))
     assert env.get("OPENROUTER_API_KEY") is None
     assert "OPENROUTER_API_KEY" not in sources
 
-    env = build_runtime_env(repo_root=repo_root, allow_repo_env=True)
-    sources = get_runtime_env_sources(repo_root=repo_root, allow_repo_env=True)
+    env = build_runtime_env(repo_root=repo_root, allow_repo_env=True, config_dir_override=str(empty_config_dir))
+    sources = get_runtime_env_sources(repo_root=repo_root, allow_repo_env=True, config_dir_override=str(empty_config_dir))
     assert env["OPENROUTER_API_KEY"] == "sk-or-from-repo"
     assert sources["OPENROUTER_API_KEY"] == "repo-env"
 

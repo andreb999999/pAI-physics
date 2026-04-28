@@ -25,7 +25,6 @@ campaign_status.json schema:
 
 from __future__ import annotations
 
-import fcntl
 import json
 import logging
 import os
@@ -66,6 +65,7 @@ def _status_lock(campaign_dir: str):
             "filelock not installed — using fcntl.flock() fallback. "
             "Install filelock for better cross-platform locking: pip install filelock"
         )
+        import fcntl
         fd = os.open(lock_path, os.O_CREAT | os.O_RDWR)
         try:
             fcntl.flock(fd, fcntl.LOCK_EX)
@@ -347,6 +347,10 @@ def is_pid_alive(pid: int) -> bool:
     except PermissionError:
         # Process exists but we don't have permission to signal it
         return True
+    except OSError:
+        # On Windows, os.kill(pid, 0) can raise OSError for various reasons
+        # (e.g. WinError 11 for invalid process state). Treat as not alive.
+        return False
 
 
 def is_slurm_job_alive(job_id: int) -> Optional[bool]:

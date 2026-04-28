@@ -13,15 +13,15 @@ import re
 from typing import Any, Mapping, Optional
 
 PAPER_WORKSPACE = "paper_workspace"
-PAPER_CONTRACT_PATH = os.path.join(PAPER_WORKSPACE, "paper_contract.json")
-FINAL_PAPER_TEX = os.path.join(PAPER_WORKSPACE, "final_paper.tex")
-FINAL_PAPER_PDF = os.path.join(PAPER_WORKSPACE, "final_paper.pdf")
-COPYEDIT_REPORT_TEX = os.path.join(PAPER_WORKSPACE, "copyedit_report.tex")
-COPYEDIT_REPORT_PDF = os.path.join(PAPER_WORKSPACE, "copyedit_report.pdf")
-REVIEW_REPORT_TEX = os.path.join(PAPER_WORKSPACE, "review_report.tex")
-REVIEW_REPORT_PDF = os.path.join(PAPER_WORKSPACE, "review_report.pdf")
-REVIEW_VERDICT_JSON = os.path.join(PAPER_WORKSPACE, "review_verdict.json")
-PERSONA_VERDICTS_JSON = os.path.join(PAPER_WORKSPACE, "persona_verdicts.json")
+PAPER_CONTRACT_PATH = "paper_workspace/paper_contract.json"
+FINAL_PAPER_TEX = "paper_workspace/final_paper.tex"
+FINAL_PAPER_PDF = "paper_workspace/final_paper.pdf"
+COPYEDIT_REPORT_TEX = "paper_workspace/copyedit_report.tex"
+COPYEDIT_REPORT_PDF = "paper_workspace/copyedit_report.pdf"
+REVIEW_REPORT_TEX = "paper_workspace/review_report.tex"
+REVIEW_REPORT_PDF = "paper_workspace/review_report.pdf"
+REVIEW_VERDICT_JSON = "paper_workspace/review_verdict.json"
+PERSONA_VERDICTS_JSON = "paper_workspace/persona_verdicts.json"
 
 CANONICAL_SECTION_FILES = [
     "abstract.tex",
@@ -66,7 +66,7 @@ def paper_workspace_path(workspace_dir: str, *parts: str) -> str:
 
 
 def canonical_section_paths() -> list[str]:
-    return [os.path.join(PAPER_WORKSPACE, name) for name in CANONICAL_SECTION_FILES]
+    return [f"{PAPER_WORKSPACE}/{name}" for name in CANONICAL_SECTION_FILES]
 
 
 def required_writeup_outputs(require_pdf: bool = False) -> list[str]:
