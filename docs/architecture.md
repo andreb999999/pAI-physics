@@ -24,6 +24,8 @@ Runtime configuration is resolved from three layers:
 
 Model/runtime settings are read from the project-root `.llm_config.yaml`, which `msc run` auto-generates from the selected tier unless `custom_llm_config: true` is set in `~/.msc/config.yaml`.
 
+For an implementation-aligned graph diagram plus a plain-English agent summary, see [LangGraph Network Overview](langgraph_network.md).
+
 ## Pipeline Shape
 
 The LangGraph workflow is built in [`consortium/graph.py`](/home/mabdel03/orcd/scratch/AI_Researcher/MSc_Internal/consortium/graph.py).
