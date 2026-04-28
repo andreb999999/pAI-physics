@@ -9,6 +9,8 @@ Built by the [Poggio Lab](https://poggio-lab.mit.edu/) at MIT.
 
 [Website](https://PoggioAI.github.io) | [Discord](https://discord.gg/Pz7spPPY) | [GitHub](https://github.com/PoggioAI/PoggioAI_MSc)
 
+This repository is a fork. For the upstream project, see [PoggioAI/PoggioAI_MSc](https://github.com/PoggioAI/PoggioAI_MSc/tree/MSc_Internal).
+
 ---
 
 ## What Is MSc?
